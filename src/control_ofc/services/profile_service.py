@@ -457,6 +457,38 @@ def role_tagged_member_label(label: str, header_role: str) -> str:
     return f"{label}{AIO_PUMP_TAG}"
 
 
+def pump_role_header_ids(headers) -> frozenset[str]:
+    """Ids of the hwmon headers whose daemon-resolved role is ``pump`` (DEC-417).
+
+    The display-time twin of :func:`role_tagged_member_label`, on the same
+    predicate (``HwmonHeader.role == "pump"``). That function bakes the role into
+    a member's label when the member is authored; this one lets a display site
+    union the role in for a member authored *before* the assignment, or through a
+    picker that never tags it (`TS-w`). The daemon floors such a member at 30% on
+    the assignment alone (``assigned_role_is_pump`` → ``member_effective_floor``),
+    so a floor derived from the label alone shows 20% for it.
+
+    Display only, and live: it follows the header's role both ways, as the
+    daemon's assignment term does. It is deliberately NOT
+    ``header_is_pump_protected`` — that union also carries terms the label
+    classifier already mirrors, and on daemons 2.31.0 to 2.35.3 a published floor
+    that no enforcement site applies (`WIRE-b`).
+    """
+    return frozenset(h.id for h in headers or () if getattr(h, "role", "") == "pump")
+
+
+def pump_role_floor_pct(members: list[ControlMember], pump_header_ids: frozenset[str]) -> float:
+    """The floor a header's pump role gives these members: 30% when any hwmon
+    member's header is in ``pump_header_ids``, else 0 (DEC-417).
+
+    Union only — callers take the ``max`` with the label-derived floor, so this can
+    raise a displayed floor and never lower one.
+    """
+    if any(m.source == "hwmon" and m.member_id in pump_header_ids for m in members):
+        return role_minimum_pct(CONTROL_ROLE_CPU_PUMP)
+    return 0.0
+
+
 def _daemon_label_from_member_id(member_id: str) -> str:
     """The label the DAEMON discovered, parsed out of the member's stable id.
 
@@ -546,7 +578,9 @@ def control_minimum_pct(members: list[ControlMember]) -> float:
     return role_minimum_pct(infer_control_role(members))
 
 
-def member_minimum_pct(control: LogicalControl, member: ControlMember) -> float:
+def member_minimum_pct(
+    control: LogicalControl, member: ControlMember, pump_header_ids: frozenset[str]
+) -> float:
     """Effective minimum-PWM floor for a single member of ``control`` (DEC-119).
 
     GPU members are never floored above 0 by the GUI: the GPU's PMFW firmware
@@ -562,11 +596,20 @@ def member_minimum_pct(control: LogicalControl, member: ControlMember) -> float:
     member's own role floor, this function only ever *lowers* the floor for
     GPU members and is byte-for-byte identical to the pre-DEC-119 control-wide
     behaviour for every non-GPU member and every homogeneous control.
+
+    ``pump_header_ids`` (from :func:`pump_role_header_ids`) adds the daemon's
+    third floor term, the header's pump role (DEC-417). It is required, with no
+    default: a caller that could silently omit it would show 20% for a member the
+    daemon floors at 30% — the DEC-379 shape.
     """
     role = infer_member_role(member)
     if role == CONTROL_ROLE_GPU:
         return role_minimum_pct(CONTROL_ROLE_GPU)  # 0.0 — no GUI floor for GPU
-    return max(control.minimum_pct, role_minimum_pct(role))
+    return max(
+        control.minimum_pct,
+        role_minimum_pct(role),
+        pump_role_floor_pct([member], pump_header_ids),
+    )
 
 
 @dataclass

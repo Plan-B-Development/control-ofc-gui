@@ -86,7 +86,7 @@ Each fan role carries a set of tuning parameters that the daemon applies to the 
 
 The **Minimum** floor is chosen automatically from the role inferred for the fan group, so chassis and CPU/pump fans don't stall, while GPU fans are free to idle at 0%:
 
-- **30%** for CPU / pump-labelled hwmon members
+- **30%** for CPU / pump-labelled hwmon members, and for a member whose header you assigned the **pump** role. The **Min** badge and the Dashboard fan cards show that 30% as soon as you assign the role, even for a fan you added to the group before. The manual slider and the curve editor still go down to the group's own minimum. The daemon raises anything lower to 30%.
 - **20%** for chassis / OpenFan members
 - **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the GPU's firmware owns its real ~15% minimum)
 

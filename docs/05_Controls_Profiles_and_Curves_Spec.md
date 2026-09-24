@@ -233,6 +233,23 @@ reject + an independent eval-time clamp). The GUI-side defaults are:
   clearing an assignment is not a request to lower a floor. Note the daemon
   reaches the same 30% independently via `assigned_role_is_pump`, so this is
   what the GUI *displays*, not what protects the hardware.
+  **Only Configure AIO bakes the tag** (`aio_member_for_header`); the member
+  picker and quick-assign do not, and a member authored before its header was
+  assigned `pump` predates the tag. So since DEC-417 the **Min badge** and the
+  **Dashboard fan-card state** also union the role in *live* at display time
+  (`pump_role_header_ids` — `HwmonHeader.role == "pump"`, the same predicate the
+  tag uses), without touching the profile. That mirror follows the role both
+  ways, as the daemon's assignment term does — straight away for a role the GUI
+  writes (it re-reads the headers after its own role writes), and at the next
+  300 s header re-read for one written outside it. Three things deliberately do NOT
+  follow it, by the user's choice: the control card's **manual slider** minimum
+  and the **curve editor's** lower bound keep the label-derived floor (the daemon
+  clamps a request between the two up to 30%), and `minimum_pct` is not
+  re-stamped. A role raises only its own member — unlike a pump *label*, which
+  raises the whole control's `minimum_pct` — so in a mixed control the badge
+  shows 30% and its tooltip says the figure covers the pump-assigned member,
+  giving the other fans the control's own `minimum_pct` (the daemon's number
+  for them).
 - **20%** for chassis / OpenFan-only controls.
 - **0%** for GPU-only controls (PMFW enforces its own OD_RANGE
   minimum, typically 15%; see DEC-053).
@@ -254,8 +271,10 @@ chassis-only controls are raised to 20%.
 #### Per-member flooring — GPU members are never floored (DEC-119)
 `minimum_pct` is a single control-wide value, but the floor is applied
 **per member**. As of 2.0.0 the daemon applies this rule at write time
-(DEC-119/DEC-162); the GUI mirrors it in `profile_service.member_minimum_pct`
-for the floor badge, profile baking, and demo evaluation:
+(DEC-119/DEC-162); the GUI mirrors it in `profile_service.member_minimum_pct`,
+whose one production caller is the Dashboard fan-card state (the Min badge is
+control-level, `controls_view.min_pwm_badge`). Since DEC-417 it also takes the
+header pump-role term above, as a required argument:
 - **GPU members (`source == "amd_gpu"`)** are floored at **0%** — always,
   regardless of how the control is composed. The GPU's PMFW firmware owns
   its idle minimum (the OD_RANGE ~15% clamp; zero-RPM via the per-member

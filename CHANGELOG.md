@@ -73,6 +73,17 @@ If every subsystem line were hidden, the card would show "Subsystems: —", as i
 It now reads **Subsystems: all ok**. Current daemons always report subsystems that stay visible, so
 you should not see this.
 
+**A pump you assigned shows its 30% floor everywhere it counts** (`TS-w`, DEC-417). The daemon keeps
+a fan whose header you assigned the **pump** role at 30% or more. But if you had added that fan to a
+group before assigning the role, or added it with the fan picker, the group's **Min** badge still
+read 20%, and the Dashboard judged its **Low RPM** warning against 20%. Both now use 30% as soon as
+you assign the role in the GUI, and go back if you clear it there. A role changed outside the GUI
+shows up the next time the GUI re-reads the fan headers, within five minutes. This matches how a
+pump the GUI finds by its label is treated. A pump at 30% that reads 0 RPM still shows the daemon's
+**Stall** warning, as before. The badge's tooltip says the 30% comes from the pump role. In a group
+with other fans, it also gives the other fans' own minimum. The manual slider and the curve editor
+are unchanged, and so are your saved profiles.
+
 ### Changed
 
 **The Reports list opens faster** (`PTR-x`, DEC-415). Opening the list for the first time in a

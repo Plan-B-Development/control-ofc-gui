@@ -71,6 +71,7 @@ from control_ofc.services.profile_service import (
     ProfileService,
     apply_role_floor,
     mix_candidate_curves,
+    pump_role_header_ids,
     sync_candidate_controls,
 )
 from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
@@ -634,6 +635,9 @@ class ControlsPage(QWidget):
             self._state.fan_alias_changed.connect(self._on_fan_alias_changed)
             # DEC-403: which fans share a Dell BIOS switch comes from the headers.
             self._state.headers_updated.connect(self._refresh_shared_switch_banner)
+            # DEC-417: a header's pump role raises the Min badge of the card that
+            # holds it, so a role assigned after the cards were built repaints them.
+            self._state.headers_updated.connect(self._refresh_min_pwm_badges)
 
     def set_demo_controller(self, demo_controller: DemoController | None) -> None:
         """Inject the demo-mode mini-evaluator (DEC-165).
@@ -1197,6 +1201,7 @@ class ControlsPage(QWidget):
                 card_size=tier,
                 user_size=self._stored_card_size(control.id),
                 display_name=self._state.member_display_name,
+                pump_header_ids=self._pump_role_header_ids,
             )
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
@@ -2122,6 +2127,18 @@ class ControlsPage(QWidget):
             else ""
         )
         self._shared_switch_banner.setVisible(error is not None)
+
+    def _pump_role_header_ids(self) -> frozenset[str]:
+        """The live ids of headers whose role is ``pump`` (DEC-417), read by every
+        control card's Min badge through the one shared predicate."""
+        if self._state is None:
+            return frozenset()
+        return pump_role_header_ids(self._state.hwmon_headers)
+
+    def _refresh_min_pwm_badges(self, *_args) -> None:
+        """Repaint every control card's Min badge from the current headers."""
+        for card in self._control_cards.values():
+            card.refresh_min_pwm_badge()
 
     def _show_shared_switch_refusal(self, what: str) -> None:
         """A save path refused by DEC-403's rule: say so, and show why."""

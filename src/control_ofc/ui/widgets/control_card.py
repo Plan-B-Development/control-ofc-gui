@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.services.controls_view import skipped_control_feedback
+from control_ofc.services.controls_view import min_pwm_badge, skipped_control_feedback
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
     ControlMode,
@@ -59,12 +59,18 @@ class ControlCard(ResizableGridCard):
         user_size: tuple[int, int] | None = None,
         parent=None,
         display_name: Callable[[str, str], str] | None = None,
+        pump_header_ids: Callable[[], frozenset[str]] | None = None,
     ) -> None:
         super().__init__(parent)
         # DEC-228: resolves (member_id, cached member_label) -> the name to show,
         # so a rename made anywhere reaches these rows. Defaults to the old
         # cached-label behaviour when no resolver is supplied (tests, previews).
         self._display_name = display_name or (lambda mid, label: label or mid)
+        # DEC-417: the live ids of headers whose role is `pump`, read by the Min
+        # badge. A resolver rather than a snapshot, like `display_name`, so a role
+        # assigned after the card was built still reaches it on the next repaint
+        # (`refresh_min_pwm_badge`). No resolver (tests, previews) means no roles.
+        self._pump_header_ids = pump_header_ids or frozenset
         self._control = control
         self._last_output_pct: float | None = None
         # DEC-169: a daemon-held override this GUI session does NOT own (no
@@ -836,46 +842,26 @@ class ControlCard(ResizableGridCard):
             self._restore_daemon_chip()
 
     def _effective_floor(self) -> float:
-        """The role-derived minimum PWM the daemon floor-clamps to (DEC-095/162):
-        the larger of the user-set floor and the role-derived floor. Drives both
-        the Min badge and the manual slider's minimum, so the slider can never
-        request — or display — a value the daemon would clamp away (P2-1)."""
+        """The label-derived minimum PWM (DEC-095/162): the larger of the user-set
+        floor and the role-derived floor. Drives the manual slider's minimum (P2-1).
+
+        Since DEC-417 it no longer drives the Min badge, and the two can differ:
+        the badge also takes a header's pump ROLE, which the daemon floors at 30%
+        on the assignment alone, and by the user's choice the slider does not. A
+        request between the two on such a member is clamped up by the daemon."""
         return max(self._control.minimum_pct, control_minimum_pct(self._control.members))
 
+    def refresh_min_pwm_badge(self) -> None:
+        """Repaint the Min badge — the Controls page calls this when the headers
+        change, so a pump role assigned after this card was built reaches it."""
+        self._update_min_pwm_badge(self._control)
+
     def _update_min_pwm_badge(self, control: LogicalControl) -> None:
-        """Refresh the inline minimum-PWM badge from the control's effective floor."""
-        # Show the larger of the user-set floor and the role-derived floor so
-        # the user sees the clamp that actually applies. Hide entirely when
-        # there is no floor (0%), so chassis-only roles authored before v4
-        # don't display a misleading "Min: 0%".
-        effective = self._effective_floor()
-        if effective <= 0.0:
+        """Render the Min badge from its view-model (``controls_view.min_pwm_badge``)."""
+        badge = min_pwm_badge(control, self._pump_header_ids())
+        if badge.floor_pct <= 0.0:
             self._min_pwm_label.setText("")
             self._min_pwm_label.setToolTip("")
             return
-        self._min_pwm_label.setText(f"Min: {effective:.0f}%")
-        role = infer_control_role(control.members)
-        if role == "cpu_or_pump":
-            tip = (
-                "Minimum PWM derived from a CPU or pump member. "
-                "30% protects the pump from stalling."
-            )
-        elif role == "chassis":
-            tip = (
-                "Minimum PWM for chassis fans. "
-                "20% prevents most 4-pin fans from stalling at low duty."
-            )
-        else:
-            tip = "Minimum PWM applied by this control."
-        # DEC-119: in a mixed control (GPU grouped with chassis/CPU fans) the
-        # floor above applies only to the non-GPU members. GPU members are
-        # never floored by the GUI — the GPU firmware owns their idle minimum.
-        members = control.members
-        has_gpu = any(infer_member_role(m) == CONTROL_ROLE_GPU for m in members)
-        has_non_gpu = any(infer_member_role(m) != CONTROL_ROLE_GPU for m in members)
-        if has_gpu and has_non_gpu:
-            tip += (
-                " GPU members in this control are not floored "
-                "(the GPU firmware manages their minimum)."
-            )
-        self._min_pwm_label.setToolTip(tip)
+        self._min_pwm_label.setText(f"Min: {badge.floor_pct:.0f}%")
+        self._min_pwm_label.setToolTip(badge.tooltip)

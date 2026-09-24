@@ -20,10 +20,14 @@ from control_ofc.knowledge.sensor_knowledge import (
 from control_ofc.services.cooling_device_view import CoolingMembership
 from control_ofc.services.profile_service import (
     AIO_PUMP_TAG,
+    CONTROL_ROLE_CHASSIS,
+    CONTROL_ROLE_CPU_PUMP,
     CONTROL_ROLE_GPU,
     _label_indicates_cpu_or_pump,
     control_minimum_pct,
+    infer_control_role,
     infer_member_role,
+    pump_role_floor_pct,
 )
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -74,6 +78,82 @@ def curve_min_output_floor(profile, curve_id: str) -> float:
             effective = max(ctrl.minimum_pct, control_minimum_pct(ctrl.members))
             floor = max(floor, effective)
     return floor
+
+
+@dataclass(frozen=True)
+class MinPwmBadge:
+    """What a control card's "Min: N%" badge shows (DEC-417).
+
+    ``floor_pct`` of 0 means the badge is hidden, so a chassis control authored
+    before v4 never reads a misleading "Min: 0%".
+    """
+
+    floor_pct: float
+    tooltip: str
+
+
+def min_pwm_badge(control, pump_header_ids: frozenset[str]) -> MinPwmBadge:
+    """The Min badge for ``control``: its strictest member floor, and why.
+
+    The label-derived floor (``minimum_pct`` against the role floor, DEC-095/162)
+    unioned with the header pump-role term (`TS-w`): the daemon floors a member
+    whose header is assigned ``pump`` at 30% on the assignment alone, so a member
+    authored before the assignment would otherwise show 20% here.
+
+    Only the BADGE takes that term. The card's manual slider keeps the
+    label-derived floor, by the user's choice (DEC-417); the daemon clamps a
+    request below 30% on such a member up to 30%, as it always has.
+
+    A pump found by its label raises the whole control's ``minimum_pct``; a pump
+    ROLE raises only its own member. So where the role is what lifts the badge and
+    the control has other floored fans, the tooltip says whom the figure covers —
+    and gives the other fans ``control.minimum_pct``, the number the daemon holds
+    them at (``member_effective_floor``'s non-pump branch), never the badge's
+    ``base``, which also counts the GUI's 20% role default and so overstates it
+    for a profile whose minimum sits below that.
+    """
+    members = control.members
+    base = max(control.minimum_pct, control_minimum_pct(members))
+    role_floor = pump_role_floor_pct(members, pump_header_ids)
+    floor = max(base, role_floor)
+    if floor <= 0.0:
+        return MinPwmBadge(0.0, "")
+    role = infer_control_role(members)
+    if role == CONTROL_ROLE_CPU_PUMP:
+        tip = "Minimum PWM derived from a CPU or pump member. 30% protects the pump from stalling."
+    elif role_floor > base:
+        tip = (
+            f"Minimum PWM raised to {role_floor:.0f}% because a member's header is "
+            f"assigned the pump role. {role_floor:.0f}% protects the pump from stalling."
+        )
+        assigned = {m.member_id for m in members if pump_role_floor_pct([m], pump_header_ids)}
+        others = [
+            m
+            for m in members
+            if m.member_id not in assigned and infer_member_role(m) != CONTROL_ROLE_GPU
+        ]
+        if others:
+            whom = "member" if len(assigned) == 1 else "members"
+            tip += (
+                f" It applies to the pump-assigned {whom}; the other fans in this "
+                f"control keep {control.minimum_pct:.0f}%."
+            )
+    elif role == CONTROL_ROLE_CHASSIS:
+        tip = (
+            "Minimum PWM for chassis fans. 20% prevents most 4-pin fans from stalling at low duty."
+        )
+    else:
+        tip = "Minimum PWM applied by this control."
+    # DEC-119: in a mixed control (GPU grouped with chassis/CPU fans) the floor
+    # above applies only to the non-GPU members. GPU members are never floored by
+    # the GUI — the GPU firmware owns their idle minimum.
+    has_gpu = any(infer_member_role(m) == CONTROL_ROLE_GPU for m in members)
+    has_non_gpu = any(infer_member_role(m) != CONTROL_ROLE_GPU for m in members)
+    if has_gpu and has_non_gpu:
+        tip += (
+            " GPU members in this control are not floored (the GPU firmware manages their minimum)."
+        )
+    return MinPwmBadge(floor, tip)
 
 
 def divergent_gpu_output(control, control_output: float, members: dict) -> float | None:

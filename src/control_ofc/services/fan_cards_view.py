@@ -60,6 +60,7 @@ from control_ofc.services.profile_service import (
     CurveType,
     Profile,
     member_minimum_pct,
+    pump_role_header_ids,
 )
 
 # Card-key prefix for a read-only fan's own card.
@@ -257,6 +258,9 @@ def build_fan_card_vms(
     by_id = {f.id: f for f in fans}
     sv = sensor_values or {}
     hdrs = headers or []
+    # DEC-417: a header's pump role is the daemon's third floor term; without it a
+    # member authored before the assignment reads a 20% floor the daemon holds at 30.
+    pump_ids = pump_role_header_ids(hdrs)
     override_control_ids = {o.control_id for o in overrides}
 
     cards: list[FanCardVM] = []
@@ -291,7 +295,7 @@ def build_fan_card_vms(
                 # A profile member with no live reading is OFFLINE, never hidden.
                 states.append(FanState.OFFLINE)
                 continue
-            floor = member_minimum_pct(control, member)
+            floor = member_minimum_pct(control, member, pump_ids)
             states.append(_derive_state(fan, overridden=overridden, floor=floor))
             if fan.rpm is not None:
                 rpms.append(fan.rpm)
