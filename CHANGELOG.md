@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.83.1] — 2026-09-24
+
 ### Fixed
 
 **A PWM test stopped because the fan became a pump says so** (`TS-aw`, DEC-418; daemon ≥ 2.56.0).
