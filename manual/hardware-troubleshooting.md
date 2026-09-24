@@ -91,10 +91,11 @@ If you have just powered the machine on, give the pump a minute and run it again
 ### Safety
 
 - **A pump is never driven below 30%, and no header is ever driven to 0%.** The daemon clamps every duty itself; nothing the GUI sends can lower that floor.
-- **A run that stops early never leaves the fan running slower than it found it.** That guarantee comes from the daemon restoring the header's original speed on the way out (next bullet), not from the order duties are tested in. On daemon 2.40.0+ the sweep runs *down from the top duty and back up again* rather than climbing once, so the old "low to high, therefore never slower" reasoning no longer holds — the conclusion does, but the restore is what carries it.
+- **A run that stops early never leaves the fan running slower than it found it** — with one exception, a fan whose driver stops responding (below). That guarantee comes from the daemon restoring the header's original speed on the way out (next bullet), not from the order duties are tested in. On daemon 2.40.0+ the sweep runs *down from the top duty and back up again* rather than climbing once, so the old "low to high, therefore never slower" reasoning no longer holds — the conclusion does, but the restore is what carries it.
 - **Curve control for every fan is paused while the test runs**, and each fan holds its last duty. Thermal safety is unaffected and still overrides everything — the test refuses to start while the system is hot or while thermal protection is active, and stops if either happens mid-run.
 - The header's original speed is restored on every exit path on which nothing else owns the fan: finishing, cancelling, a failed write, interference, or a thermal stop. **This happens in the daemon**, so closing the window — or the GUI crashing — does not leave a fan stuck at a test speed.
 - The two exceptions are both deliberate, and both leave the fan running *faster* rather than slower: if thermal protection kicks in it keeps the fan high and the original speed is not put back until it releases, and if the daemon is shutting down the header is handed to the motherboard instead. The result tells you which happened, so the window never claims a speed was restored when it was not.
+- **A third exception can leave the fan slower (daemon 2.56.0+):** if the fan's driver stops answering mid-test — a reading does not come back within 2 seconds — the test stops and the daemon does not write to that fan again, because a write to a driver that has stopped responding could stall control of every motherboard fan. The fan stays at the test speed it was on, never below 20 % (30 % for a pump), until your profile drives it again. The result says the original speed was not restored. A header that became a pump during the test is still put back, at 30 % or more.
 
 ### Behaviour characterisation (daemon 2.40.0+)
 
@@ -205,7 +206,7 @@ The classic Linux tool for this (`pwmconfig`) stops each fan in turn and watches
 - **A pump whose tachometer stops reporting mid-test aborts the run immediately** and puts the header back.
 - **Two cycles are run, not one** — so a fan that happened to drift while the test was looking cannot be mistaken for one that responded.
 - Curve control is paused for this header while the test runs, and every other fan holds its last speed. Thermal protection still overrides everything, and the test refuses to start — or stops — if it engages.
-- The original speed is restored on every exit path, by the **daemon**, so closing the window or crashing the app strands nothing. The same two deliberate exceptions apply as for the sweep above, and both leave the fan running faster rather than slower.
+- The original speed is restored on every exit path, by the **daemon**, so closing the window or crashing the app strands nothing. The thermal-protection and shutdown exceptions described for the sweep above apply here too, and both leave the fan running faster rather than slower.
 
 ### About the timings
 

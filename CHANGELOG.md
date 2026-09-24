@@ -13,6 +13,15 @@ advice to run the test again, and leave out the before-and-after RPM line of the
 not change whether your fans read as verified. The PWM Test Report files it as unavailable. Older
 GUIs show the daemon's result name with a note that this version does not recognise it.
 
+**A PWM characterisation whose fan stops responding says the original speed was not put back**
+(`PTR-v`, DEC-420; daemon ≥ 2.56.0). If a reading of the fan does not come back within 2 seconds,
+the daemon now stops the test and does not write to that fan again. A write to a driver that has
+stopped responding could stall control of every motherboard fan. The fan stays at the test speed it
+was on, never below 20 % (30 % for a pump), and the result reads "The original speed was not
+restored (Skipped unresponsive), so the header is still at the last tested duty", through the note
+this version already shows for a reason it does not name. The Hardware troubleshooting page of the
+manual now lists this third exception.
+
 **System State's PWM buttons grey out while a PWM test is running** (`ACK-ab`, `ACK-ac`, DEC-415).
 During a single **Test PWM Control**, the **Verify All Writable** and **Characterise PWM Response**
 buttons stayed live. **Characterise** also stayed live for a whole **Verify All Writable** run.
