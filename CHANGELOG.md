@@ -4,6 +4,11 @@
 
 ### Fixed
 
+**The hardware guide explains what the daemon now does on an ARCTIC Fan Controller** (DEC-425). Before
+writing one channel, the daemon sets any channel still at the driver's starting 0% to full speed. A
+profile that controls only some channels therefore leaves the rest running at 100% instead of stopping
+them.
+
 **The recovery advice says the guard covers every Gigabyte board, and how to turn it off** (DEC-424). The
 missing-headers alert, the 0x8883 chip note and the manual now say the daemon package suppresses `nct6775`
 and `w83627ehf` on every Gigabyte board, not only on the boards it lists. The manual shows the new journal
