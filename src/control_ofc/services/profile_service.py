@@ -778,6 +778,9 @@ class Profile:
             profile.controls = [_migrate_control_to_v4(c) for c in profile.controls]
             # DEC-102 sanitization runs on every load, regardless of schema.
             _drop_dead_hwmon_members(profile.controls)
+            # DEC-423: and so does the pump/CPU floor (see the main path below).
+            for control in profile.controls:
+                heal_pump_floor(control)
             return profile
         # v2→v3 was non-structural (new fields with defaults).
         # v3→v4 lifts ``minimum_pct`` to the role-derived floor where the
@@ -803,8 +806,17 @@ class Profile:
         # schema version) can carry a non-zero stop on a pump/CPU control — which
         # the engine would clamp and the daemon would reject (PUMP_STOP_FORBIDDEN).
         # Normalise to 0 on every load so the profile is consistent and accepted.
+        #
+        # [SAFETY] DEC-423: the same reasoning applies to the pump/CPU MINIMUM,
+        # which until then was raised only when a member was edited. A control can
+        # become pump/CPU after its profile is stored — a chip joins the cooler
+        # list (the Kraken 2024 Elite did), or a header's label comes to name a
+        # pump — and the daemon's validate() then refuses the stored minimum
+        # (FLOOR_TOO_LOW). Activation saves first, so without this it would send
+        # that profile only to have it refused. See `heal_pump_floor` for why it
+        # is the enforced 30% alone and not the whole role floor.
         for control in controls:
-            sanitize_pump_stop(control)
+            heal_pump_floor(control)
 
         return Profile(
             id=data.get("id", str(uuid.uuid4())[:8]),
@@ -1055,6 +1067,30 @@ def sanitize_pump_stop(control: LogicalControl) -> bool:
         infer_member_role(m) == CONTROL_ROLE_CPU_PUMP for m in control.members
     ):
         control.stop_pct = 0.0
+        return True
+    return False
+
+
+def heal_pump_floor(control: LogicalControl) -> bool:
+    """Raise a pump/CPU control's minimum to the floor the daemon ENFORCES (DEC-423).
+
+    Runs on every profile load, beside the ``stop_pct`` sanitisation it also
+    performs. Deliberately narrower than :func:`apply_role_floor`: only the pump/
+    CPU floor (30%) is enforced — the daemon's ``validate()`` rejects a pump/CPU
+    control below it (``FLOOR_TOO_LOW``) and its engine clamps to it — while the
+    chassis 20% is a DEFAULT the Controls page applies when members change, and a
+    user may keep a chassis control below it (docs/05: the GUI never silently
+    lowers — or overrides — an explicit user-set value). Healing the chassis
+    default on load would override exactly that choice on every open.
+
+    Only ever raises. Returns True when ``minimum_pct`` was raised.
+    """
+    sanitize_pump_stop(control)
+    if not any(infer_member_role(m) == CONTROL_ROLE_CPU_PUMP for m in control.members):
+        return False
+    floor = role_minimum_pct(CONTROL_ROLE_CPU_PUMP)
+    if control.minimum_pct < floor:
+        control.minimum_pct = floor
         return True
     return False
 
@@ -1405,7 +1441,10 @@ def build_aio_controls(
             curve_id=rad_curve.id,
             members=list(radiator_members),
         )
-        apply_role_floor(rad_control)  # 20% chassis floor
+        # The role floor: 20% for a radiator fan on a motherboard header, 30% for
+        # one on a liquid cooler's own fan channel (`_member_is_aio_header`). This
+        # comment said "20% chassis floor", which was never true for a Kraken.
+        apply_role_floor(rad_control)
         profile.controls.append(rad_control)
         created.append(rad_control)
 

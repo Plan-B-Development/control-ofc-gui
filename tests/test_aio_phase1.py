@@ -30,7 +30,7 @@ from control_ofc.services.profile_service import (
 
 class TestCoolantClassification:
     def test_kraken_chip_classifies_coolant_high(self):
-        for chip in ("x53", "z53", "kraken2023", "kraken2023elite", "kraken2"):
+        for chip in ("x53", "z53", "kraken2023", "kraken2023elite", "kraken2024elite", "kraken2"):
             c = classify_sensor(chip, "temp1")
             assert c.source_class == "coolant", chip
             assert c.confidence == "high", chip
@@ -229,6 +229,23 @@ class TestAioRoleFloor:
         )
         assert infer_member_role(m) == CONTROL_ROLE_CPU_PUMP
         assert control_minimum_pct([m]) == 30.0
+
+    def test_kraken_2024_elite_fan_channel_floors_at_30(self):
+        # [SAFETY] DEC-423 (`BRD-c`): its channel 2 is labelled "Fan speed", which
+        # names no pump or CPU, so only the chip in the stable id floors it — and
+        # until the chip joined the cooler list it got the 20% chassis floor. The
+        # same label on a motherboard header stays chassis: the chip decides.
+        m = ControlMember(
+            source="hwmon",
+            member_id="hwmon:kraken2024elite:nodev:pwm2:Fan speed",
+            member_label="Fan speed",
+        )
+        assert infer_member_role(m) == CONTROL_ROLE_CPU_PUMP
+        assert control_minimum_pct([m]) == 30.0
+        mobo = ControlMember(
+            source="hwmon", member_id="hwmon:it8696:d:pwm2:Fan speed", member_label="Fan speed"
+        )
+        assert infer_member_role(mobo) == CONTROL_ROLE_CHASSIS
 
     def test_aquacomputer_pump_floors_at_30(self):
         m = ControlMember(

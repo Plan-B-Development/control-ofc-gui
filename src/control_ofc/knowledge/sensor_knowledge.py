@@ -74,7 +74,11 @@ _ASUS_CPUTIN_BOGUS_CHIPS = {
 # external probes. Any coolant/water/liquid label is coolant on any chip. The
 # user can force any sensor to coolant via an override (see
 # :func:`classify_sensor_with_overrides`).
-_KRAKEN_COOLANT_CHIPS = frozenset({"x53", "z53", "kraken2023", "kraken2023elite", "kraken2"})
+# `kraken2024elite` (kernel 7.3+) joined with DEC-423 (`BRD-c`), in step with the
+# daemon's `LIQUID_COOLER_CHIPS` / `COOLANT_TEMP_CHIPS`.
+_KRAKEN_COOLANT_CHIPS = frozenset(
+    {"x53", "z53", "kraken2023", "kraken2023elite", "kraken2024elite", "kraken2"}
+)
 _LIQUID_COOLER_CHIPS = _KRAKEN_COOLANT_CHIPS | frozenset({"d5next", "highflownext", "leakshield"})
 _COOLANT_LABEL_HINTS = ("coolant", "water", "liquid")
 

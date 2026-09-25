@@ -257,7 +257,14 @@ reject + an independent eval-time clamp). The GUI-side defaults are:
 
 The role floor is a **default**, not a ceiling — users can raise
 `minimum_pct` further via the controls page, and the GUI never
-silently lowers an explicit user-set value. The curve editor's drag,
+silently lowers an explicit user-set value. **One floor is re-applied on
+every load (DEC-423):** a control with a pump/CPU member is raised to 30%
+if it is below it, because the daemon's `validate()` rejects it otherwise
+(`FLOOR_TOO_LOW`) and activation saves first. A control can become pump/CPU
+after its profile is stored — a chip joins the cooler list, or a header's
+label comes to name a pump. The chassis 20% default is **not** re-imposed on
+load: a user may keep a chassis control below it, and the daemon enforces
+no chassis floor. The curve editor's drag,
 table edit, keyboard nudge, and Linear/Flat spinbox lower bound all
 clamp to the strictest floor across controls referencing the curve,
 so a curve shared by a chassis control (20%) and a CPU control (30%)

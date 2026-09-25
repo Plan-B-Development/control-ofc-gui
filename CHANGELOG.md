@@ -4,6 +4,15 @@
 
 ### Fixed
 
+**The NZXT Kraken 2024 Elite is recognised as a liquid cooler** (DEC-423). The Kraken 2024 Elite
+(`kraken2024elite`, supported by Linux 7.3 and later) was missing from Control-OFC's cooler list. Its pump
+was always protected, because the driver labels it "Pump speed". But it was not flagged as an AIO, and
+its radiator fan got the 20% chassis floor instead of the 30% cooler floor. Its coolant temperature was
+recognised only through its label. All three now match the other Kraken models. A profile saved
+earlier with that fan at 20% is raised to 30% when it loads, so it still activates. More generally, any
+control with a pump or CPU fan in it is raised to the 30% the daemon requires, if it is below it, each
+time its profile loads. A chassis control you set below the usual 20% is left as you set it.
+
 **The AMD GPU advisory covers the one hang that was traced and fixed, on the kernels that carry it**
 (DEC-422). A current daemon raises one advisory, `rdna_mes_hang_drm_amd_4765` (drm/amd #4765). It covers a
 hang when a compute job runs alongside a 3D workload, on RDNA3, RDNA3.5 and RDNA4 GPUs, integrated ones

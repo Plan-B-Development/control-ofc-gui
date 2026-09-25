@@ -272,6 +272,26 @@
       "is_aio": true,
       "role": "pump",
       "pump_protected": true
+    },
+    {
+      "name": "kraken_2024_elite_pump_label",
+      "why": "DEC-423 (BRD-c): the Kraken 2024 Elite (nzxt-kraken3, kernel 7.3+) labels channel 1 \"Pump speed\". The label rule protects it, and with the chip on the cooler list is_aio holds too.",
+      "chip_name": "kraken2024elite",
+      "pwm_index": 1,
+      "label": "Pump speed",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "kraken_2024_elite_fan_channel_is_a_radiator_fan",
+      "why": "DEC-423 (BRD-c): channel 2 is labelled \"Fan speed\", which no label rule claims, so the chip mapping decides. Before the chip joined the cooler list it fell through to unknown and is_aio was false; it is a radiator fan, and not pump-protected.",
+      "chip_name": "kraken2024elite",
+      "pwm_index": 2,
+      "label": "Fan speed",
+      "is_aio": true,
+      "role": "radiator_fan",
+      "pump_protected": false
     }
   ]
 }
