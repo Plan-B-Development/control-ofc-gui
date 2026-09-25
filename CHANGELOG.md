@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.83.2] — 2026-09-25
+
 ### Fixed
 
 **The hardware guide explains what the daemon now does on an ARCTIC Fan Controller** (DEC-425). Before
