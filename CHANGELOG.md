@@ -4,6 +4,16 @@
 
 ### Fixed
 
+**The AMD GPU advisory covers the one hang that was traced and fixed, on the kernels that carry it**
+(DEC-422). A current daemon raises one advisory, `rdna_mes_hang_drm_amd_4765` (drm/amd #4765). It covers a
+hang when a compute job runs alongside a 3D workload, on RDNA3, RDNA3.5 and RDNA4 GPUs, integrated ones
+included, running 6.17.9–6.17.13 or 6.18.0–6.18.6. It is fixed in 6.18.7 and 6.19. The popup's details
+say to update to the latest 6.18 or a current 7.x kernel, and never to move to 6.15–6.17. Because the id
+is new, the popup appears again even if you dismissed the old 6.18/6.19 advisory. The two retired
+advisories keep their corrected explanation for anyone still on daemon v2.56.0 or older. The manual's
+advisory answer now says where the warning is listed: on System State, under GPU diagnostics, not on
+the Logs page.
+
 **The missing-fan-headers alert gives one recovery ladder instead of a kernel-log check that could not
 work** (DEC-421). On Gigabyte boards with two fan chips, the alert used to ask you to read `DEVID=0xFFFF`
 or `DEVID=0x8883` from `dmesg` and pick a fix. The driver never prints either line normally, and a

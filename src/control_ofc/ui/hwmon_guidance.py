@@ -2205,11 +2205,49 @@ class AmdGpuGuidance:
 
 
 AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
-    # Curator 2026-09-24 (DEC-421): both entries corrected. The daemon still
-    # raises these ids with its own (older) message until its detection rules
-    # are revised (register row BRD-b); this text is shown under that message
-    # and must be true for anyone who sees it — on any 6.18/6.19 RDNA3/4
-    # kernel, and on any R9700 with a PMFW fan_curve.
+    # DEC-422: the one advisory a current daemon raises. It replaces
+    # `rdna_hang_kernel_6_18_6_19` under a new id, so a user who dismissed the old
+    # popup sees the corrected advice, and it is named for the upstream issue
+    # rather than a kernel range, so the id need not change again if the range is
+    # ever corrected.
+    AmdGpuGuidance(
+        warning_id="rdna_mes_hang_drm_amd_4765",
+        summary=(
+            "A known amdgpu hang (drm/amd #4765) on RDNA3/RDNA4 GPUs, fixed in 6.18.7 "
+            "and 6.19 — update the kernel."
+        ),
+        details=[
+            "What it is: a change that entered Linux 6.18 made evicting a process on "
+            "a MES GPU suspend the whole MES scheduler, which also stops the kernel's "
+            "own queues. A compute job running alongside a 3D workload can then time "
+            "out and hang the GPU. Every RDNA3, RDNA3.5 and RDNA4 GPU uses MES, "
+            "integrated ones included.",
+            "Which kernels: 6.18.0 to 6.18.6, and 6.17.9 to 6.17.13 — the change was "
+            "backported into 6.17.9 and the fix never was, and 6.17 is end-of-life. "
+            "Fixed in 6.18.7 and 6.19.0 (commit 3fd20580b96a, 'No need to suspend "
+            "whole MES to evict process'). The 6.12 and 6.6 longterm kernels never "
+            "had it.",
+            "What to do: update to the latest 6.18 longterm point release or a "
+            "current stable 7.x kernel. Do NOT move to 6.15, 6.16 or 6.17 — none of "
+            "them was ever a longterm kernel, and 6.17.9 onward carries this bug.",
+            "Why a fan-control tool warns about it: while the system is hung nothing "
+            "can change a fan's speed — motherboard fans hold their last duty — so "
+            "running fan control on an affected kernel is not safe.",
+            "The daemon matches this on the kernel's version number. A distribution "
+            "kernel that backported the fix may be flagged anyway, and one that "
+            "carries the bug under a .0 patch level (for example Ubuntu's 6.17.0-NN) "
+            "cannot be detected.",
+        ],
+        references=[
+            "https://gitlab.freedesktop.org/drm/amd/-/issues/4765",
+            "https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7",
+            "https://www.kernel.org/category/releases.html",
+        ],
+    ),
+    # Retired by the daemon in DEC-422 but kept here, because older daemons still
+    # emit them — so this text is shown under THEIR messages and must be true for
+    # anyone who sees it: on any 6.18/6.19 RDNA3/4 kernel, and on any R9700 with
+    # a PMFW fan_curve. Both were corrected by the curator on 2026-09-24 (DEC-421).
     AmdGpuGuidance(
         warning_id="rdna_hang_kernel_6_18_6_19",
         summary=(
@@ -2217,6 +2255,10 @@ AMD_GPU_GUIDANCE_DB: list[AmdGpuGuidance] = [
             "6.18.7. Stay on a maintained kernel — 6.15-6.17 were never longterm."
         ),
         details=[
+            "The message above comes from a daemon older than DEC-422, and its "
+            "advice to pin a 6.15-6.17 kernel is wrong: ignore that part, and "
+            "update the daemon. None of those kernels was ever longterm, and "
+            "6.17.9 onward carries a known hang (drm/amd #4765).",
             "Phoronix (December 2025) reported RDNA3 (RX 7000) and RDNA4 "
             "(RX 9000) hard hangs under benchmark load on kernels 6.18 and "
             "6.19. It was unbisected at the time, and no follow-up has tied it "

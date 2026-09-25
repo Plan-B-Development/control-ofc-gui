@@ -61,7 +61,8 @@ JOURNAL_LINE_LIMIT = 100
 JOURNAL_TIMEOUT_S = 5
 
 # DEC-098: extra system/kernel context captured in the support bundle so
-# triagers can identify amdgpu-regression kernels (e.g. 6.19 RDNA hang) and
+# triagers can identify amdgpu-regression kernels (e.g. the drm/amd #4765 hang,
+# DEC-422) and
 # verify boot parameters (`amdgpu.ppfeaturemask`) without asking the user
 # to run extra commands.
 KERNEL_LOG_LINES = 200
@@ -778,8 +779,9 @@ class DiagnosticsService(QObject):
             missing.append("journal: journalctl returned no output")
 
         # DEC-098: kernel ring-buffer entries scoped to amdgpu/smu so a
-        # silent fan_curve write failure (R9700 SMU mismatch) leaves
-        # forensic evidence in the bundle.
+        # silent fan_curve write failure leaves forensic evidence in the bundle.
+        # (Not the SMU interface-version message: that one is benign on every
+        # Navi 48 card and 7.0 dropped it — DEC-421/422.)
         kernel_log = self.fetch_kernel_log_amdgpu()
         if kernel_log:
             bundle["kernel_log_amdgpu"] = kernel_log

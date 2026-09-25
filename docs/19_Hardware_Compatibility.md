@@ -778,26 +778,28 @@ and lists every match on the System State page. Acknowledged warnings are
 remembered in `app_settings.acknowledged_kernel_warnings` so the popup
 does not re-fire on every reconnect.
 
-Currently catalogued (severity in parentheses):
+Currently catalogued (DEC-422):
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
-| `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hangs under benchmark load were reported on both ([Phoronix, December 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)), unbisected at the time. One bisected RDNA4 hang on 6.18 ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765), a 3D workload with a compute job in the background) was **fixed in 6.18.7** and 6.19 by `3fd20580b96a`. Phoronix has since published working RX 7000 / RX 9000 results on 6.18 and 7.x. (ROCm #6101, which this row used to cite, carries one unbootable-kernel report on 6.18.20 / 6.19.10 with out-of-tree `amdgpu-dkms`, not hangs under load.) Pre-RDNA3 GPUs are unaffected. |
-| `smu_mismatch_navi48_r9700` | all current kernels | R9700 (PCI `0x7551`, which also covers the R9700S and R9600D) | Critical | **The premise is refuted (DEC-421).** The SMU interface-version message it is keyed on (driver `0x2E`, firmware `0x32` or `0x33`) appears on **every** Navi 48 card, the RX 9070 XT included, and is not a fault. The firmware is designed to be backward compatible, and kernel 7.0 removed the message because ["it just leads to user confusion"](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713). `pwm1` is read-only on every RDNA4 card by driver design; control goes through the PMFW `fan_curve`, which works on at least some R9700s. Separately, a few R9700 owners report the fan not responding under load, one at 109 °C ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). Those reports are per-unit and unresolved; AMD advised an RMA for the original reporter's card. |
+| `rdna_mes_hang_drm_amd_4765` | 6.18.0–6.18.6, and 6.17.9–6.17.13 | RDNA3, RDNA3.5 and RDNA4 GPUs: RX 7000 / RX 9000, Radeon Pro W7000 and AI PRO, and the RDNA3 / RDNA3.5 integrated GPUs (780M, 890M, 8060S …) | Critical | A change that entered 6.18 made evicting a process on a MES GPU suspend the whole MES scheduler. That also stops the kernel's own queues, so a compute job running alongside a 3D workload can time out and hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). The change was backported into 6.17.9, but the fix never was, and 6.17 is end-of-life. **Fixed in 6.18.7 and 6.19.0** by `3fd20580b96a` ([ChangeLog-6.18.7](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7)). The 6.12 and 6.6 longterm kernels never had it. Every GC 11.x / 12.x GPU runs MES, hence the hardware scope. The match is on the version number, so a distribution kernel that backported the fix may still be flagged, and one carrying the bug under a `.0` patch level cannot be detected. |
+
+**Retired by DEC-422.** Daemon v2.56.0 and older still raise these two, and the GUI keeps its guidance for both:
+
+- `rdna_hang_kernel_6_18_6_19` flagged every 6.18.x / 6.19.x kernel on RDNA3/RDNA4 as Critical. It advised pinning 6.15–6.17; none of those was ever a longterm kernel, and 6.17.9 onward carries the hang above. Its evidence was an unbisected report ([Phoronix, December 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)). Phoronix has since published working RX 7000 / RX 9000 results on 6.18 and 7.x. (ROCm #6101, which this row used to cite, carries one unbootable-kernel report on 6.18.20 / 6.19.10 with out-of-tree `amdgpu-dkms`, not hangs under load.)
+- `smu_mismatch_navi48_r9700` was keyed on the SMU interface-version message (driver `0x2E`, firmware `0x32` or `0x33`). That message appears on **every** Navi 48 card, the RX 9070 XT included, and is not a fault. The firmware is designed to be backward compatible, and kernel 7.0 removed the message because ["it just leads to user confusion"](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713). `pwm1` is read-only on every RDNA4 card by driver design; control goes through the PMFW `fan_curve`, which works on at least some R9700s. Separately, a few R9700 owners report the fan not responding under load, one at 109 °C ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). Those reports are per-unit and unresolved; AMD advised an RMA for the original reporter's card.
 
 **Mitigations:**
 
-- For `rdna_hang_kernel_6_18_6_19`: if you see hangs, update to the **latest 6.18
-  longterm** point release or a current stable **7.x** kernel. **Do not** move to
-  6.15, 6.16 or 6.17 — none of them was ever a longterm kernel (the kernel.org
-  longterm lines are 6.18, 6.12, 6.6, 6.1, 5.15 and 5.10), and all three are
-  end-of-life. Until 2026-09-24 this section said the opposite, and daemons up to
-  v2.56 still word the advisory that way; the rule itself is being revised
-  (register row BRD-b).
-- For `smu_mismatch_navi48_r9700`: nothing about the version message needs
+- For `rdna_mes_hang_drm_amd_4765`, and the retired `rdna_hang_kernel_6_18_6_19`: update to the
+  **latest 6.18 longterm** point release or a current stable **7.x** kernel. **Do not**
+  move to 6.15, 6.16 or 6.17. None of them was ever a longterm kernel (the kernel.org
+  longterm lines are 6.18, 6.12, 6.6, 6.1, 5.15 and 5.10), all three are end-of-life,
+  and 6.17.9 onward carries this hang. Until 2026-09-24 this section said the opposite.
+- For the retired `smu_mismatch_navi48_r9700`: nothing about the version message needs
   fixing. If an R9700's fan does not follow a curve, return it to automatic mode
-  (`POST /gpu/{bdf}/fan/reset`), compare its RPM under load, and consider a
-  warranty claim — no pending kernel change addresses it.
+  (`POST /gpu/{bdf}/fan/reset`), compare its RPM under load, and consider a warranty
+  claim — no pending kernel change addresses it.
 
 The catalogue is data-only — adding a new entry takes a 30-line PR
 against `kernel_warnings.rs`. If your kernel/hardware combination is
@@ -831,7 +833,7 @@ directory and the driver DMI tables cited inline above):
 **GPU device IDs & kernel regressions**
 - AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)
 - [Phoronix — RDNA3/RDNA4 hard hang on Linux 6.18/6.19 (EOY 2025)](https://www.phoronix.com/review/old-amdgpu-eoy2025)
-- [drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765) — bisected RDNA4 hang on 6.18; fixed by `3fd20580b96a` in 6.18.7 and 6.19
+- [drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765) — a bisected hang, reported on RDNA4, in the MES eviction path that every RDNA3 / RDNA4 GPU runs. Introduced by `079ae5118e1f` in 6.18 and backported to 6.17.9 ([ChangeLog-6.17.9](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.17.9)); fixed by `3fd20580b96a` in 6.18.7 ([ChangeLog-6.18.7](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7)) and 6.19.0, never on 6.17.y (DEC-422)
 - [kernel.org releases](https://www.kernel.org/category/releases.html) — the longterm lines (6.18, 6.12, 6.6, 6.1, 5.15, 5.10); 6.15–6.17 were never longterm
 - [Kernel commit e471627d5627](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713) (v7.0) — "drm/amdgpu/pm: drop SMU driver if version not matched messages — It just leads to user confusion"
 - [ROCm Issue #6101](https://github.com/ROCm/ROCm/issues/6101) — per-unit R9700 fan faults; an AMD engineer there confirms the PMFW path works and calls the interface mismatch harmless. **Closed 2026-07-09 as `completed`**, with post-closure reports through 2026-08-28. Its 6.18.20 / 6.19.10 rows are an unbootable-kernel report on out-of-tree `amdgpu-dkms`, not evidence of hangs under load.

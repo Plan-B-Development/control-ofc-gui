@@ -493,8 +493,8 @@ class MainWindow(QWidget):
             self._state.set_connection(ConnectionState.DISCONNECTED)
             self._state.set_mode(OperationMode.READ_ONLY)
 
-        # DEC-098: surface daemon-emitted kernel-version warnings (e.g. 6.19
-        # RDNA hard hang, R9700 SMU mismatch) as a one-time popup. We listen
+        # DEC-098: surface daemon-emitted kernel-version warnings (since DEC-422
+        # the drm/amd #4765 hang on RDNA3/RDNA4) as a one-time popup. We listen
         # on capabilities_updated rather than checking once at startup so a
         # daemon restart with new detection logic refreshes the popup state.
         self._state.capabilities_updated.connect(self._on_capabilities_updated_for_kernel_warnings)

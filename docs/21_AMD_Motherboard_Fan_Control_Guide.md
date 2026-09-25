@@ -1314,13 +1314,14 @@ limitations.
 ## Known kernel-version regressions
 
 If you have an AMD discrete GPU paired with one of the boards in this
-guide, also check the daemon's kernel-warning catalogue. Two regressions
-are currently flagged:
+guide, also check the daemon's kernel-warning catalogue. One regression is
+currently flagged (DEC-422):
 
-- **`rdna_hang_kernel_6_18_6_19` (Critical):** raised on Linux **6.18.x and 6.19.x** with an RDNA3/RDNA4 GPU (RX 7000 / 9000 series), after hard hangs under benchmark load were reported on both ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)). One bisected RDNA4 hang was fixed in **6.18.7** ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). If you see hangs, move to the latest 6.18 longterm point release or a current 7.x kernel — **not** to 6.15–6.17, which were never longterm and are end-of-life. Daemons up to v2.56 word this advisory the opposite way.
-- **`smu_mismatch_navi48_r9700` (Critical):** raised for an AMD R9700 (PCI `0x7551`). The SMU interface-version message it is keyed on appears on every Navi 48 card, the RX 9070 XT included, and is not a fault (kernel 7.0 removed it as confusing). `pwm1` is read-only on every RDNA4 card by design; the PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)).
+- **`rdna_mes_hang_drm_amd_4765` (Critical):** raised on Linux **6.18.0–6.18.6 and 6.17.9–6.17.13** with an RDNA3, RDNA3.5 or RDNA4 GPU, the integrated ones included. A compute job running alongside a 3D workload can hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)); it is **fixed in 6.18.7 and 6.19.0**. Update to the latest 6.18 longterm point release or a current 7.x kernel — **not** to 6.15–6.17, which were never longterm, are end-of-life, and from 6.17.9 on carry this bug.
 
-The GUI raises a one-time popup when these match your hardware; the
+Daemon v2.56.0 and older raise two retired advisories instead. `rdna_hang_kernel_6_18_6_19` flagged every 6.18/6.19 kernel and advised pinning 6.15–6.17. `smu_mismatch_navi48_r9700` was keyed on an SMU interface-version message that appears on every Navi 48 card and is not a fault (kernel 7.0 removed it as confusing). The PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). The GUI still explains both correctly.
+
+The GUI raises a one-time popup when an advisory matches your hardware; the
 catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and
 surfaced via `GET /capabilities`. See
 `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions

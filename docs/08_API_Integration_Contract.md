@@ -124,9 +124,16 @@ Notable fields:
   contract-mismatch resolution).
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions
-  applicable to the active GPU (e.g. `rdna_hang_kernel_6_18_6_19`,
-  `smu_mismatch_navi48_r9700` — both rules are being revised after the
-  2026-09-24 review found their advice wrong, register row BRD-b). Field is omitted entirely when empty so
+  applicable to the active GPU. **Since DEC-422** (the first daemon release after
+  v2.56.0) the only id raised is `rdna_mes_hang_drm_amd_4765` (drm/amd #4765:
+  RDNA3/RDNA3.5/RDNA4 on 6.17.9–6.17.13 and 6.18.0–6.18.6, `critical`). Daemon
+  v2.56.0 and older raise `rdna_hang_kernel_6_18_6_19` and
+  `smu_mismatch_navi48_r9700` instead. Both were retired because their advice was
+  wrong. The GUI keeps guidance for them, and that guidance CORRECTS the older
+  daemon's own `message`, which the popup still shows as its main text. That
+  message, for `rdna_hang_kernel_6_18_6_19`, still says to pin 6.15–6.17, and the
+  details say to ignore that part. Ids are opaque, and a client must render an id it does not
+  know with the daemon's `message` (the GUI does). Field is omitted entirely when empty so
   pre-1.6.1 daemons (which don't set it) yield an empty list on the GUI
   side without parser changes. The GUI surfaces `high` and `critical`
   entries as a one-time popup gated by

@@ -61,7 +61,8 @@ writes, PMFW handling, or GPU display naming.
   driver `0x2E` vs firmware `0x32`/`0x33` interface mismatch on every Navi 48 part,
   the RX 9070 XT included; the firmware is designed to be backward compatible, and
   kernel 7.0 dropped the message ("It just leads to user confusion", `e471627d5627`).
-  Do not key a fault diagnosis on it (register row BRD-b).
+  Do not key a fault diagnosis on it. The daemon's `smu_mismatch_navi48_r9700`
+  advisory did, and DEC-422 retired it.
 - The `amdgpu.ppfeaturemask` kernel parameter is required for PMFW `fan_curve` access.
 - ppfeaturemask bit 14 (`0x4000`) is required for PMFW — diagnostics must explain this
   when it is missing.
