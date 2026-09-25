@@ -4,6 +4,13 @@
 
 ### Fixed
 
+**The recovery advice says the guard covers every Gigabyte board, and how to turn it off** (DEC-424). The
+missing-headers alert, the 0x8883 chip note and the manual now say the daemon package suppresses `nct6775`
+and `w83627ehf` on every Gigabyte board, not only on the boards it lists. The manual shows the new journal
+line and gives the one way to turn the guard off: an empty `/etc/modprobe.d/control-ofc-superio.conf`, which
+masks the package's copy. One guide still said the daemon's 1 Hz polling is "within safe limits" on ASUS WMI
+boards. The kernel names no safe rate, and the guide now says what the kernel does say.
+
 **The NZXT Kraken 2024 Elite is recognised as a liquid cooler** (DEC-423). The Kraken 2024 Elite
 (`kraken2024elite`, supported by Linux 7.3 and later) was missing from Control-OFC's cooler list. Its pump
 was always protected, because the driver labels it "Pump speed". But it was not flagged as an AIO, and

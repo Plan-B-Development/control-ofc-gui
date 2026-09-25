@@ -411,7 +411,7 @@ The PRIME X470-PRO is called out as particularly bad. The risk increases
 with polling frequency. BIOS updates with method version >= 2 may improve
 stability.
 
-The daemon polls at 1 Hz, which is within safe limits for all known boards.
+The kernel names no safe polling rate, so this doc no longer claims one (DEC-421's retraction, missed here until DEC-424). The driver reads each WMI sensor group from the BIOS at most about once a second, however many programs read its files, so extra readers add no WMI calls. The kernel's advice is a soak test while polling before you leave the machine unattended.
 
 #### Supported boards (AMD, from kernel docs)
 

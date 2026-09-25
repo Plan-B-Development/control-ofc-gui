@@ -169,8 +169,8 @@ chip gives, so this is the order for both):**
    `Found IT8xxxE chip` line per chip. No lines at all: install or update
    `it87-dkms-git` (older, pre-2026-03 builds also need `options it87 mmio=on`).
 2. **Stop the trigger.** Keep `nct6775` and `w83627ehf` from loading — the
-   daemon package's modprobe guard does this on the Gigabyte boards it lists —
-   and do not run `sensors-detect`.
+   daemon package's modprobe guard does this on every Gigabyte board (DEC-424;
+   before that, only on the boards it listed) — and do not run `sensors-detect`.
 3. **Reboot**, then rescan.
 4. **Still missing: remove mains power** (PSU switch off or unplugged, about ten
    seconds), then boot. The bridge keeps standby power, so a reboot or a normal

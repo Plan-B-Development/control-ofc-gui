@@ -760,7 +760,7 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             "do (before they even read the device ID, so they do the damage "
             "while failing to load on an ITE board), and so does sensors-detect. "
             "Stop the trigger (the control-ofc-daemon package ships a guard that "
-            "suppresses the two modules on known boards) and reboot; if the chip "
+            "suppresses the two modules on every Gigabyte board) and reboot; if the chip "
             "is still missing, power down FULLY at the wall — on some boards the "
             "latch survives a reboot and a normal shut-down, because the bridge "
             "stays powered on standby.",
@@ -2524,8 +2524,8 @@ def dual_chip_warning_html(
     where measured per-board outcomes live.
 
     **A single-chip row gets its own heading.** DEC-421 lists a few single-chip
-    Gigabyte boards (e.g. X870E AORUS ELITE WIFI7) so the modprobe guard covers
-    them; if that one chip is missing, "dual-chip board" would be false.
+    Gigabyte boards (e.g. X870E AORUS ELITE WIFI7) so the board table knows their
+    complement; if that one chip is missing, "dual-chip board" would be false.
 
     **it87 v2.0 renames the chips** (`it8696_a008090a`, from 2026-09-09 builds,
     register row `BRD-a`). The comparison below is exact, so on such a build the
@@ -2624,7 +2624,7 @@ def dual_chip_warning_html(
         f"<code>sensors-detect</code>, and keep the <code>nct6775</code> / "
         f"<code>w83627ehf</code> modules from loading — they write the unlock "
         f"key even on boards they cannot drive. The daemon package's guard "
-        f"does this for the boards it knows: "
+        f"does this on every Gigabyte board: "
         f"<code>sudo journalctl -b -t control-ofc-superio-guard</code> shows a "
         f"<i>not loading nct6775</i> line when it did. (An empty "
         f"<code>lsmod</code> proves nothing — the modules fail to load on these "

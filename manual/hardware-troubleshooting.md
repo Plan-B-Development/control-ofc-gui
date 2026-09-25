@@ -344,7 +344,7 @@ If you see an `(unverified)` suffix on a header label, treat the assignment as a
 Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or the **Overview** page shows nothing — or less than you expect — work down this list:
 
 - **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** (on the **System State** page) — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
-- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a dual-chip Gigabyte board, where `nct6775` and `w83627ehf` can hide the secondary chip until a full power cut (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). You do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on the affected boards and leaves them alone everywhere else, so the entries above are safe as they stand. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
+- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a dual-chip Gigabyte board, where `nct6775` and `w83627ehf` can hide the secondary chip until a full power cut (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). You do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on every Gigabyte board (Gigabyte boards use ITE chips, which those modules cannot drive) and leaves them alone everywhere else, so the entries above are safe as they stand. If you have a Gigabyte board that really does carry a Nuvoton chip, turn the guard off by creating an **empty** file of the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and rebooting. A same-named file in `/etc` masks the package's copy, and an empty one leaves no rule behind. A copy of the package's file would keep the guard, and a differently-named file does not reliably win. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
 - **No drive temperatures** — NVMe drives report temperatures through the kernel `nvme` driver automatically; SATA/SAS drives need `drivetemp` (already in the daemon's modules-load list above).
 - **`lm_sensors` is optional** — the daemon reads `/sys/class/hwmon` directly and does not use libsensors. Installing `lm_sensors` gives you the `sensors` CLI, which is handy for cross-checking what the kernel exposes.
 
@@ -437,16 +437,18 @@ If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are p
 
 1. **Check whether the package's guard covers your board.** Recent
    `control-ofc-daemon` packages install a guard that suppresses the two modules
-   on the Gigabyte boards it lists, and logs each time it does:
+   on every Gigabyte board, and logs each time it does:
 
    ```
    sudo journalctl -b -t control-ofc-superio-guard
    ```
 
-   A line such as *not loading nct6775: X870E AORUS MASTER has an ITE
-   Super-I/O* means your board is covered — skip to step 3. No line means your
-   board is not on the guard's list (or nothing asked for the modules this
-   boot). Do not use `lsmod` for this: the modules fail to load on these boards
+   A line such as *not loading nct6775: X870E AORUS MASTER is a Gigabyte board,
+   and Gigabyte boards use ITE Super-I/O chips* means your board is covered —
+   skip to step 3. No line means the guard did not act: the board's vendor is
+   not Gigabyte (or the firmware reports no vendor and the board is not one the
+   guard lists), an older package is installed, or nothing asked for the
+   modules this boot. Do not use `lsmod` for this: the modules fail to load on these boards
    even when their probe has already done the damage, so an empty `lsmod` proves
    nothing.
 

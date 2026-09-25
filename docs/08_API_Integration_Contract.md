@@ -1993,8 +1993,10 @@ disconnected from mains power. Older daemons unlock first and read second.
 when nothing answers, and the `0x87,0x87` Nuvoton/Winbond sequence is the one
 that latches the bridge. Where the daemon's curated DMI board table says this
 board's Super-I/O complement is ITE-only, no Nuvoton chip can be waiting behind
-that write, so the leg is **withheld** — the same board list the shipped
-`modprobe` guard uses to keep `nct6775`/`w83627ehf` from writing it. The ITE legs
+that write, so the leg is **withheld**. That is the same curated board list the
+shipped `modprobe` guard names boards from. Since DEC-424 the guard itself
+suppresses `nct6775`/`w83627ehf` on EVERY Gigabyte board, while this probe still
+withholds its leg on the listed boards only (register row `BRD-s`). The ITE legs
 are unaffected, so the diagnostic these boards actually need is unchanged.
 
 When a leg is withheld the response carries a `notes[]` entry naming the base
