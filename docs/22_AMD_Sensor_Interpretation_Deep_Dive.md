@@ -629,8 +629,11 @@ freeze.
 polling. The PRIME X470-PRO is the most-documented affected board.
 
 **GUI handling:** All asus_wmi_sensors classifications carry a standing note
-about potential polling issues. The daemon's 1 Hz polling rate is within
-safe limits.
+about potential polling issues. The kernel names no safe polling rate, so this
+guide does not call the daemon's default 1 Hz poll safe. The kernel's advice is an
+extended soak test while polling before you leave the machine unattended, and
+it says a BIOS whose WMI method version is 2 or later should fix the
+misbehaviour.
 
 Reference: https://docs.kernel.org/hwmon/asus_wmi_sensors.html
 
