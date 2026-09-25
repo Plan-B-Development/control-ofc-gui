@@ -414,8 +414,7 @@ def test_settings_openfan_rows_are_silent_before_capabilities_arrive(qtbot, sett
 
     `capabilities is None` means "not asked", not "no controller". Annotating
     there would make every startup briefly claim the user's hardware is missing,
-    and would also mislabel a daemon too old to publish the field. Same
-    conservative direction as `_apply_wizard_spindown_limit` beside it.
+    and would also mislabel a daemon too old to publish the field.
     """
     state = _state(False)
     page = SettingsPage(state=state, settings_service=settings_service)

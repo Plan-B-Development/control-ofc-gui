@@ -31,10 +31,23 @@ Two consequences worth stating here rather than only in the ADR:
 3. The UI never binds directly to raw JSON.
 4. The GUI must handle partial capability availability.
 5. The GUI must gracefully support absent hardware.
-6. **Every daemon success response carries a top-level `api_version` integer.**
-   The response examples below are abbreviated and may omit it (e.g.
-   activate/deactivate/active/override); the GUI tolerates its absence on older
-   daemons but the current daemon always sends it.
+6. **Most daemon success responses carry a top-level `api_version` integer, but not all.**
+   The response examples below are abbreviated and may omit it. These success bodies carry
+   none on any daemon to date, enumerated from the daemon's route table (DEC-426, `DC-o`):
+   - the diagnostic run snapshots: `POST /hwmon/{id}/characterize`,
+     `GET`/`DELETE /diagnostics/characterization`, `POST /hwmon/{id}/discover-control-path`,
+     `DELETE /diagnostics/control-path` (its `GET` wraps the run in `{api_version, run, records}`),
+     `POST /hwmon/{id}/stall-probe` and `GET`/`DELETE /diagnostics/stall-probe`;
+   - `GET /diagnostics/preflight`;
+   - both verify responses, `POST /hwmon/{id}/verify` and `POST /gpu/{id}/fan/verify`;
+   - the validation session document from `POST`/`GET`/`DELETE /validation/session`,
+     `POST /validation/session/stop` and `GET /validation/sessions/{id}`, and the
+     `{"recorded": true}` from `POST /validation/session/event` and `/measurement`;
+   - `GET /profiles/{id}`, which returns the stored profile file as it is on disk.
+
+   `GET /config` carries it, except that it answers `200 {}` if the daemon cannot
+   serialise its own report (register row `DC-ce`). The GUI tolerates its absence
+   everywhere and gates on `GET /capabilities`, never on a per-response version.
 
 ## Quick reference — curl examples
 
@@ -78,10 +91,11 @@ Use this at startup and on explicit refresh to determine:
 - IPC transport
 - device presence
 - feature support
-- min/max limits — `limits.openfan_stop_timeout_s` is the one a client must act on; see
-  § Safety behaviours to respect → OpenFan. The `pwm_percent_min`/`max` pair is
-  deliberately unmodelled GUI-side (the daemon clamps authoritatively, DEC-163) and is
-  recorded as such in `tests/fixtures/wire_fields.json`.
+- min/max limits — `limits.openfan_stop_timeout_s` bounds a defence-in-depth check, not a
+  held stop, and no client needs to act on it; see § Safety behaviours to respect → OpenFan.
+  It and the `pwm_percent_min`/`max` pair are deliberately unmodelled GUI-side (the daemon
+  clamps authoritatively, DEC-163; the GUI's one reader of the stop timeout was removed by
+  DEC-426) and are recorded as such in `tests/fixtures/wire_fields.json`.
   `limits.diagnostic_max_temp_c` (float, daemon ≥ 2.55.0, DEC-411) is the temperature above
   which any sensor makes a diagnostic refuse or stop — verify, characterisation, control-path
   discovery, the stall probe and OpenFan calibration all gate on it. **Interpolate it; never
@@ -258,8 +272,9 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
   **Gate on this rather than probing**, for the reason already stated under
-  `pwm_characterization`: an older daemon `404`s the route from the route fallback, which is
-  indistinguishable from a handler's own `404` without reading `error.code`. It is also the
+  `pwm_characterization`: an older daemon `404`s the route from the route fallback, and
+  `GET /diagnostics/control-path`'s own "no run" `404` carries the same `not_found` code, so
+  not even `error.code` tells the two apart (DEC-426, `DC-n`). It is also the
   gate on offering the session diagnostic — a session carrying an unknown token is rejected
   **whole**, so an ungated checkbox breaks validation rather than degrading it.
 - `diagnostic_preflight` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
@@ -541,6 +556,13 @@ ticking. It is `warn` while `skipped_controls[]` is non-empty and `ok` otherwise
 with `age_ms` = the **longest** `skipped_for_ms` in that list (the oldest
 unresolved control — a flapping one must not mask a permanent one) and a reason of
 the form `"N controls not being commanded — their fans hold their last speed"`.
+**Since daemon 2.56.2 the tail depends on the skip reasons (DEC-426, `DC-k`).** A
+`backend_unavailable` control's fans were never commanded by the daemon, so when every
+listed control has that reason the tail is `"their fans' speed is up to the hardware, not
+this daemon"`, and a mix is counted per kind: `"3 controls not being commanded — 2 hold
+their fans' last speed, 1 has fans this daemon cannot drive"`. Older daemons send the hold
+wording for every reason, `backend_unavailable` included. The reason is display prose: read
+`skipped_controls[].reason` for anything a client decides on.
 
 **It is `warn` and never `crit`, deliberately.** Those fans are not stopped, and
 the thermal-emergency rule reaches every OpenFan channel and writable hwmon header
@@ -765,7 +787,9 @@ logical controls the daemon's profile engine **cannot resolve**, and is therefor
 all (273-i). Each entry is `{control_id, control_name, reason, skipped_for_ms}`.
 
 A skipped control's fans **hold their last commanded duty** — a skip never lowers a fan (DEC-269) —
-so the symptom is a fan that has quietly stopped responding. Transient causes resolve within a tick
+so the symptom is a fan that has quietly stopped responding. The exception is `backend_unavailable`
+(below): the daemon never commanded those fans, so there is no duty to hold, and their speed is up to
+the hardware. Transient causes resolve within a tick
 and are never reported; a control is listed only after **three consecutive** skipped ticks, because
 `curve_eligible`'s freshness budget floors at 5 s and a sensor sitting on that boundary would
 otherwise flap in and out of the list at 1 Hz. The daemon logs one WARN on entry and one INFO on
@@ -1539,8 +1563,9 @@ moves in this release**; the mechanism exists so a validated device policy can l
 A validation session records what an already-configured cooling device actually did, and
 produces typed evidence about it. Capability-gated on `control.validation_sessions`.
 **Gate on the flag rather than probing** — an older daemon 404s these routes from the route
-fallback, which a client cannot distinguish from a genuine "no such session" without
-inspecting `error.code`.
+fallback, and a genuine "no such session" is also `404 not_found`, so not even `error.code`
+tells the two apart (DEC-426, `DC-n`). Only the message differs, and messages are not a
+contract.
 
 **What a session is, and what it is not.** The engine is an observer that may orchestrate.
 It samples the state the daemon's poll already collects and, where a session was asked for
@@ -1724,10 +1749,19 @@ for that purpose, and it survives finalisation.
 
 - `POST /validation/session/stop` — finalise and compute the summary. Returns the session.
 - `DELETE /validation/session` — finalise and persist, recording the session as `cancelled`. **Not a discard, and not the opposite of `stop`** (`P8-bc`): the daemon's `cancel()` is `finish(STATE_CANCELLED)` and `finish` finalises unconditionally, so findings, steady state, startup fingerprints and samples are all computed and stored exactly as they are for `stop`. The only difference is the `state` token. A client must not present this as "throw the recording away" — this document said "end without finalising" and was wrong.
-- `POST /validation/session/event` — place a user marker: `{detail?, member_id?}`.
+- `POST /validation/session/event` — place a user marker: `{detail?, member_id?}`. A session
+  holds at most 4096 events, the engine's own included.
 - `POST /validation/session/measurement` — attach an externally measured observation:
   `{kind, value, unit?, member_id?, note?}`. **Explicitly untrusted**: the daemon stores and
   returns these and no control or safety path consults one. Capped at 512 per session.
+
+Both answer `200 {"recorded": true}` when the entry was appended and `404 not_found` ("no
+validation session is recording") when no session is recording. **At a cap, daemon ≥ 2.56.2
+answers `409 session_full`** (not retryable, `details.limit` = the cap) and appends nothing
+(DEC-426, `DC-m`). Older daemons answered `200 {"recorded": true}` for a marker dropped at the
+event cap, and `404` "no validation session is recording" for a measurement at its cap while a
+session was recording. The GUI shows the error's message either way. Engine events past the
+event cap are dropped silently, as they always were.
 
 **Free-text fields on both routes are bounded at 512 bytes each (daemon ≥ 2.33.1)** —
 an event's `detail` and `member_id`, a measurement's `kind`, `unit`, `note` and `member_id`.
@@ -2279,7 +2313,7 @@ even after a disconnect, rather than releasing early. The thermal emergency is
 unaffected — `force_all_with_floor` runs before the pause gate, by design.
 
 Errors: `404 validation_error` (unknown header — the wire `code` is
-`validation_error`, not `not_found`, which is reserved for unknown routes),
+`validation_error`, not `not_found`, which this handler never sends),
 `503 hardware_unavailable` (no hwmon headers or controller absent; also if the
 daemon's own internal verify lease lapses mid-write — DEC-170). The pre-2.0
 `403 lease_required` no longer applies — the daemon owns the verify lease, and an
@@ -2607,7 +2641,7 @@ Error codes and HTTP statuses:
 
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 403 `lease_required` (source: `"validation"`, retryable: false) — **retired** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); **fully removed at DEC-170**, when the verify path's internal-lease lapse was re-mapped to retryable `503 hardware_unavailable`. No route emits this code any more. Listed for historical context.
-- 404 `not_found` (source: `"validation"`, retryable: false) — **unknown route/URI only**. An unknown *resource* on a known route (hwmon header, GPU id) returns 404 with code `validation_error`, not `not_found`.
+- 404 `not_found` (source: `"validation"`, retryable: false) — an **unknown route** (the fallback; message `endpoint not found: <path>`), **and** a missing resource on these routes: no validation session started or recording (`GET`/`DELETE /validation/session`, `POST /validation/session/stop`, `/event`, `/measurement`), an unknown session id (`GET /validation/sessions/{id}`), an unknown cooling device (`POST /validation/session`, `DELETE /config/cooling-device/{id}`), and no run yet (`GET /diagnostics/control-path`, `GET /diagnostics/stall-probe`). Those send the handler's own message; before daemon 2.56.2 each was prefixed "endpoint not found:" as well (DEC-426, `DC-n`). Every other unknown *resource* on a known route (profile, control, fan, hwmon header, GPU id) returns 404 with code `validation_error`. **The code therefore cannot distinguish a missing route from a missing resource**: gate a feature on its capability flag, never on a probe.
 - 404 `override_expired` (source: `"validation"`, retryable: false) — renew/release of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew.
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired** with the GUI-held lease (DEC-165); **fully removed at DEC-170** (the verify mapper no longer emits it). No route emits this code any more. Listed for historical context.
 - 409 `already_exists` (source: `"validation"`, retryable: false) — `POST /profiles` with an `id` that already exists (DEC-160). Rename or `PUT` the existing profile instead.
@@ -2622,6 +2656,7 @@ Two things distinguish the cooldown 409 from the single-flight 409, and a client
 **But the set-change exemption is not reserved for the client, and the daemon can consume it (`OFN-u`, corrected 2026-09-12 — this paragraph previously claimed such a retry is "*not* refused", which is false).** The daemon's own post-boot adoption loop probes on this same guard, and `RescanGuard`'s drop re-stamps the cooldown with the **new** candidate set. So if the loop reaches a newly attached controller first, a user clicking *Rescan Hardware* within the 10-second cooldown meets `elapsed < COOLDOWN && same_port_set(new)` and **is** refused, on the one endpoint whose purpose is recovery without a restart. The collision is confined to the post-boot adoption window (60 s auto-detect, 180 s when a serial port is configured) and needs the two probes inside 10 s of each other, so it is uncommon rather than impossible; outside that window no daemon-side probe runs and the exemption is the client's alone. Residual impact is small — the refusal is `retryable: true` and names the wait, and inside the window the loop keeps probing on its own — but a client must not present this 409 as "you already did that". Treat it as "a probe just happened" and retry when the message says to.
 
 **Since DEC-291 (daemon ≥ 2.23.5) the cooldown is checked FIRST**, ahead of the already-connected no-op, so a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
+- 409 `session_full` (source: `"validation"`, retryable: false, daemon ≥ 2.56.2) — `POST /validation/session/event` or `/measurement` while the recording session already holds its cap of that kind (4096 events, 512 measurements). Nothing was appended; `details.limit` is the cap. A new session is the only way to record more (DEC-426, `DC-m`).
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
@@ -2645,12 +2680,18 @@ The API client must normalize this into an internal error object that includes:
 According to the provided daemon notes:
 
 ### OpenFan
-- 0% allowed for max `limits.openfan_stop_timeout_s` seconds (8 on every build to date),
-  after which the daemon rejects the held 0% command. **Read the advertised value, never
-  the literal** — the GUI's Fan Wizard sizes its spin-down ceiling from it (DEC-329), and
-  before that shipped a hardcoded 8 that matched the daemon constant by coincidence, plus a
-  spinner maximum of 12 that already exceeded it. `0` means "this daemon did not say":
-  fall back to the client's own band rather than treating it as "stop immediately".
+- **A held 0% is not time-limited** (corrected by DEC-426, `DC-b`; this said the daemon rejects
+  the held 0% after `limits.openfan_stop_timeout_s` and restarts the fan, and it never has).
+  A 0% that repeats the channel's last commanded duty coalesces **before** the stop timeout is
+  checked (CONC-2), so a curve or an identify stop holding 0% writes nothing and meets no
+  timeout: the fan stays stopped for as long as it is commanded. Nothing restarts it. The
+  timer (`limits.openfan_stop_timeout_s`, 8 s on every build to date) refuses only a 0% that
+  would reach the wire while a stop is timed as having started at least that long ago. No
+  normal sequence produces that — a non-zero write, a failed reply and a reconnect all clear
+  the timer — so it is defence in depth against tracking drift, and no client needs to size
+  anything from it. An identify stop is bounded by its own deadman (DEC-166); a pump is never
+  stopped (the 30% floor, DEC-162, and DEC-311 for identify). The GUI's Fan Wizard capped its
+  spin-down at this value from DEC-329 until DEC-426 removed the cap.
 - PWM 0–100 passed through — no clamping in the daemon. Role-aware floors are
   baked into the profile by the GUI and enforced by the daemon engine
   (DEC-162; see `docs/09_State_Model_and_Control_Behaviour.md`).

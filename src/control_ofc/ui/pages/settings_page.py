@@ -131,11 +131,12 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
 # surface, pinned on the daemon side by
 # ``get_config_key_set_and_mutability_are_pinned`` — and resolves every
 # objectName on a constructed page.
-#: Sanity band for the Fan Wizard spin-down timer. The *upper* bound is a
-#: fallback: where the daemon advertises `limits.openfan_stop_timeout_s` and an
-#: OpenFan controller is present, that value replaces it, because the daemon
-#: rejects a 0% OpenFan command held longer than its own `STOP_TIMEOUT` — so a
-#: longer timer here would promise a stop that does not happen (`WIRE-d`).
+#: Sanity band for the Fan Wizard spin-down timer, the same on every machine.
+#: DEC-329 lowered the upper bound to `limits.openfan_stop_timeout_s` where an
+#: OpenFan controller was present, on the belief that the daemon restarts a 0%
+#: OpenFan fan after that long. It does not: a repeated 0% coalesces before the
+#: timeout is checked, so a stop lasts as long as it is commanded, and the
+#: identify stop the wizard uses is bounded by its own deadman (DEC-426, `DC-b`).
 WIZARD_SPINDOWN_MIN_S = 5
 WIZARD_SPINDOWN_MAX_S = 12
 
@@ -2234,42 +2235,6 @@ class SettingsPage(QWidget):
         del caps
         self._apply_openfan_presence_annotation()
 
-    def _apply_wizard_spindown_limit(self) -> None:
-        """Bound the wizard spin-down timer by what the daemon will actually honour.
-
-        `GET /capabilities` publishes `limits.openfan_stop_timeout_s` so that
-        "clients size their identify/stop UI timeouts from this advertised
-        value" — the daemon rejects a 0% OpenFan command held longer than its own
-        `STOP_TIMEOUT`, so a longer timer here offers a spin-down that silently
-        ends early. The GUI previously hardcoded 8 s, which matched the daemon
-        constant **by coincidence** and would have desynced the moment it moved
-        (register row `WIRE-d`); the spinner's maximum of 12 already exceeded it.
-
-        Scoped to daemons that report an OpenFan controller: the limit is an
-        OpenFan serial-protocol bound, and an hwmon-only machine is governed by
-        the identify deadman instead. With no capability, no OpenFan, or a `0`
-        (older daemon / malformed response) the static band stands — the
-        pre-existing behaviour, and the safe direction, since narrowing on an
-        unknown limit would silently shorten every user's timer.
-        """
-        caps = getattr(self._state, "capabilities", None) if self._state else None
-        if caps is None or not getattr(getattr(caps, "openfan", None), "present", False):
-            ceiling = WIZARD_SPINDOWN_MAX_S
-        else:
-            advertised = getattr(getattr(caps, "limits", None), "openfan_stop_timeout_s", 0) or 0
-            ceiling = advertised if advertised > 0 else WIZARD_SPINDOWN_MAX_S
-        # Never below the floor, and never above the static band: an implausible
-        # advertised value must not widen the control past what the wizard's own
-        # copy and layout assume.
-        ceiling = max(WIZARD_SPINDOWN_MIN_S, min(ceiling, WIZARD_SPINDOWN_MAX_S))
-        self._wizard_spindown_spin.setMaximum(ceiling)
-        if ceiling < WIZARD_SPINDOWN_MAX_S:
-            self._wizard_spindown_spin.setToolTip(
-                "How long each fan is stopped during the wizard identification test. "
-                f"Capped at {ceiling} s because this daemon restarts an OpenFan fan "
-                "after that, whatever the timer says."
-            )
-
     def _load_current_settings(self) -> None:
         s = self._settings_svc.settings
         idx = self._startup_page_combo.findData(s.default_startup_page)
@@ -2284,9 +2249,6 @@ class SettingsPage(QWidget):
         self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
         self._board_note_ack_cb.setChecked(s.board_notes_allow_acknowledge)
         self._board_note_dismiss_cb.setChecked(s.board_notes_allow_dismiss)
-        # Apply the daemon's advertised ceiling BEFORE seeding, so a stored
-        # value the daemon will not honour is clamped rather than displayed.
-        self._apply_wizard_spindown_limit()
         self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
         # No startup-delay seed here: the daemon owns that key and
         # `_refresh_daemon_config` is the only thing allowed to fill the spinner
@@ -2447,11 +2409,6 @@ class SettingsPage(QWidget):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # Capabilities arrive after construction, so the wizard spin-down
-        # ceiling has to be re-derived on arrival — `_load_current_settings`
-        # runs before the handshake and would leave the static fallback in
-        # place forever (`WIRE-d`).
-        self._apply_wizard_spindown_limit()
         # Load preferred-sensor options from the daemon the first time Settings
         # is shown — a light, cache-backed GET kept off the startup path.
         if not self._prefs_loaded and self._client is not None:

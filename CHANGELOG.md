@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [2.83.3] — 2026-09-25
+
+### Fixed
+
+**The Fan Wizard spin-down timer goes up to 12 seconds on every machine** (DEC-426). On a machine
+with an OpenFan controller, Settings capped the timer at the daemon's advertised stop timeout
+(8 seconds) and said in a tooltip that the daemon restarts a stopped OpenFan fan after that. It does
+not. A fan stopped by the wizard stays stopped until the wizard restores it, or until the daemon's
+own identify timeout ends the stop. The cap and the tooltip are gone, and a timer you set above 8
+seconds is no longer lowered.
+
+### Documentation
+
+**The API contract (`docs/08`) is corrected in five places** (DEC-426):
+
+- A 0% OpenFan stop is not limited to 8 seconds.
+- Not every success response carries `api_version`. The ones that do not are listed.
+- `404 not_found` also means a missing session, run or cooling device on some routes, not only an
+  unknown route. So its code alone cannot tell a missing feature from a missing resource.
+- The new `409 session_full` error is documented, along with the validation session's event cap.
+- The `controls` health reason is worded per skip reason from daemon 2.56.2.
+
+The manual's Controls page no longer says the "not controlled" case where the fans' speed is up to
+the hardware first appeared in daemon 2.55.0.
+
 ## [2.83.2] — 2026-09-25
 
 ### Fixed

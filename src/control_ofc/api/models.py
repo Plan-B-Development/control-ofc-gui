@@ -343,29 +343,21 @@ class Limits:
     """Policy limits the daemon advertises on ``GET /capabilities`` so clients
     size their UI from the binary rather than from a matching literal.
 
-    ``openfan_stop_timeout_s`` is the one that matters: the daemon **rejects a
-    0% OpenFan command that has been held longer than this**, so a spin-down
-    timer above it promises a stop the hardware will not perform. The GUI
-    shipped a hardcoded 8 s that matched `STOP_TIMEOUT` **by coincidence**
-    (register row ``WIRE-d``) and a spinner whose maximum, 12, already exceeded
-    it.
-
-    ``0`` means "this daemon did not say" — it is a ``u8`` the daemon always
-    sends, so the default is reachable only through an old or malformed
-    response, and callers must fall back rather than treat it as "stop
-    immediately".
+    Only ``diagnostic_max_temp_c`` is modelled. ``openfan_stop_timeout_s`` was
+    modelled by DEC-329 to cap the Fan Wizard's spin-down, on the belief that the
+    daemon restarts a 0% OpenFan fan after that long. It does not — a repeated
+    0% coalesces before the timeout is checked, so a stop lasts as long as it is
+    commanded — so the cap was removed and the field lost its only consumer
+    (DEC-426, ``DC-b``). It is declared ``unmodelled`` in
+    ``tests/fixtures/wire_fields.json``, beside ``pwm_percent_min`` / ``max``.
     """
 
-    # Deliberately NOT modelling `pwm_percent_min` / `pwm_percent_max`. The
-    # whole `SafetyLimits` block was deleted in the P3 capability cleanup
-    # because nothing read it — the daemon clamps authoritatively (DEC-163), so
-    # a GUI mirror described a decision the GUI does not make — and that
-    # deletion set the bar for re-adding: *find a consumer first*.
-    # `openfan_stop_timeout_s` has one; those two still do not, and both are
-    # 0/100 on every shipping daemon. Declared `unmodelled` in
-    # `tests/fixtures/wire_fields.json` so the coverage test records the
-    # exemption rather than silently missing them.
-    openfan_stop_timeout_s: int = 0
+    # Deliberately NOT modelling `pwm_percent_min` / `pwm_percent_max` /
+    # `openfan_stop_timeout_s`. The whole `SafetyLimits` block was deleted in the
+    # P3 capability cleanup because nothing read it — the daemon clamps
+    # authoritatively (DEC-163), so a GUI mirror described a decision the GUI
+    # does not make — and that deletion set the bar for re-adding: *find a
+    # consumer first*. None of the three has one.
     #: `PTA-i` (daemon >= 2.55.0): the temperature above which any sensor makes
     #: a diagnostic refuse or stop. The PWM Test Report's consent page
     #: interpolates it rather than restating the daemon constant. ``None``

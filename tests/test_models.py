@@ -584,16 +584,16 @@ class TestParserFailureModes:
         assert caps.openfan.present is False
         assert caps.hwmon.present is False
         assert caps.amd_gpu.present is False
-        # `limits` is back, but only the one field that acquired a consumer.
-        # The P3 capability cleanup deleted the whole `SafetyLimits` block
-        # because nothing read it, and set the bar for re-adding at "find a
-        # consumer first" — `WIRE-d` cleared it: the Settings page sizes the Fan
-        # Wizard's spin-down ceiling from `openfan_stop_timeout_s` rather than
-        # from a literal that matched the daemon constant by coincidence. The
-        # other two remain unmodelled, and the assertion below is what keeps
-        # that deliberate (they are declared `unmodelled` in wire_fields.json,
-        # which since `AU-d` is a different bucket from `inert`).
-        assert caps.limits.openfan_stop_timeout_s == 0
+        # `limits` models only fields with a consumer. The P3 capability cleanup
+        # deleted the whole `SafetyLimits` block because nothing read it, and
+        # set the bar for re-adding at "find a consumer first". `WIRE-d` re-added
+        # `openfan_stop_timeout_s` for the Fan Wizard's spin-down ceiling; DEC-426
+        # removed that ceiling (the daemon does not restart a stopped OpenFan
+        # fan), so it is unmodelled again beside the PWM band. The assertions
+        # below keep that deliberate (all three are declared `unmodelled` in
+        # wire_fields.json, which since `AU-d` is a different bucket from `inert`).
+        assert caps.limits.diagnostic_max_temp_c is None
+        assert not hasattr(caps.limits, "openfan_stop_timeout_s")
         assert not hasattr(caps.limits, "pwm_percent_min"), (
             "The daemon clamps authoritatively (DEC-163); a GUI mirror of the PWM "
             "band describes a decision the GUI does not make. Find a consumer first."

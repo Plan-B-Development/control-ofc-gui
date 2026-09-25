@@ -418,12 +418,12 @@
         "diagnostic_max_temp_c"
       ],
       "must_be_read": [
-        "openfan_stop_timeout_s",
         "diagnostic_max_temp_c"
       ],
       "unmodelled": {
         "pwm_percent_min": "Inert: the daemon clamps authoritatively (DEC-163) and ships 0 on every build. The P3 capability cleanup deleted the GUI mirror for exactly this reason and set the bar for re-adding at 'find a consumer first'; this field still has none.",
-        "pwm_percent_max": "Inert: as pwm_percent_min. Ships 100 on every build."
+        "pwm_percent_max": "Inert: as pwm_percent_min. Ships 100 on every build.",
+        "openfan_stop_timeout_s": "No consumer since DEC-426 (DC-b): it capped the Fan Wizard spin-down on the belief that the daemon restarts a 0% OpenFan fan after that long. It does not; a repeated 0% coalesces before the timeout is checked, so the field bounds only a defence-in-depth refusal no normal command sequence reaches."
       }
     },
     {

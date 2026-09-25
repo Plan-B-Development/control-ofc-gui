@@ -168,10 +168,10 @@ def _key_strings(tree: ast.AST) -> set[str]:
     were satisfied by **nothing but that table**, i.e. by a mapping *about* the
     field rather than by anyone reading it. Restricting to argument position
     moves those three to ``inert`` where they belong, while keeping
-    ``Limits.openfan_stop_timeout_s`` (read as
-    ``getattr(getattr(caps, "limits", None), "openfan_stop_timeout_s", 0)`` at
-    ``settings_page.py:2072``) and ``CharPoint.settled_ms`` (``getattr(point,
-    "settled_ms", None)``), which are real reads that only exist in string form.
+    ``CharPoint.settled_ms`` (``getattr(point, "settled_ms", None)``), a real
+    read that only exists in string form. (``Limits.openfan_stop_timeout_s``,
+    read the same way, was the other example until DEC-426 removed its only
+    consumer and unmodelled it.)
     """
     out: set[str] = set()
     for node in ast.walk(tree):

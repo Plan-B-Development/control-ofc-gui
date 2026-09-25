@@ -250,11 +250,18 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 
 ## 7. Safety Logic
 
-### Stop Timeout (per-channel)
-- **Rule:** 0% PWM cannot be held for more than **8 seconds** on any channel
-- **Tracking:** Per-channel `stop_started_at: Option<Instant>`
-- **Enforcement:** `apply_safety()` called before every `set_pwm()` and `set_pwm_all()`
-- **Violation:** Returns `FanControlError::Validation` — command is rejected
+### Stop Timeout (per-channel) — defence in depth, not a cap on a stop
+- **A held 0% is not time-limited.** `set_pwm()` coalesces a command equal to the channel's
+  last commanded duty **before** the timeout is checked (CONC-2), so a curve or identify stop
+  holding 0% writes nothing and meets no timeout. The fan stays stopped for as long as it is
+  commanded; nothing restarts it. (This section said 0% "cannot be held for more than 8
+  seconds" until DEC-426, `DC-b`.)
+- **Tracking:** Per-channel `stop_started_at: Option<Instant>`, set by a 0% write that lands
+  and cleared by a non-zero write, a failed reply (DEC-383) and a reconnect
+- **What it refuses:** `apply_safety()` rejects, with `FanControlError::Validation`, a 0% that
+  would reach the wire while `stop_started_at` is at least `STOP_TIMEOUT` (8 s) old. No normal
+  command sequence produces that state; it guards against tracking drift
+- **Advertised as** `limits.openfan_stop_timeout_s`. A client need not size anything from it
 
 ### Thermal Emergency (global)
 - **Trigger:** CPU Tctl ≥ the trip point — at least 105°C, raised per-machine to
@@ -328,7 +335,7 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 | Firmware enters debug loop | 50 debug lines exceeded | Command fails with Protocol error | Affected write skipped |
 | Response timeout | 500ms per read_line | SerialError::Timeout returned | Write skipped for this cycle |
 | Malformed response | Protocol parsing fails | SerialError::Protocol returned | Write skipped |
-| 0% PWM held > 8 seconds | Stop timeout check | Further 0% commands rejected | Fan restarts at last non-zero |
+| Wire-bound 0% against a stop timer ≥ 8 s old (no normal sequence reaches this; a held 0% coalesces) | Stop timeout check | That command rejected | None; the channel keeps whatever it last took |
 
 ---
 

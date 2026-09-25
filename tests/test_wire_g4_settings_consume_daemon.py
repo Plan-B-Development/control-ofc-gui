@@ -1,10 +1,13 @@
-"""G4 — the Settings page consumes what the daemon publishes (`WIRE-d`/`g`/`x`).
+"""G4 — the Settings page consumes what the daemon publishes (`WIRE-g`/`x`).
 
-Three fields the daemon sends for a client to *act* on, which the GUI either
+Fields the daemon sends for a client to *act* on, which the GUI either
 hardcoded past or dropped. Each test asserts a relationship against the wire
 value rather than a literal: a literal is satisfied by the hardcoded value these
-rows are about, which is exactly how `WIRE-d` survived — the GUI's 8 and the
-daemon's `STOP_TIMEOUT` agreed by coincidence.
+rows are about.
+
+`WIRE-d` (the Fan Wizard spin-down sized from `limits.openfan_stop_timeout_s`)
+was retracted by DEC-426: the daemon does not restart a stopped OpenFan fan, so
+there was nothing to size. Its section now pins that the cap stays gone.
 """
 
 from __future__ import annotations
@@ -12,13 +15,9 @@ from __future__ import annotations
 import pytest
 
 from control_ofc.api.models import (
-    Capabilities,
-    ControlCapability,
     DaemonConfig,
     DaemonConfigKey,
     DefaultCpuSensor,
-    Limits,
-    OpenfanCapability,
     parse_capabilities,
 )
 from control_ofc.ui.pages.settings_page import (
@@ -33,88 +32,39 @@ def page(qapp, app_state, settings_service):
     return SettingsPage(state=app_state, settings_service=settings_service, client=None)
 
 
-# ── WIRE-d ───────────────────────────────────────────────────────────────────
+# ── WIRE-d, retracted by DEC-426 (`DC-b`) ─────────────────────────────────────
 
 
-def test_limits_block_is_parsed_from_the_wire() -> None:
+def test_limits_does_not_model_the_openfan_stop_timeout() -> None:
+    """The field lost its only consumer when the spin-down cap went (DEC-426)."""
     caps = parse_capabilities({"limits": {"openfan_stop_timeout_s": 6}})
-    assert caps.limits.openfan_stop_timeout_s == 6
+    assert not hasattr(caps.limits, "openfan_stop_timeout_s")
 
 
-@pytest.mark.parametrize("advertised", [5, 6, 8])
-def test_spindown_ceiling_follows_the_advertised_stop_timeout(page, app_state, advertised) -> None:
-    """The ceiling must equal what the daemon said, not a constant.
+def test_an_advertised_stop_timeout_does_not_cap_the_spindown(page, app_state) -> None:
+    """DEC-329 lowered the spin-down ceiling to `limits.openfan_stop_timeout_s`
+    on an OpenFan machine, with a tooltip saying the daemon "restarts an OpenFan
+    fan after that". It does not: a repeated 0% coalesces before the timeout is
+    checked, so an identify stop lasts until its own deadman (DEC-426).
 
-    Asserted as `== advertised` over several values, so a call site that
-    reverted to the literal 8 fails on 5 and 6 — the shape a single-value test
-    would miss.
+    Driven through `show()` — the call site that used to apply the cap once
+    capabilities arrived — with capabilities parsed from a wire body that
+    advertises 6 s, so re-adding the model field and the cap together fails
+    here. A stored 12 s must survive, and the tooltip must not claim a cap.
     """
-    app_state.capabilities = Capabilities(
-        openfan=OpenfanCapability(present=True),
-        limits=Limits(openfan_stop_timeout_s=advertised),
-        control=ControlCapability(autonomous_control=True),
-    )
-    page._apply_wizard_spindown_limit()
-    assert page._wizard_spindown_spin.maximum() == advertised
-
-
-def test_spindown_value_is_clamped_down_to_the_advertised_ceiling(page, app_state) -> None:
-    """A stored 12 s must not survive against a daemon that restores at 6 s."""
+    wire = {
+        "devices": {"openfan": {"present": True}},
+        "limits": {"openfan_stop_timeout_s": 6},
+    }
     page._wizard_spindown_spin.setValue(WIZARD_SPINDOWN_MAX_S)
-    app_state.capabilities = Capabilities(
-        openfan=OpenfanCapability(present=True),
-        limits=Limits(openfan_stop_timeout_s=6),
-    )
-    page._apply_wizard_spindown_limit()
-    assert page._wizard_spindown_spin.value() == 6
-
-
-@pytest.mark.parametrize(
-    ("caps", "why"),
-    [
-        (None, "no capabilities yet"),
-        (Capabilities(openfan=OpenfanCapability(present=False)), "no OpenFan controller"),
-        (
-            Capabilities(openfan=OpenfanCapability(present=True), limits=Limits()),
-            "daemon advertised nothing (0)",
-        ),
-    ],
-)
-def test_spindown_ceiling_falls_back_to_the_static_band(page, app_state, caps, why) -> None:
-    """Narrowing on an unknown limit would silently shorten every user's timer.
-
-    The opposite branch of the test above — without it, a `_apply` that always
-    returned the floor would pass the ceiling tests for `advertised=5`.
-    """
-    app_state.capabilities = caps
-    page._apply_wizard_spindown_limit()
-    assert page._wizard_spindown_spin.maximum() == WIZARD_SPINDOWN_MAX_S, why
-
-
-def test_spindown_ceiling_never_falls_below_the_floor(page, app_state) -> None:
-    """An implausible advertised value must not collapse the control."""
-    app_state.capabilities = Capabilities(
-        openfan=OpenfanCapability(present=True), limits=Limits(openfan_stop_timeout_s=1)
-    )
-    page._apply_wizard_spindown_limit()
-    assert page._wizard_spindown_spin.maximum() == WIZARD_SPINDOWN_MIN_S
-
-
-def test_showing_the_page_applies_the_ceiling(page, app_state) -> None:
-    """The call site, not the helper.
-
-    Capabilities arrive *after* construction, so a correct
-    `_apply_wizard_spindown_limit` that nothing re-runs leaves the static
-    fallback in place for the whole session — the helper's own tests cannot see
-    that, which is `CLAUDE.md`'s extracting-a-rule lesson exactly.
-    """
-    assert page._wizard_spindown_spin.maximum() == WIZARD_SPINDOWN_MAX_S
-    app_state.capabilities = Capabilities(
-        openfan=OpenfanCapability(present=True), limits=Limits(openfan_stop_timeout_s=6)
-    )
+    app_state.capabilities = parse_capabilities(wire)
+    assert app_state.capabilities.openfan.present, "precondition: an OpenFan machine"
     page.show()
     try:
-        assert page._wizard_spindown_spin.maximum() == 6
+        spin = page._wizard_spindown_spin
+        assert (spin.minimum(), spin.maximum()) == (WIZARD_SPINDOWN_MIN_S, WIZARD_SPINDOWN_MAX_S)
+        assert spin.value() == WIZARD_SPINDOWN_MAX_S
+        assert "Capped" not in spin.toolTip()
     finally:
         page.hide()
 
