@@ -43,10 +43,13 @@ Rule of thumb by vendor (full matrix: [Hardware Compatibility](../docs/19_Hardwa
 
 | Board vendor | Typical chip | Driver you likely need |
 |---|---|---|
-| Gigabyte (2019+, most AORUS) | ITE IT8686E/IT8688E/IT8689E/IT8696E (+ IT87952E secondary) | `it87-dkms-git` (AUR) |
-| MSI (B550 and newer) | Nuvoton NCT6687-R | `nct6687d-dkms-git` (AUR) |
-| ASUS | Nuvoton NCT6798D/NCT6799D | usually **none** — mainline `nct6775` |
-| ASRock | Nuvoton NCT6798D or NCT6686D | usually none; NCT6686D boards are board-specific — see the [ASRock notes](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) |
+| Gigabyte (2019+, most AORUS) | ITE IT8686E/IT8688E/IT8689E/IT8696E (+ an IT8792E or IT87952E secondary on dual-chip boards) | `it87-dkms-git` (AUR) |
+| MSI (B550/A520, Intel 600-series and newer) | Nuvoton NCT6687D | `nct6687d-dkms-git` (AUR) |
+| MSI (AM4 300/400-series, the original 2019 X570 boards) | Nuvoton NCT6795D / NCT6797D | **none** — mainline `nct6775`. Do **not** install `nct6687d` here |
+| ASUS (AM4 500, Intel 600/700) | Nuvoton NCT6798D | usually **none** — mainline `nct6775` |
+| ASUS (AM5, Intel Z890/B860) | Nuvoton NCT6799D (AM5 600) or NCT6701D (AM5 800, Z890/B860), both reported as `nct6799` | usually **none** — mainline `nct6775` |
+| ASUS (AM4 300/400-series, e.g. PRIME X470-PRO) | ITE IT8665E | `it87-dkms-git` (AUR) — mainline has no IT8665E driver |
+| ASRock | Nuvoton NCT67xx, and on many boards an NCT6686D/NCT6683D carrying some or all fans | the NCT67xx needs none; the NCT668x fans are read-only in the kernel driver and need a board-specific out-of-tree driver — see the [ASRock notes](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) |
 
 > **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild (see the CRITICAL banner the **System State** page raises if both are loaded). Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
 
@@ -81,13 +84,35 @@ Install from the AUR with your helper of choice (examples use `yay`; building ma
 # Gigabyte / ITE chips
 yay -S it87-dkms-git
 
-# MSI / Nuvoton NCT6687-R
+# MSI / Nuvoton NCT6687D
 yay -S nct6687d-dkms-git
 ```
 
-Both are `-git` packages: every install/reinstall builds the **current upstream snapshot**. That matters — many historical workarounds are already fixed upstream (for the it87 driver: MMIO on by default since the 2026-03 builds, ACPI-conflict sidestepping). The version number shown on the AUR page is stale `-git` metadata; what installs is upstream HEAD at build time. If you installed the driver months ago and something misbehaves, **reinstalling the package is the first remediation, not the last**.
+Both are `-git` packages: every install/reinstall builds the **current upstream snapshot**. That matters — many historical workarounds are already fixed upstream (for the it87 driver: MMIO on by default since the 2026-03 builds, ACPI-conflict sidestepping). The version number shown on the AUR page is stale `-git` metadata; what installs is upstream HEAD at build time. If you installed the driver months ago and something misbehaves, **reinstalling the package is the first remediation, not the last** — but read the next section first if you have a Gigabyte board.
 
-> **Secondary-chip fan control on dual-Super-I/O Gigabyte boards is bound by board pairing, not fixed for the family.** Some boards work — the X870E AORUS ELITE reports both chips and controls both. On others the secondary is masked by an ITE eSPI→LPC bridge latched in configuration mode (DEVID `0x8883`), measured on an X870E AORUS MASTER. **That is recoverable, but not the way you would guess**: reinstalling, `mmio=on` and `force_id` all change nothing, because the latch is written by the `nct6775`/`w83627ehf` modules and clears only when the machine is powered down at the wall — a reboot is not enough. Find out which case you are in before spending time on it — see [Hardware Troubleshooting → *Some of my fan headers are missing*](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
+With the `nct6687d` driver, also blacklist the in-kernel `nct6683` (`echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/nct6683_blacklist.conf`, then reboot). Both drivers can bind the same chip, which garbles readings and makes PWM writes fail. The in-kernel one also names its device `nct6687` and publishes it read-only.
+
+### it87 v2.0 renames your chips
+
+Builds of `it87-dkms-git` made on or after **2026-09-09** (the driver's v2.0 release, [PR #132](https://github.com/frankcrawford/it87/pull/132)) name Gigabyte chips after the board's own ID whenever the driver can read it — for example `it8696_a008090a` instead of `it8696`. The driver keeps working, but everything that is keyed on the chip name changes with it:
+
+- **Every fan header gets a new id.** Profile members, fan names you gave, header role assignments — **including a pump role you assigned** — and cooling-device members all point at ids that no longer exist. **Until you re-check them, your profile no longer controls those fans:** they stay under the BIOS's control, and a control whose fans were all on those chips shows as *Not controlled* on the Controls page. After the first boot on the new build, re-assign pump roles first, then re-check fan names and each profile's members.
+- The built-in header labels for boards in Control-OFC's table (for example the X870E AORUS MASTER's `SYS_FAN5_PUMP`) stop applying, so those headers show as `pwm1`, `pwm2`…
+- The dual-chip warning on **System State** reports both chips missing although both are working.
+
+Control-OFC does not match the new names yet. Until it does, you can stay on the old names by building commit **`c567739`** (2026-08-25). It has the same driver code as the last build before the rename (only a build-script change came between them), including the [PR #128](https://github.com/frankcrawford/it87/pull/128) fixes:
+
+```bash
+yay -G it87-dkms-git          # or: git clone https://aur.archlinux.org/it87-dkms-git.git
+cd it87-dkms-git
+# pin the source to the commit:
+sed -i 's|it87.git"|it87.git#commit=c567739c639533177abd66894a6a8d561337285f"|' PKGBUILD
+makepkg -si
+```
+
+A later `yay -Syu` will offer to "update" the package back to the current master. Skip it (or add `it87-dkms-git` to `IgnorePkg` in `/etc/pacman.conf`) until you are ready to re-check your ids.
+
+> **Secondary-chip fan control on dual-Super-I/O Gigabyte boards is bound by board pairing, not fixed for the family.** Some boards work — the X870E AORUS ELITE X3D reports both chips and controls both. On others the secondary can be masked by an ITE eSPI→LPC bridge latched in configuration mode, measured on an X870E AORUS MASTER. **That is recoverable, but not the way you would guess**: reinstalling, `mmio=on` and `force_id` all change nothing. The latch is written by the `nct6775`/`w83627ehf` modules (or `sensors-detect`). Stop those, reboot, and if the chip is still missing, power down at the wall. Follow the ladder in [Hardware Troubleshooting → *Some of my fan headers are missing*](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
 ## Step 4 — Load and verify
 
@@ -148,13 +173,13 @@ Two ways out — read the trade-offs before picking:
 
 ## Step 5 — BIOS settings (the half people skip)
 
-A correctly-installed driver still loses to BIOS firmware that keeps rewriting fan registers. One-time BIOS setup by vendor:
+A correctly-installed, current driver usually takes each header over from the BIOS on its own. What the BIOS keeps is the fans at boot and whenever the daemon is not controlling them — so there is one rule for everyone, and the rest is per vendor:
 
-- **Gigabyte (Smart Fan 5/6):** set each header you want Linux to control to **Full Speed** mode, and make sure "FAN Control by" is **not** set to "Temperature". On IT8689E **Rev 1** boards (e.g. X670E AORUS MASTER), **update `it87-dkms-git` first**: the driver fix in [PR #128](https://github.com/frankcrawford/it87/pull/128) merged on 2026-08-24, and three users reported working IT8689E fan control the day before — including on **Rev 1** (a Z790 AORUS MASTER, with fan speed measurably tracking duty) and on boards that needed **no BIOS changes at all**. Two honest caveats: all three tested the pre-merge version of that patch, and `it87-dkms-git` builds upstream `master`, which has changed since. So update, then **verify with Test PWM Control** rather than assuming. If writes still do nothing, the older stopgap ([issue #96](https://github.com/frankcrawford/it87/issues/96)) is to flatten the BIOS curve by setting **every vector's temperature to 90** — though that only reliably restored the CPU-fan header. ([PR #114](https://github.com/frankcrawford/it87/pull/114), previously named here as the pending fix, was rejected on 2026-08-25.)
-- **MSI:** BIOS → Hardware Monitor → **disable "Smart Fan Mode"** for each header, or all headers report read-only.
-- **ASUS / ASRock:** set Q-Fan / Smart Fan to manual or full speed for headers that appear read-only.
-
-Fans will run at full speed after these BIOS changes **until the daemon/GUI takes over** — that is expected.
+- **Every vendor:** never give a BIOS fan curve a **0% point**. The BIOS curve runs the fans at boot, and whenever the daemon is not controlling them, so a 0% point means stopped fans — pump and CPU fan included — in exactly those moments.
+- **Gigabyte (Smart Fan 5/6):** a current `it87-dkms-git` build usually needs **no BIOS change at all**. For a 4-pin fan, set the header's **FAN Control Mode** to **PWM**. Leave **Fan Speed Control** on a normal curve. *Full Speed* is a fail-safe, not a fix: the firmware runs that fan at 100% whenever it owns it, but on some boards it also locks Linux out of the header ([issue #115](https://github.com/frankcrawford/it87/issues/115)). On IT8689E **Rev 1** boards (e.g. X670E AORUS MASTER), **update `it87-dkms-git` first**. The fix in [PR #128](https://github.com/frankcrawford/it87/pull/128) merged on 2026-08-24, and three users reported working IT8689E control the day before, including on **Rev 1** (a Z790 AORUS MASTER, with fan speed measurably tracking duty). More boards have reported working since, some with **no BIOS changes at all**. So update, then **verify with Test PWM Control** rather than assuming. Only on a build older than 2026-08-24 did the driver need the fork's old BIOS stopgap: PWM 40,40,40,40,40,40,100 at temperatures 0,90,90,90,90,90,90, lowering 90 to your BIOS maximum ([issue #96](https://github.com/frankcrawford/it87/issues/96)). Even that only reliably restored the CPU-fan header. ([PR #114](https://github.com/frankcrawford/it87/pull/114), an earlier candidate fix, was rejected on 2026-08-25.)
+- **MSI:** no BIOS setting makes the headers writable. If every header reads as read-only, the in-kernel `nct6683` is bound instead of `nct6687d` — blacklist it (see Step 3). On B840/B850/B860/X870/X870E/Z890 boards, system fans that ignore writes need the driver options in the table below, not a BIOS change. For 3-pin fans, set the header's fan type to DC.
+- **ASUS:** no BIOS setting unlocks the headers either — under `nct6775` they are always writable, and the daemon switches each one to manual itself. In *Q-Fan Control*, match each header's mode to the fan (**DC Mode** for 3-pin, **PWM Mode** for 4-pin). *Q-Fan Tuning* is a one-shot calibration, not a mode switch. On some 800-series boards the firmware has been measured taking a header straight back from manual mode; run **Test PWM Control** to see whether yours does.
+- **ASRock:** headers on the NCT67xx chip are always writable under `nct6775`. Headers on an NCT6686D/NCT6683D are read-only in the kernel driver whatever the BIOS says, and need an out-of-tree driver. Set each header's fan type to match the fan (DC for 3-pin, PWM for 4-pin).
 
 ## Module parameters you may actually need
 
@@ -162,17 +187,19 @@ Most users on current driver builds need **none** of these. The exceptions, all 
 
 | Situation | Parameter | Source |
 |---|---|---|
-| Dual-chip Gigabyte board, **old (pre-2026-03)** it87 build, secondary chip missing | `options it87 mmio=on` | [issue #70](https://github.com/frankcrawford/it87/issues/70) — current builds default this on; update the driver instead. **If the secondary's DEVID reads `0x8883` rather than `0xFFFF`, updating will not help — that is a latched bridge, and it needs `nct6775`/`w83627ehf` suppressed plus a full power cut** — see [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) |
-| **IT8665E** board (X399 era, e.g. ROG Zenith Extreme) — PWM writes garbled on **builds predating 2026-07-22 only** | `options it87 mmio=off` | [issue #106](https://github.com/frankcrawford/it87/issues/106) — **closed, fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO for this chip in the driver.** On a current build no parameter is needed; update the driver instead |
+| Dual-chip Gigabyte board, **old (pre-2026-03)** it87 build, secondary chip missing | `options it87 mmio=on` | [issue #70](https://github.com/frankcrawford/it87/issues/70) — current builds default this on; update the driver instead. **On a current build, a missing secondary is not a parameter problem** — it is a blocked Super-I/O that needs `nct6775`/`w83627ehf` kept away, a reboot and, if that is not enough, a full power cut — see [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) |
+| **IT8665E** board (ASUS AM4 300/400-series such as the PRIME X470-PRO, and X399-era boards like the ROG Zenith Extreme) — PWM writes garbled on **builds predating 2026-07-22 only** | `options it87 mmio=off` | [issue #106](https://github.com/frankcrawford/it87/issues/106) — **closed, fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO for this chip in the driver.** On a current build no parameter is needed; update the driver instead |
 | `modprobe it87` fails with *Device or resource busy* (ACPI conflict, e.g. B650 GAMING X AX V2) | `options it87 ignore_resource_conflict=1` | [issue #92](https://github.com/frankcrawford/it87/issues/92) — prefer this driver-local option over the system-wide `acpi_enforce_resources=lax` |
-| MSI **NCT6687DR** board (B840/B850/B860/X870/X870E/Z890 only) whose system fans ignore writes and which is **not** on the driver's auto-allowlist | `options nct6687 fan_config=msi_alt1` | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — see the warning below |
+| MSI **B840/B850/B860/X870/X870E/Z890** board (the alternate "msi_alt1" register map — monitoring tools call these boards *NCT6687DR*) whose system fans ignore writes and which is **not** on the driver's auto-allowlist | `options nct6687 fan_config=msi_alt1` | [Fred78290/nct6687d](https://github.com/Fred78290/nct6687d) — see the warning below |
 | `modprobe nct6687` fails with *Device or resource busy* (ACPI conflict) | `acpi_enforce_resources=lax` **as a kernel parameter** | `nct6687` and `nct6775` expose **no** driver-local `ignore_resource_conflict` equivalent, so unlike it87 the system-wide parameter is the only kernel-side remedy — use it deliberately |
 | Boot log shows *"nct6687: EC base I/O port unconfigured"* or `modprobe` fails with *No such device* | `softdep nct6687 pre: i2c_i801` in `/etc/modprobe.d/nct6687.conf` | upstream README — the EC is not addressable until the SMBus driver has loaded |
-| MSI system fans accept PWM writes but do not change speed (all 7 BIOS curve points must be written) | `options nct6687 msi_fan_brute_force=1` **plus** `blacklist nct6683` | upstream marks this BETA and requires the blacklist; without it `nct6683` claims the chip and writes fail |
+| MSI B840/B850/B860/X870/X870E/Z890 system fans accept PWM writes but do not change speed, or writes fail with an I/O error (EIO) | `options nct6687 msi_fan_brute_force=1` **plus** `blacklist nct6683` | upstream marks this BETA and requires the blacklist; without it `nct6683` can bind the same chip and writes fail. It writes the duty into all 7 BIOS curve points (the original curve is saved and restored), for system fans only |
 
-> **Do not force `fan_config=msi_alt1` on an MSI board outside the NCT6687DR families.** B650, B660, X670, Z690 and Z790 boards use the *default* register mapping and are auto-detected correctly. Forcing alt1 there makes the driver read EC offsets that read zero on that silicon, so **every system fan reports 0 RPM** while the CPU fan keeps working. Check which mapping is active with `dmesg | grep 'active fan config'` — that line will also reveal a setting left behind from an earlier attempt.
+> **Do not force `fan_config=msi_alt1` on an MSI board outside the B840/B850/B860/X870/X870E/Z890 series.** B650, B660, X670, Z690 and Z790 boards use the *default* register mapping and are auto-detected correctly — the chip is the same NCT6687D; only the EC's register layout differs. Forcing alt1 there makes the driver read EC offsets that read zero on those boards, so **every system fan reports 0 RPM** while the CPU fan keeps working. Check which mapping is active with `sudo dmesg | grep 'active fan config'` — that line will also reveal a setting left behind from an earlier attempt.
+>
+> **Never load `nct6687` with `force=1` on a board whose chip is an NCT679x** (MSI AM4 300/400-series and the original X570 boards). Since [nct6687d PR #174](https://github.com/Fred78290/nct6687d/pull/174), `force=1` attaches to any Nuvoton chip ID from 0xD000 to 0xDFFF. That reopens the chip-ID collision that has bricked a CPU fan header.
 
-Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a dual-chip Gigabyte board — it can wedge the Super-I/O bridge so the secondary chip vanishes until the machine is powered down at the wall (a reboot is not enough; the chip stays alive on +5 V standby). The recovery is in [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
+Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a dual-chip Gigabyte board — it can wedge the Super-I/O bridge so the secondary chip vanishes, and a reboot may not bring it back — power down at the wall, because the bridge keeps standby power. The recovery is in [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
 There is also nothing to gain by running it on these boards. As of 2026-08-26 `sensors-detect` has **no entry for device IDs 0x8688, 0x8689, 0x8696 or 0x8698**, so it cannot identify an IT8688E, IT8689E, IT8696E or IT8698E — the primary chip on essentially every modern Gigabyte board — and it has no NCT6686D entry either. On exactly the boards where running it can do harm, it has nothing useful to tell you.
 
@@ -194,7 +221,7 @@ sudo rm -f /etc/modprobe.d/it87.conf /etc/modprobe.d/nct6687.conf
 sudo systemctl reboot
 ```
 
-BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its default profile). If you use snapshots (e.g. `snapper` / Timeshift on CachyOS), taking one before Step 3 gives you a one-command rollback as well.
+BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its default profile). If you pinned `it87-dkms-git` to a commit, remove it from `IgnorePkg` too. If you use snapshots (e.g. `snapper` / Timeshift on CachyOS), taking one before Step 3 gives you a one-command rollback as well.
 
 ## Staying current
 

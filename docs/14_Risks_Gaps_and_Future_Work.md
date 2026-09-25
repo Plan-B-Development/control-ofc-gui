@@ -101,7 +101,7 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 2. **Driver assessment** — compare detected chips against the knowledge base, flag missing or wrong drivers, recommend specific AUR packages (e.g. `it87-dkms-git` for Gigabyte, `nct6687d-dkms-git` for MSI)
 3. **DKMS prerequisite check** — verify `dkms` is installed and kernel headers match the running kernel (common pitfall on Arch/CachyOS with multiple kernel flavours)
 4. **Module conflict resolution** — detect and offer to blacklist conflicting drivers (e.g. in-kernel nct6683 vs out-of-tree nct6687d)
-5. **BIOS configuration guidance** — vendor-specific step-by-step BIOS instructions with screenshots or descriptions (Gigabyte SmartFan 5/6 → "Full Speed", MSI → disable "Smart Fan Mode", etc.)
+5. **BIOS configuration guidance** — vendor-specific step-by-step BIOS instructions with screenshots or descriptions (Gigabyte Smart Fan 5/6 "FAN Control Mode" = PWM for 4-pin fans and no 0% curve points; "Full Speed" only as a fail-safe, never as a fix)
 6. **Per-header verification** — walk through each writable header: write a test PWM, confirm RPM response, classify as effective/read-only/BIOS-overridden
 7. **Summary report** — show what works, what doesn't, recommended next steps, and offer to export as a support bundle
 
@@ -123,29 +123,33 @@ A dedicated wizard page that walks first-time users through the complete hardwar
 - DKMS/package manager integration would need careful security review (polkit, sandboxing)
 - BIOS guidance with images would need an asset pipeline and per-board screenshot library
 
-### 11a. AORUS-class boards: BIOS Smart Fan is the root fix for pwm_enable reclaim
+### 11a. AORUS-class boards: pwm_enable reclaim — the driver is the root fix, not the BIOS
 
 On Gigabyte AORUS-family motherboards using the IT8696E / IT8689E Super-I/O,
-the EC firmware's Smart Fan algorithm continuously rewrites `pwm_enable` from
-manual mode (`1`) back to BIOS-controlled (`2`) at roughly 1 Hz once the OS
-takes manual control. The daemon's pwm_enable watchdog (added in daemon
+the EC firmware's Smart Fan logic can rewrite `pwm_enable` from manual mode
+(`1`) back to BIOS-controlled (`2`), at roughly 1 Hz on some boards, once the
+OS takes manual control. The daemon's pwm_enable watchdog (added in daemon
 v1.3.0) detects this and re-writes manual mode + the PWM value on every
 loop, so fan control remains correct in practice — but **this is the
 operational mitigation, not the root fix**.
 
-The root fix is BIOS-side: in the AORUS BIOS, set Smart Fan 6 (or Smart Fan
-5 on older boards) to **Manual / Full Speed** for every header that the OS
-is meant to control, or configure a degenerate fan curve where every
-temperature point sits at the same value with all duty points at 0% except
-the final point at 100%. Either configuration disables the EC's own curve
-evaluation and stops the reclaim cycle entirely.
+**Corrected 2026-09-24 (DEC-421).** This item used to name a BIOS setting as
+the root fix: Smart Fan "Manual / Full Speed" on every header, or a "degenerate
+curve" with every duty point at 0% except the last. Both were wrong. The
+mechanisms are the chip's extra curve vectors (IT8689E, IT8688E rev 2) and the
+SmartFan enable on the IT879x secondaries. The out-of-tree driver handles them
+from PR #128 (2026-08-24), so the root fix is a current `it87-dkms-git`. "Full
+Speed" is a fail-safe, not a fix: on some boards it locks manual mode out
+entirely (frankcrawford/it87 #115). The 0% curve has no upstream source, and it
+would stop the fans in exactly the windows the BIOS curve runs them — boot,
+hand-back, module unload, suspend, and whenever the daemon is not running.
 
 The GUI surfaces the live reclaim count per header on the System State
 page (v1.7.1 onwards) with a severity colour ramp; the daemon throttles
 the matching log line so the journal is not spammed (daemon v1.5.2). The
 System State page also auto-shows the matching `VendorQuirk` card when the
-board+chip combination is recognised, pointing the operator at this BIOS
-setting.
+board+chip combination is recognised, pointing the operator at the driver
+update (and naming Full Speed only as the fail-safe it is).
 
 ### 12. Real-time daemon journal follow (deferred — DEC-111)
 

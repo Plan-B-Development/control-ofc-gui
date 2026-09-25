@@ -161,7 +161,10 @@ class TestX500X600X800VendorQuirks:
         # The Taichi Lite legitimate dual-Nuvoton case must be findable
         # via ASRock + nct6799 lookup, and must explicitly mention the
         # DEC-106 refinement so users don't panic at any residual banner.
-        quirks = lookup_vendor_quirks("ASRock", "nct6799")
+        # DEC-421: the dual-Nuvoton note is scoped to Taichi boards — most
+        # ASRock AM5 boards (Pro RS, PG Lightning, HDV, X870 Nova) have ONE
+        # Nuvoton chip, and the unscoped note told them otherwise.
+        quirks = lookup_vendor_quirks("ASRock", "nct6799", board_name="X870E Taichi Lite")
         flat = " ".join(q.summary + " ".join(q.details) for q in quirks)
         assert "taichi lite" in flat.lower()
         assert "dec-106" in flat.lower() or "refines" in flat.lower(), (
@@ -169,6 +172,17 @@ class TestX500X600X800VendorQuirks:
             "collision-detector refinement so users understand why the "
             "CRITICAL banner is suppressed"
         )
+
+    def test_asrock_single_nuvoton_board_does_not_get_the_dual_chip_note(self):
+        """The opposite branch: a single-chip AM5 board gets the plain note only."""
+        taichi = lookup_vendor_quirks("ASRock", "nct6799", board_name="X870E Taichi")
+        pro_rs = lookup_vendor_quirks("ASRock", "nct6799", board_name="X870 Pro RS")
+        taichi_ids = {q.id for q in taichi}
+        pro_rs_ids = {q.id for q in pro_rs}
+        # Presence first, or the absence below proves nothing.
+        assert "asrock-nct6799-legitimate-dual-nuvoton" in taichi_ids
+        assert "asrock-nct6799-mainline-kernel-coverage" in pro_rs_ids
+        assert "asrock-nct6799-legitimate-dual-nuvoton" not in pro_rs_ids
 
     def test_gigabyte_it8689_rev1_dead_end(self):
         # X670E AORUS MASTER IT8689E Rev 1 dead-end (frankcrawford/it87

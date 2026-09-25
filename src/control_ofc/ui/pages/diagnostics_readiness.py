@@ -28,7 +28,8 @@ def classify_reclaim_severity(count: int) -> str:
       - ``"warn"``  → ``1 <= count < 10`` (occasional reclaim — daemon is
         recovering but the operator may want to check BIOS Smart Fan settings).
       - ``"high"``  → ``count >= 10`` (continuous reclaim — BIOS is fighting
-        the daemon; recommend disabling Smart Fan or using a degenerate curve).
+        the daemon; point at the vendor's remedy in the board notes — never a
+        BIOS curve with a 0% point, and never "Full Speed" as a fix, DEC-421).
 
     Negative counts are treated as ``ok`` so callers do not have to defend
     against malformed daemon payloads. The buckets are deliberately coarse so

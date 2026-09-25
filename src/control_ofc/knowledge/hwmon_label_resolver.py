@@ -81,12 +81,40 @@ class FallbackLabel:
         return self.text if self.verified else f"{self.text} (unverified)"
 
 
+# Label sets shared by two DMI spellings of one board (DEC-421). The match
+# below is an ANCHORED `fnmatchcase`, so a key must equal the board name the
+# firmware actually reports — and for these boards real logs show more than
+# one spelling (a "-CF" suffix, or an MSI "(MS-xxxx)" model number).
+_X470_GAMING_PRO_NCT6795: dict[str, FallbackLabel] = {
+    "pwm1": FallbackLabel("PUMP_FAN1", verified=True),
+    "pwm2": FallbackLabel("CPU_FAN1", verified=True),
+    "pwm3": FallbackLabel("SYS_FAN1", verified=True),
+    "pwm4": FallbackLabel("SYS_FAN2", verified=True),
+    "pwm5": FallbackLabel("SYS_FAN3", verified=True),
+    "pwm6": FallbackLabel("SYS_FAN4", verified=True),
+}
+_B550_VISION_D_IT8688: dict[str, FallbackLabel] = {
+    "pwm1": FallbackLabel("CPU_FAN", verified=True),
+    "pwm2": FallbackLabel("SYS_FAN1", verified=True),
+    "pwm3": FallbackLabel("SYS_FAN2", verified=True),
+    "pwm4": FallbackLabel("SYS_FAN3", verified=True),
+    "pwm5": FallbackLabel("CPU_OPT", verified=True),
+}
+_B550_VISION_D_IT8792: dict[str, FallbackLabel] = {
+    "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
+    "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=True),
+    "pwm3": FallbackLabel("SYS_FAN4", verified=True),
+}
+
 HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # ── Gigabyte X870E AORUS MASTER ────────────────────────────────
-    # IT8696E primary chip. Mapping verified against the vendor user
-    # manual and the bakman2 / nathan818fr community references;
-    # independently corroborated by the owner-posted sensors.d config in
-    # frankcrawford/it87 issue #103 (DEC-144).
+    # IT8696E primary chip. Mapping per the frankcrawford/it87 SIV catalogue
+    # (`Sensors configs/Gigabyte/configs/gigabyte-it87-amd.conf`, SIV
+    # A008090A — the SIV this board reports, read on the project's own host),
+    # the owner-posted sensors.d config in frankcrawford/it87 issue #103
+    # (DEC-144) and the vendor manual's header list. Until 2026-09-24 this
+    # comment cited "bakman2 / nathan818fr" references; the first is generic
+    # instructions and the second an X570 AORUS MASTER config (DEC-421).
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="X870E AORUS MASTER",
@@ -102,8 +130,16 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # mapping in frankcrawford/it87 issue #103 (sensors.d config posted
     # 2026-04: fan1=SYS_FAN5_PUMP, fan2=SYS_FAN6_PUMP, fan3=SYS_FAN4 —
     # the same ordering as the X570/X470/B550 IT8792E upstream configs).
-    # Still marked unverified: single-owner report, not independently
-    # confirmed; silkscreen tracing required to lock pwmN→header.
+    # DEC-421 (2026-09-24): now corroborated by the it87 SIV catalogue (SIV
+    # A008090A: it87952 pwm1 SYS_FAN5_PUMP, pwm2 SYS_FAN6_PUMP, pwm3 SYS_FAN4),
+    # a second owner in #103, and LibreHardwareMonitor's same-SIV siblings.
+    # One source disagrees: an annotation in it87 PR #100's body orders them
+    # SYS_FAN4 / FAN5_PUMP / FAN6_PUMP, read with three identical fans at
+    # near-identical RPM, so it does not isolate a channel. The order is
+    # safety-relevant — the PUMP labels feed the 30% pump floor — so these stay
+    # `verified=False` until a per-channel test on real hardware settles it
+    # (register row BRD-i). The silkscreen prints the pump headers as
+    # FAN5_PUMP / FAN6_PUMP.
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="X870E AORUS MASTER",
@@ -124,9 +160,13 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # Source: configs/Gigabyte/X470-AORUS-ULTRA-GAMING.conf
     # Primary IT8686E at 0x0a40 (CPU_FAN, SYS_FAN1..3, CPU_OPT) and
     # secondary IT8792E at 0x0a60 (SYS_FAN5_PUMP, SYS_FAN6_PUMP, SYS_FAN4).
+    # The glob carries a trailing `*` (DEC-421): real boards report
+    # "X470 AORUS ULTRA GAMING-CF" (three independent logs), which the bare
+    # name never matched — so these labels, the two PUMP ones included,
+    # never reached a user.
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
-        board_glob="X470 AORUS ULTRA GAMING",
+        board_glob="X470 AORUS ULTRA GAMING*",
         chip="it8686",
     ): {
         "pwm1": FallbackLabel("CPU_FAN", verified=True),
@@ -137,7 +177,7 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     },
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
-        board_glob="X470 AORUS ULTRA GAMING",
+        board_glob="X470 AORUS ULTRA GAMING*",
         chip="it8792",
     ): {
         "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
@@ -147,18 +187,23 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # ── MSI X470 GAMING PRO (MS-7B79) ───────────────────────────────
     # Source: configs/MSI/MS_7B79_X470_GAMINGPRO.conf
     # Chip: NCT6795D. Note: fan1 = PUMP_FAN1, fan2 = CPU_FAN1.
+    # DEC-421: MSI firmware reports the model number in the DMI name —
+    # "X470 GAMING PRO (MS-7B79)" — so the bare key never matched a real
+    # board and PUMP_FAN1 / CPU_FAN1 never fed the 30% floor. The real
+    # spelling is keyed first; the bare one is kept for any firmware that
+    # omits the suffix. No wildcard: "X470 GAMING PRO*" would also catch the
+    # X470 GAMING PRO CARBON (MS-7B78), a different board this config does
+    # not describe.
+    BoardKey(
+        vendor="Micro-Star International Co., Ltd.",
+        board_glob="X470 GAMING PRO (MS-7B79)",
+        chip="nct6795",
+    ): _X470_GAMING_PRO_NCT6795,
     BoardKey(
         vendor="Micro-Star International Co., Ltd.",
         board_glob="X470 GAMING PRO",
         chip="nct6795",
-    ): {
-        "pwm1": FallbackLabel("PUMP_FAN1", verified=True),
-        "pwm2": FallbackLabel("CPU_FAN1", verified=True),
-        "pwm3": FallbackLabel("SYS_FAN1", verified=True),
-        "pwm4": FallbackLabel("SYS_FAN2", verified=True),
-        "pwm5": FallbackLabel("SYS_FAN3", verified=True),
-        "pwm6": FallbackLabel("SYS_FAN4", verified=True),
-    },
+    ): _X470_GAMING_PRO_NCT6795,
     # ── MSI B450M MORTAR (MS-7B89) ──────────────────────────────────
     # Source: configs/MSI/MS-7B89-B450M-MORTAR.conf
     # Chip: NCT6797D. fan1 is ignored upstream; fan2-fan5 mapped.
@@ -177,9 +222,11 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # ── ASRock B450 Gaming ITX/AC ────────────────────────────────────
     # Source: configs/ASRock/B450-Gaming-ITX-ac.conf
     # Chip: NCT6792D (mainline kernel coverage).
+    # DEC-421: the firmware spells it "B450 Gaming-ITX/ac" (hyphen); the key
+    # accepts the hyphen or a space so the labels reach real boards.
     BoardKey(
         vendor="ASRock",
-        board_glob="B450 Gaming ITX/ac",
+        board_glob="B450 Gaming[- ]ITX/ac",
         chip="nct6792",
     ): {
         "pwm1": FallbackLabel("CHA_FAN1", verified=True),
@@ -193,27 +240,33 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # to `pwmN` keys at `verified=True` exactly as DEC-105 did.
     # ── Gigabyte B550 VISION D (GA-B550-VISION-D) ──────────────────
     # Source: configs/Gigabyte/GA-B550-VISION-D.conf
-    # Primary IT8688E at 0x0a40 + secondary IT8792E at 0x0a60.
+    # Primary IT8688E + secondary IT8792E. (The config itself gives no port
+    # addresses — it globs `it8688-*` / `it8792-*`; an earlier comment here
+    # quoted 0x0a40 / 0x0a60 as if it did.)
+    # DEC-421: the config's own DMI line reads "B550 VISION D-CF", which the
+    # bare key never matched, so both spellings are keyed. The VISION D-P is
+    # deliberately NOT covered — a different board this config does not
+    # describe.
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="B550 VISION D",
         chip="it8688",
-    ): {
-        "pwm1": FallbackLabel("CPU_FAN", verified=True),
-        "pwm2": FallbackLabel("SYS_FAN1", verified=True),
-        "pwm3": FallbackLabel("SYS_FAN2", verified=True),
-        "pwm4": FallbackLabel("SYS_FAN3", verified=True),
-        "pwm5": FallbackLabel("CPU_OPT", verified=True),
-    },
+    ): _B550_VISION_D_IT8688,
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="B550 VISION D-CF",
+        chip="it8688",
+    ): _B550_VISION_D_IT8688,
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="B550 VISION D",
         chip="it8792",
-    ): {
-        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
-        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=True),
-        "pwm3": FallbackLabel("SYS_FAN4", verified=True),
-    },
+    ): _B550_VISION_D_IT8792,
+    BoardKey(
+        vendor="Gigabyte Technology Co., Ltd.",
+        board_glob="B550 VISION D-CF",
+        chip="it8792",
+    ): _B550_VISION_D_IT8792,
     # ── Gigabyte B550M AORUS PRO (GA-B550M-AORUS-PRO) ───────────────
     # Source: configs/Gigabyte/GA-B550M-AORUS-PRO.conf
     # Single-chip variant — IT8688E only.

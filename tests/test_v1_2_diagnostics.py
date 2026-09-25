@@ -578,7 +578,7 @@ class TestDualChipRemediationOrderingDec144:
         # cases that have one — but never as the answer to the unreachable case.
         assert "it87-dkms-git" in out
         lowered = out.lower()
-        assert "dmesg" in lowered, "the alert must hand over the discriminator"
+        assert "dmesg" in lowered, "the alert must keep the driver-loaded check (DEC-421)"
         assert "power" in lowered and ("wall" in lowered or "power cut" in lowered), (
             "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
             "the remedy rather than tell the user to give up. It must also say "

@@ -99,9 +99,23 @@ class TestLookupChipGuidance:
         assert g.driver_name == "sch5627"
 
     def test_guidance_has_bios_tips(self):
-        g = lookup_chip_guidance("nct6687")
+        # Was nct6687, whose only tip ("disable Smart Fan Mode" to make read-only
+        # headers writable) was wrong: nct6687d makes every pwm file writable, so
+        # a read-only header means the in-kernel nct6683 is bound (DEC-421). The
+        # tip was removed rather than replaced, so assert on a chip whose BIOS
+        # tips are sourced.
+        g = lookup_chip_guidance("it8696")
         assert g is not None
         assert len(g.bios_tips) > 0
+
+    def test_nct6687_no_longer_blames_smart_fan_mode(self):
+        g = lookup_chip_guidance("nct6687")
+        assert g is not None
+        flat = " ".join([*g.bios_tips, *g.known_issues]).lower()
+        # The real cause must be named where the read-only symptom is described.
+        assert "read-only" in flat and "nct6683" in flat
+        for advice in ("disable 'smart fan mode'", "set 'smart fan mode'", "disable smart fan"):
+            assert advice not in flat, f"retracted remedy {advice!r} is back"
 
     def test_guidance_has_known_issues(self):
         g = lookup_chip_guidance("nct6687")

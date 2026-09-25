@@ -158,7 +158,12 @@ def classify_sensor(
         )
 
     # -- sbtsi_temp: AMD SB-TSI board-side CPU interface --------------
-    if chip_name == "sbtsi_temp":
+    # Curator 2026-09-24 (DEC-421): the kernel names this hwmon device
+    # "sbtsi" — only the MODULE is sbtsi_temp — so the old key never matched
+    # a real device. Both are accepted. From 7.3 the driver depends on
+    # ARM/ARM64 (it is meant for the BMC, not the managed host), so x86
+    # desktops will stop seeing it at all.
+    if chip_name in ("sbtsi", "sbtsi_temp"):
         return SensorClassification(
             source_class="amd_tsi",
             display_description="Board-side CPU temperature via AMD SB-TSI",
@@ -190,7 +195,10 @@ def classify_sensor(
         )
 
     # -- asus_ec_sensors: High-confidence ASUS EC labels --------------
-    if chip_name == "asus_ec_sensors":
+    # The hwmon device is named "asusec" (asus-ec-sensors.c); "asus_ec_sensors"
+    # is the module. Keyed on the module name alone this branch never fired on
+    # real hardware (DEC-421), so both spellings are accepted.
+    if chip_name in ("asusec", "asus_ec_sensors"):
         return _classify_asus_ec(label, lower_label)
 
     # -- asus_wmi_sensors: ASUS WMI labels ----------------------------
@@ -804,13 +812,14 @@ BOARD_SENSOR_OVERRIDES: list[BoardSensorOverride] = [
     ),
     BoardSensorOverride(
         vendor_pattern="asus",
-        model_pattern="strix z690-a gaming wifi",
+        model_pattern="strix z690-a gaming wifi d4",
         label_pattern="T_Sensor",
         source_class="external_probe",
         display_description="T_Sensor header — external temperature probe",
         notes=[
             "Validated via asus_ec_sensors kernel driver allowlist",
-            "DDR4 variant — D5 SKUs use a different EC path",
+            "Only the DDR4 board ('ROG STRIX Z690-A GAMING WIFI D4') is on the "
+            "kernel's list; the DDR5 board has no asus_ec_sensors support",
             f"Source: {_ASUS_EC_KERNEL_DOC_URL}",
         ],
     ),
@@ -882,19 +891,14 @@ def lookup_board_override(
 
 # Sysfs `tempN_type` integer → human label.
 #
-# The current kernel hwmon sysfs interface docs
-# (https://docs.kernel.org/hwmon/sysfs-interface.html) describe `tempN_type`
-# as "Sensor type selection" without enumerating the integer codes
-# user-facing. The enumeration below is the canonical mapping observed in
-# driver source. Most-load-bearing values for our supported chip range
-# (3 = diode, 4 = thermistor, 5 = AMD TSI, 6 = Intel PECI) come from the
-# nct6683 driver source:
-#   https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6683.c
-#   (function `get_temp_type` / source-range mapping).
-# Values 1 (CPU embedded diode), 2 (3904 transistor), 7 (AMD SB-TSI) are
-# part of the older hwmon ABI surviving in driver source; they're rarely
-# returned by drivers we currently classify but are kept here so a future
-# daemon that does report them won't render as a bare integer.
+# The kernel ABI (Documentation/ABI/testing/sysfs-class-hwmon, checked at
+# 7.3-rc4 on 2026-09-24) defines exactly six values: "Integers 1 to 6 …
+# 1: CPU embedded diode · 2: 3904 transistor · 3: thermal diode ·
+# 4: thermistor · 5: AMD AMDSI · 6: Intel PECI". All six are the current ABI
+# (it87 calls 2 deprecated). Drivers report AMD TSI as 5 — nct6683's
+# `get_temp_type` maps sources 0x42-0x49 to 5, it87 and w83627ehf do the same.
+# This table used to carry `7: "AMD SB-TSI (7)"`; no ABI text or driver
+# defines 7, so it was removed (DEC-421) and would now render as "unknown (7)".
 _TEMP_TYPE_LABELS: dict[int, str] = {
     1: "CPU embedded diode (1)",
     2: "3904 transistor (2)",
@@ -902,7 +906,6 @@ _TEMP_TYPE_LABELS: dict[int, str] = {
     4: "thermistor (4)",
     5: "AMD TSI (5)",
     6: "Intel PECI (6)",
-    7: "AMD SB-TSI (7)",
 }
 
 
@@ -932,7 +935,9 @@ def temp_type_label(temp_type: int | None) -> str:
 _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     ("k10temp", "https://docs.kernel.org/hwmon/k10temp.html"),
     ("coretemp", "https://docs.kernel.org/hwmon/coretemp.html"),
-    ("sbtsi_temp", "https://docs.kernel.org/hwmon/sbtsi_temp.html"),
+    # "sbtsi" is the hwmon device name and a prefix of the module name
+    # "sbtsi_temp", so one entry serves both (DEC-421).
+    ("sbtsi", "https://docs.kernel.org/hwmon/sbtsi_temp.html"),
     ("nct6775", "https://docs.kernel.org/hwmon/nct6775.html"),
     ("nct6683", "https://docs.kernel.org/hwmon/nct6683.html"),
     ("nct668", "https://docs.kernel.org/hwmon/nct6683.html"),
@@ -940,6 +945,9 @@ _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     ("nct67", "https://docs.kernel.org/hwmon/nct6775.html"),
     ("it87", "https://docs.kernel.org/hwmon/it87.html"),
     ("it8", "https://docs.kernel.org/hwmon/it87.html"),
+    # The hwmon names ("asusec", "atk0110") first, then the module-style keys
+    # older callers pass (DEC-421).
+    ("asusec", "https://docs.kernel.org/hwmon/asus_ec_sensors.html"),
     ("asus_ec_sensors", "https://docs.kernel.org/hwmon/asus_ec_sensors.html"),
     ("asus_wmi_sensors", "https://docs.kernel.org/hwmon/asus_wmi_sensors.html"),
     ("amdgpu", "https://docs.kernel.org/gpu/amdgpu/thermal.html"),
@@ -952,6 +960,10 @@ _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     (
         "nvme",
         "https://github.com/torvalds/linux/blob/master/drivers/nvme/host/hwmon.c",
+    ),
+    (
+        "atk0110",
+        "https://github.com/torvalds/linux/blob/master/drivers/hwmon/asus_atk0110.c",
     ),
     (
         "asus_atk0110",

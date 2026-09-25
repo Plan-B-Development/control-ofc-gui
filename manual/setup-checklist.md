@@ -111,7 +111,7 @@ On the **System State** page:
 | After this event | What can break | What to redo |
 |---|---|---|
 | **Kernel update** | The DKMS module silently fails to rebuild when the installed headers don't match the new kernel — motherboard fans/sensors vanish | [Driver Setup — Step 2](driver-setup.md#step-2--prerequisites-dkms--kernel-headers) and [Staying current](driver-setup.md#staying-current) |
-| **BIOS update or settings reset** | Firmware usually restores Smart Fan defaults — headers turn read-only again | [Driver Setup — Step 5 (BIOS)](driver-setup.md#step-5--bios-settings-the-half-people-skip), then re-run the readiness check |
+| **BIOS update or settings reset** | Firmware usually restores its fan-curve defaults — check the BIOS curve has no 0% point, and re-run Test PWM Control in case the firmware now takes headers back | [Driver Setup — Step 5 (BIOS)](driver-setup.md#step-5--bios-settings-the-half-people-skip), then re-run the readiness check |
 | **Fan regression with a driver installed months ago** | `-git` AUR drivers only pick up upstream fixes when reinstalled | [Staying current](driver-setup.md#staying-current) |
 | **Bootloader change / kernel command-line edit** | `amdgpu.ppfeaturemask` falls off the command line — GPU fan writes stop working | [AMD GPU prerequisite](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3); check with `cat /proc/cmdline` |
 

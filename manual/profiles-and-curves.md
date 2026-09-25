@@ -88,7 +88,7 @@ The **Minimum** floor is chosen automatically from the role inferred for the fan
 
 - **30%** for CPU / pump-labelled hwmon members, and for a member whose header you assigned the **pump** role. The **Min** badge and the Dashboard fan cards show that 30% as soon as you assign the role, even for a fan you added to the group before. The manual slider and the curve editor still go down to the group's own minimum. The daemon raises anything lower to 30%.
 - **20%** for chassis / OpenFan members
-- **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the GPU's firmware owns its real ~15% minimum)
+- **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the card's own fan minimum — board-specific, often around 15% — still decides how slowly the fan can actually turn)
 
 These per-role floors are GUI-owned policy baked into the profile. The daemon additionally enforces the **pump/CPU 30% floor** as a hard backstop: it rejects a profile whose pump/CPU control declares a `minimum_pct` below 30% at validate time, and re-applies the 30% floor on every evaluation tick regardless of the declared value. The 20% chassis / 0% GPU floors remain GUI policy — the daemon does not enforce those.
 

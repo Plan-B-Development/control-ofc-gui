@@ -74,14 +74,33 @@ def _master_diag() -> HardwareDiagnosticsResult:
 class TestDualChipAlertTruthfulness:
     """`UDOC-h` — the alert must not promise a fix the board cannot have."""
 
-    def test_alert_gives_the_discriminator_not_a_universal_remedy(self):
+    def test_alert_gives_the_recovery_ladder_not_a_dmesg_discriminator(self):
+        """DEC-421 retired the DEVID discriminator this test used to demand.
+
+        It told the user to read `DEVID=0xFFFF` vs `DEVID=0x8883` from `dmesg`.
+        Neither is visible there: `Unsupported chip (DEVID=…)` is `pr_debug`, a
+        0xFFFF read exits `it87_find()` without printing, and a plain `dmesg`
+        fails for a normal user on dmesg_restrict kernels. The two values are
+        also one blocked state read two ways (it87 #70). So the alert must give
+        the ladder that is right either way — in order — and say why no log
+        line will tell the cases apart.
+        """
         html = dual_chip_warning_html("X870E AORUS MASTER", ["it8696", "it87952"], ["it8696"])
         assert html is not None
         lowered = html.lower()
 
-        # The discriminator is the whole point: the user must be able to find
-        # out WHICH fault they have before changing anything.
-        assert "dmesg" in lowered
+        # The ladder, in order: stop the trigger → reboot → power down at the wall.
+        stop = lowered.find("1. stop whatever is unlocking")
+        reboot = lowered.find("2. reboot")
+        wall = lowered.find("3. still missing")
+        assert -1 not in (stop, reboot, wall), "every rung of the ladder must be present"
+        assert stop < reboot < wall, "the rungs must be in upstream's order"
+        assert "at the wall" in lowered[wall:], "the last rung is the mains power cut"
+        # The IDs may be named, but only as the thing the log does NOT show.
+        assert "debug level" in lowered
+        assert "read the secondary chip's device id" not in lowered
+        # `dmesg` survives only as the driver-loaded check, with the sudo it needs.
+        assert "sudo dmesg" in lowered
         assert "0x8883" in lowered
         assert "0xffff" in lowered
 
@@ -189,13 +208,17 @@ class TestDualChipAlertTruthfulness:
                         f"states there is no local fix — the UDOC-h contradiction"
                     )
 
-    def test_readiness_fix_line_points_at_the_discriminator(self):
+    def test_readiness_fix_line_gives_the_ladder(self):
         problems = {
             p["key"]: p for p in detect_readiness_problems(_master_diag(), duty_drift=NO_DRIFT)
         }
         assert "dual_chip" in problems
         fix = problems["dual_chip"]["fix"].lower()
-        assert "dmesg" in fix, "the one-line fix must tell the user how to tell the cases apart"
+        # DEC-421: no DEVID branch — the ladder, with dmesg kept only as the
+        # "is the driver loaded?" check and the sudo dmesg_restrict needs.
+        assert "devid" not in fix, "the unobservable DEVID discriminator must not return"
+        assert fix.find("reboot") < fix.find("wall"), "reboot comes before the power cut"
+        assert "sudo dmesg" in fix
         assert "power" in fix and ("wall" in fix or "power cut" in fix), (
             "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
             "the remedy rather than tell the user to give up. It must also say "

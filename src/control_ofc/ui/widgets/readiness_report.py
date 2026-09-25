@@ -184,19 +184,24 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
                 # said 0x8883 "has no local fix", which was measured false: the
                 # bridge is latched by a config-mode unlock from
                 # nct6775/w83627ehf and clears on a full power cut. Telling a
-                # user to give up costs them 3 of 8 headers permanently, so the
-                # discriminator now names the remedy for BOTH readings, and the
-                # link points at our own step-by-step rather than at an upstream
-                # issue thread the reader has to interpret.
+                # user to give up costs them 3 of 8 headers permanently.
+                #
+                # DEC-421 retired the DEVID discriminator itself: the driver
+                # prints the failing ID only at debug level, a 0xFFFF read is
+                # never printed at all, and 0xFFFF/0x8883 are two readings of one
+                # blocked chip (it87 #70). So the line gives the one ladder that
+                # is right either way; `dmesg` survives only as the "is the
+                # driver loaded at all?" check, with the `sudo` that
+                # dmesg_restrict kernels need.
                 "fix": (
-                    "Two different faults look identical here and they need "
-                    "different remedies. Run 'dmesg | grep -i it87': "
-                    "DEVID=0xFFFF is a Super-I/O stuck in config mode, cleared "
-                    "by rebooting without running sensors-detect. DEVID=0x8883 "
-                    "is an ITE bridge latched in config mode — suppress the "
-                    "nct6775/w83627ehf modules, then power down fully at the "
-                    "wall, because a reboot does not clear it. Full steps in "
-                    "the guide below."
+                    "Work down this list, re-checking after each step: keep "
+                    "sensors-detect and the nct6775/w83627ehf modules away from "
+                    "the Super-I/O; reboot; if the chip is still missing, power "
+                    "down fully at the wall (PSU switch off or unplugged), "
+                    "because the latched bridge keeps standby power and a reboot "
+                    "may not clear it. If 'sudo dmesg | grep -i it87' shows no "
+                    "it87 lines at all, the driver is not loaded — install "
+                    "it87-dkms-git first. Full steps in the guide below."
                 ),
                 "doc_url": _MISSING_HEADERS_URL,
                 "doc_title": "Manual: recovering missing fan headers",
@@ -245,10 +250,20 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
             {
                 "key": "bios_revert",
                 "label": "BIOS/EC reclaiming fan control",
+                # Curator 2026-09-24 (DEC-421): no BIOS setting "disables" the
+                # automatic curve on these boards — ASUS's Q-Fan Tuning is a
+                # one-shot calibration, and there is no "full manual" item — and
+                # Gigabyte's "Full Speed" is a fail-safe that can lock Linux out
+                # of the header (BRD-16), so it is not offered as the remedy. The
+                # measured remedies are per vendor, and the board notes carry them.
                 "fix": (
-                    "Disable the BIOS's automatic fan control (Q-Fan / Smart Fan "
-                    "/ Fan Xpert) for the affected headers, or set them to full "
-                    "manual, then re-test."
+                    "The daemon's watchdog re-asserts manual mode each time. If a "
+                    "header keeps being taken back: on Gigabyte boards keep "
+                    "it87-dkms-git current (its 2026-08-24 fixes address the "
+                    "firmware logic that retakes headers); on MSI "
+                    "B840/B850/B860/X870/Z890 boards load nct6687 with "
+                    "msi_fan_brute_force=1; otherwise see the board notes below. "
+                    "Never give a BIOS curve a 0% point. Then re-test."
                 ),
                 "doc_url": _HW_COMPAT_URL,
                 "doc_title": "Hardware Compatibility Guide",
@@ -582,19 +597,20 @@ def gpu_verify_problems(result: GpuVerifyResult) -> list[dict]:
             "fix": (
                 "The GPU accepted the fan-control write but did not apply it. Add "
                 "'amdgpu.ppfeaturemask=0xffffffff' to the kernel command line and "
-                "reboot; if it is already set, this is usually an SMU firmware / "
-                "driver mismatch — check the GPU advisories above and your kernel "
-                "version."
+                "reboot; if it is already set, check the GPU advisories above and "
+                "your kernel version. The 'SMU driver interface version' message "
+                "some cards log is not itself a fault."
             ),
         },
         "no_rpm_effect": {
             "key": "gpu_verify_no_rpm_effect",
             "label": "GPU fan did not respond",
             "fix": (
-                "The fan curve was applied but the fan RPM did not change. This "
-                "points to an SMU firmware issue or a known kernel regression for "
-                "this GPU — check the advisories above and consider a different "
-                "kernel. Confirm the fan is physically connected."
+                "The fan curve was applied but the fan RPM did not change. Confirm "
+                "the fan is physically connected, and check the advisories above. "
+                "A few cards have per-unit fan faults (e.g. some R9700s, ROCm "
+                "#6101) that no kernel change has been shown to fix — compare the "
+                "fan's RPM under load, and consider a warranty claim."
             ),
         },
         "pwm_enable_reverted": {

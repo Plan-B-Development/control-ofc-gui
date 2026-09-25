@@ -56,7 +56,7 @@ class TestVendorQuirkPlatformScoping:
         # It must surface when the caller passes cpu_vendor="Intel".
         quirks = lookup_vendor_quirks(
             "ASUSTeK COMPUTER INC.",
-            "asus_ec_sensors",
+            "asusec",
             cpu_vendor="Intel",
             board_name="ROG STRIX Z790-E GAMING WIFI II",
         )
@@ -72,7 +72,7 @@ class TestVendorQuirkPlatformScoping:
         # AM5 ASUS boards (which use the same driver legitimately).
         quirks = lookup_vendor_quirks(
             "ASUSTeK COMPUTER INC.",
-            "asus_ec_sensors",
+            "asusec",
             cpu_vendor="AMD",
             board_name="ProArt X670E-CREATOR WIFI",
         )
@@ -88,7 +88,7 @@ class TestVendorQuirkPlatformScoping:
         # "we don't know, so don't claim".
         quirks = lookup_vendor_quirks(
             "ASUSTeK COMPUTER INC.",
-            "asus_ec_sensors",
+            "asusec",
             cpu_vendor="",
             board_name="ROG STRIX Z790-E GAMING WIFI II",
         )
@@ -178,7 +178,7 @@ class TestAsusIntelLga1700Quirks:
         """
         quirks = lookup_vendor_quirks(
             "ASUSTeK COMPUTER INC.",
-            "asus_ec_sensors",
+            "asusec",
             cpu_vendor="Intel",
             board_name="ROG STRIX Z790-E GAMING WIFI II",
         )

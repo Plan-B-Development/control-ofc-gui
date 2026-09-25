@@ -92,7 +92,10 @@ Some chips (notably several Gigabyte ITE variants) are not supported by the main
 `it87-dkms-git`. The page marks these as **needs out-of-tree (DKMS) driver** and shows
 the driver, but installing a DKMS package is a system change you should make
 deliberately, after checking it matches your chip. Never pass `force_id` — it can
-misconfigure the chip.
+misconfigure the chip. **`it87-dkms-git` builds from 2026-09-09 (the driver's v2.0)
+rename Gigabyte chips** — e.g. `it8696_a008090a` — which changes every fan header's id,
+so pump roles, fan names and profile members need re-checking afterwards; the manual's
+Driver Setup page explains how to stay on the old names.
 
 ## ACPI I/O-port conflicts
 

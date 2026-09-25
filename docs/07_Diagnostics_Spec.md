@@ -905,9 +905,12 @@ degrades gracefully (no rule) if the cache is not writable.
 - BIOS tips specific to manufacturer/chipset combinations
 - Known issues (ACPI conflicts, read-only headers, etc.)
 
-Supported chip families: Nuvoton NCT679x, NCT677x, NCT6683, NCT6687;
-ITE IT8688E, IT8689E, IT8696E, IT8686E, IT8625E, IT87xx (generic);
-Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
+Supported chip families: Nuvoton NCT679x (incl. the NCT6701D, which mainline
+reports as `nct6799`), NCT677x, NCT6683, NCT6686, NCT6687; ITE IT8603E / IT8620E /
+IT8628E (mainline), IT8613E, IT8625E, IT8665E, IT8686E, IT8688E, IT8689E, IT8696E,
+IT8698E, IT87952E, IT87xx (generic); the IT8883 bridge (as an explanation, not a
+chip); ASUS sensor-only drivers (`asusec`, `asus_wmi_sensors`, `atk0110` — keyed on
+the hwmon names since DEC-421); Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
 
 ### Dashboard banner
 An `ErrorBanner` widget on the live dashboard content shows:

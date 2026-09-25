@@ -63,9 +63,9 @@ Mainline Linux already includes drivers for many chips (for example `nct6775` co
 
 Motherboard firmware has its own fan controller — Gigabyte calls it Smart Fan, ASUS calls it Q-Fan, others have similar names. When it is enabled, the firmware periodically rewrites the fan registers, flipping `pwmN_enable` back from manual to automatic. The result is the classic symptom: *Linux says the fan is at 50%, but it keeps running at full speed.*
 
-The fix is a one-time BIOS change — set the affected headers to manual or full-speed so the firmware stops reclaiming them. The exact setting per vendor is in the [Driver Setup BIOS step](driver-setup.md#step-5--bios-settings-the-half-people-skip) and the vendor guides above.
+Usually no BIOS change is needed: a current driver takes each header over, and the daemon puts a header back into manual mode whenever the firmware takes it. Where a board keeps taking a header back, the remedy is per vendor — a driver update on Gigabyte, a driver option on some MSI boards — and is in the [Driver Setup BIOS step](driver-setup.md#step-5--bios-settings-the-half-people-skip) and the vendor guides above. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: the fan runs at 100% whenever the firmware owns it, and on some boards Linux can then not control it at all.
 
-**What this means:** a correctly-installed driver can still "lose" to the BIOS until you change one firmware setting. The GUI's **Test PWM Control** detects exactly this — it reports when the BIOS reverted control during the test.
+**What this means:** on some boards a correctly-installed driver can still "lose" to the BIOS. The GUI's **Test PWM Control** detects exactly this — it reports when the BIOS reverted control during the test.
 
 ## Why only one tool should control a header at a time
 

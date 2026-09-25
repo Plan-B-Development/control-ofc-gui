@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+### Fixed
+
+**The missing-fan-headers alert gives one recovery ladder instead of a kernel-log check that could not
+work** (DEC-421). On Gigabyte boards with two fan chips, the alert used to ask you to read `DEVID=0xFFFF`
+or `DEVID=0x8883` from `dmesg` and pick a fix. The driver never prints either line normally, and a
+plain `dmesg` is refused on Arch and CachyOS. The alert, the readiness fix line and the manual now give
+upstream's steps in order: keep `sensors-detect`, `nct6775` and `w83627ehf` away from the chip, reboot,
+and if the chip is still missing, switch the power supply off at the wall. A board that has only one
+chip no longer gets a "dual-chip" heading. If your chips show up with a suffix such as
+`it8696_a008090a`, the alert now says that is the new it87 naming, not a missing chip.
+
+**No guidance recommends a BIOS fan curve with a 0% point, or "Full Speed" as a fix** (DEC-421). The
+BIOS curve runs your fans at boot and whenever Control-OFC is not controlling them, so a 0% point stops
+them — CPU and pump included — at exactly those times. One in-app tip and one guide published such a
+curve; both are gone. The only upstream recipe (40% then 100%, for IT8689E boards on driver builds
+older than 2026-08-24) is kept for those builds only. Gigabyte's per-header "Full Speed" is now
+described as a fail-safe: it runs the fan at 100% while the firmware owns it, but on some boards it also
+locks Linux out of that header.
+
+**Board labels now reach four boards whose names never matched** (DEC-421). The built-in header names
+for the Gigabyte X470 AORUS ULTRA GAMING, MSI X470 GAMING PRO, ASRock B450 Gaming-ITX/ac and Gigabyte
+B550 VISION D were keyed on board names the firmware does not report (for example it reports
+`X470 GAMING PRO (MS-7B79)`). Their headers therefore showed as `pwm1`… and their pump and CPU fans did
+not get the 30% floor that those labels give. Both now apply.
+
+**ASUS sensor and board notes appear on real hardware** (DEC-421). The notes and sensor meanings for
+ASUS's `asus_ec_sensors` and `asus_atk0110` drivers were keyed on the module names, but the kernel names
+the devices `asusec` and `atk0110`, so they never showed. The same was true of AMD's SB-TSI sensor
+(`sbtsi`).
+
+**Hardware notes corrected across ASUS, MSI, ASRock and Gigabyte boards** (DEC-421, from a
+board-by-board review of every board the app mentions). The main corrections:
+
+- ASUS AM4 300/400-series boards carry an ITE IT8665E, which needs `it87-dkms-git`, not a Nuvoton chip.
+- ASUS AM5 boards carry an NCT6799D or NCT6701D. The NCT6701D boards get a new note: fans read
+  correctly but most temperature channels do not, and the firmware may take a header back.
+- On MSI boards, read-only fan headers mean the in-kernel `nct6683` driver is bound. The BIOS "Smart
+  Fan Mode" setting is not the cause.
+- The MSI collision warning now covers `nct6687 force=1`, which can claim any Nuvoton chip.
+- The ASRock notes name which chip carries which headers. The Taichi two-chip note now appears only on
+  Taichi boards.
+- Mainline ITE chips (IT8603E, IT8620E, IT8628E) no longer show as "Unknown chip".
+
+**The AMD GPU advisory details no longer point you at unsupported kernels** (DEC-421). The popup's
+details said to pin a 6.15–6.17 "longterm" kernel. None of those was ever a longterm kernel, and all
+three are end-of-life. They also presented the R9700's SMU version message as a fault; the kernel stopped
+printing that message in 7.0 because it is not one. The details now say what is known. The advisory's
+headline still comes from the daemon and will be corrected in a daemon release.
+
+### Documentation
+
+The Hardware Compatibility, AMD and Intel fan-control, and sensor guides were re-checked board by board
+and corrected (DEC-421). The manual's Driver Setup page has a new section, *it87 v2.0 renames your
+chips*: `it87-dkms-git` builds from 2026-09-09 give Gigabyte chips new names, which changes every fan
+header's id. The section covers what to re-check afterwards, and how to stay on commit `c567739` instead.
+Its BIOS step is rewritten per vendor. Hardware Troubleshooting walks through the new recovery ladder.
+
 ## [2.83.1] — 2026-09-24
 
 ### Fixed

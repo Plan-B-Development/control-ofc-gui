@@ -14,8 +14,10 @@ writes, PMFW handling, or GPU display naming.
 - GPU identity uses the PCI BDF address (stable across reboots), not the hwmon index.
 - Exactly one fan entity per GPU — the kernel exposes only `fan1_input` (an aggregate
   RPM for all physical fans).
-- Navi 48 (RX 9070 XT / 9070) has PCI device ID `0x7550`, distinguished by revision
-  (`0xC0` = XT, `0xC3` = non-XT).
+- Navi 48 (RX 9070 XT / 9070 / 9070 GRE) has PCI device ID `0x7550`, distinguished by
+  revision (`0xC0` = XT, `0xC3` = non-XT, `0xC2` = GRE). Device `0x7551` is the
+  workstation Navi 48: Radeon AI PRO R9700 (`0xC0`), R9700S (`0xC1`) and R9600D (`0xC8`)
+  (libdrm `amdgpu.ids`) — so a rule keyed on `0x7551` alone covers all three.
 - Daemon hwmon discovery excludes `chip_name == "amdgpu"` (DEC-102) — see the
   safety rules in `CLAUDE.md`, which is where that one is stated authoritatively.
 
@@ -29,8 +31,9 @@ writes, PMFW handling, or GPU display naming.
   **The two generations reach that outcome by different mechanisms, and the
   difference is safety-relevant** (kernel source re-read 2026-08-26):
 
-  - **RDNA4 (RX 9000, `smu_v14_0_2_ppt.c`)** registers *only* `.get_fan_speed_pwm` —
-    no `.set_fan_speed_pwm`, no `.get/.set_fan_control_mode`. `hwmon_attributes_visible()`
+  - **RDNA4 (RX 9000, `smu_v14_0_2_ppt.c`, SMU 14.0.2 / 14.0.3)** registers only the
+    two fan getters, `.get_fan_speed_pwm` and `.get_fan_speed_rpm` — no
+    `.set_fan_speed_pwm`, no `.get/.set_fan_control_mode` (re-read at 7.3-rc4). `hwmon_attributes_visible()`
     therefore strips the permissions outright: `pwm1` is read-only and `pwm1_enable`
     is not exposed at all. The rule is **structurally enforced by the driver**.
   - **RDNA3 (RX 7000, `smu_v13_0_0_ppt.c` / `smu_v13_0_7_ppt.c`)** *does* register all
@@ -49,7 +52,16 @@ writes, PMFW handling, or GPU display naming.
     the truthfulness rule in `CLAUDE.md` forbids. Confirm by reading the value back,
     or use the `fan_curve` path, which is the supported interface either way.
 - GPU fan writes use an imperative model (`set_static_speed` via a flat PMFW curve);
-  no lease is required.
+  no lease is required. The curve's lowest allowed duty is the card's own `OD_RANGE`
+  minimum, read from `fan_curve` — board-specific (often around 15%; one R9700 reports
+  about 30%). The **kernel rejects** a point outside the range with `-EINVAL`
+  (`"Fan curve pwm setting(%ld) must be within [%d, %d]!"`); it does not clamp. The
+  clamp is the daemon's own, which reads the range before writing.
+- **The SMU driver-interface version message is not a fault.** RDNA4 cards log a
+  driver `0x2E` vs firmware `0x32`/`0x33` interface mismatch on every Navi 48 part,
+  the RX 9070 XT included; the firmware is designed to be backward compatible, and
+  kernel 7.0 dropped the message ("It just leads to user confusion", `e471627d5627`).
+  Do not key a fault diagnosis on it (register row BRD-b).
 - The `amdgpu.ppfeaturemask` kernel parameter is required for PMFW `fan_curve` access.
 - ppfeaturemask bit 14 (`0x4000`) is required for PMFW — diagnostics must explain this
   when it is missing.

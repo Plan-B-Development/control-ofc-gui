@@ -58,17 +58,24 @@ the platform to drive cooling decisions. The kernel
 [`k10temp.html`](https://docs.kernel.org/hwmon/k10temp.html) describes Tctl as
 *"a non-physical temperature on an arbitrary scale measured in degrees"* used
 to control cooling systems, distinct from Tdie which is *"the real measured
-temperature."* On some Threadripper / EPYC SKUs Tctl differs from Tdie by a
-platform-defined offset (e.g. historical reports of ~+27 °C on early Zen 2
-Threadripper); on most desktop Zen 3/4/5 SKUs the offset is zero so Tctl ≈ Tdie.
-The kernel doc does not publish an explicit `Tctl = Tdie + offset` formula —
-treat the offset as platform-dependent and SKU-specific. The GUI should always
+temperature."* The driver's offset table (`tctl_offset_table` in `k10temp.c`,
+checked at 7.3-rc4) covers only Family 17h parts: Ryzen 5 1600X and Ryzen 7
+1700X / 1800X (20 °C), Ryzen 7 2700X (10 °C), and Threadripper 19xx / 29xx
+(27 °C — Zen and Zen+, not Zen 2 as this section used to say). The driver
+publishes Tdie (`temp2`) only for those; Zen 2 and later publish Tctl plus the
+per-CCD `Tccd` readings (up to 16 labels from 7.3). The kernel doc gives no
+general `Tctl = Tdie + offset` formula. The GUI should always
 prefer Tdie when available and should never present Tctl as the "actual" CPU
 temperature.
 
 ### sbtsi_temp (AMD SB-TSI board-side interface)
 
 Kernel docs: https://docs.kernel.org/hwmon/sbtsi_temp.html
+
+The hwmon device is named **`sbtsi`** — only the module is `sbtsi_temp`; the
+GUI's classifier accepted only the module name until 2026-09-24 (DEC-421). From
+kernel 7.3 the driver depends on ARM / ARM64: it is meant to run on a BMC, not on
+the managed host, so x86 desktops stop seeing it at all.
 
 All readings classify as `amd_tsi` at `medium_high` confidence.
 
@@ -82,7 +89,7 @@ The SB-TSI address is normally `98h` for socket 0 and `90h` for socket 1
 with hardware address select pins. On desktop Ryzen boards (single-socket),
 98h is standard. SB-TSI readings often surface through Super I/O chip
 drivers (nct6683, nct6775) as labels like `AMD TSI Addr 98h` rather than
-through a standalone `sbtsi_temp` device.
+through a standalone `sbtsi` device.
 
 ### nct6775 family (Nuvoton Super I/O)
 
@@ -147,10 +154,13 @@ Kernel docs: https://docs.kernel.org/hwmon/it87.html
 Out-of-tree fork: https://github.com/frankcrawford/it87 (newer chip support)
 
 Covers `it8xxx` variants. The mainline kernel `it87` driver supports a fixed
-list of older chips (IT8603E, IT8620E, IT8622E, IT8628E, IT8705F/12F/16F/18F/20E/21F/26E/
-28E/71F/72F/76F/79E/81E/82E/83E/91E/92E, with IT8689E fan control merged in kernel 7.1).
-**Newer Gigabyte/MSI-era chips — IT8625E, IT8686E, IT8688E, IT8696E — are
-NOT in mainline** and require the out-of-tree
+list of chips — the kernel's `enum chips`, 22 types at 7.2 and 7.3-rc4: IT8603E,
+IT8620E, IT8622E, IT8628E, IT8689E (fan control from 7.1), IT8705F, IT8712F,
+IT8716F, IT8718F, IT8720F, IT8721F, IT8728F, IT8732F, IT8771E, IT8772E, IT8781F,
+IT8782F, IT8783E/F, IT8786E, IT8790E, IT8792E/IT8795E and IT87952E (6.3+). IT8613E
+is queued for 7.4. (The list here used to be garbled.) **Newer Gigabyte-era chips —
+IT8625E, IT8686E, IT8688E, IT8696E, IT8698E — and the IT8665E on ASUS AM4
+300/400-series boards are NOT in mainline** and require the out-of-tree
 [frankcrawford/it87](https://github.com/frankcrawford/it87) driver. The
 kernel.org doc URL above covers behaviour for the in-tree chips; the
 out-of-tree driver inherits the same sysfs schema but with an expanded chip
@@ -171,6 +181,9 @@ channel. Board-specific overrides are the primary path to higher confidence.
 
 Kernel docs: https://docs.kernel.org/hwmon/asus_ec_sensors.html
 
+The hwmon device is named **`asusec`**; `asus_ec_sensors` is the module. The GUI's
+classifier accepted only the module name until 2026-09-24 (DEC-421).
+
 High-confidence vendor-labeled sensors read directly from the ASUS embedded
 controller. The kernel driver exposes semantic labels that map to specific
 board features.
@@ -189,7 +202,9 @@ board features.
 Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip name + label
 (DEC-156): NZXT Kraken (`x53`/`z53`/`kraken2023`/`kraken2023elite`/`kraken2`) and Aquacomputer
 (`d5next`/`highflownext`/`leakshield`) coolant channels map to `coolant` (high confidence), and any
-`coolant`/`water`/`liquid` label maps to `coolant` on any chip (medium). The daemon reports these as
+`coolant`/`water`/`liquid` label maps to `coolant` on any chip (medium). The Kraken 2024 Elite
+(`kraken2024elite`, kernel 7.3+) is not in the chip list yet (register row BRD-c); its channel is
+labelled "Coolant temp", so it reaches `coolant` through the label rule. The daemon reports these as
 the `coolant_temp` sensor kind; a user override can force any sensor to `coolant`.
 
 This driver only loads on explicitly supported ASUS boards (the kernel driver
@@ -205,14 +220,19 @@ Management Instrumentation) ACPI methods. Classification follows the same
 label-matching rules but at `medium_high` confidence (one step lower) because
 the WMI interface has known polling reliability issues on some boards.
 
-The kernel doc explicitly calls out the PRIME X470-PRO firmware bug:
-*"Some ASUS motherboards include a fan speed control mechanism that will
-arbitrarily disable or slow down fan speed[s] under heavy CPU/GPU workloads.
-Upgrading to new BIOS version with method version greater than or equal to
-two should rectify the issue."* When users report stuck-fan or
-artificially-low fan behaviour on a supported ASUS WMI board, the
+The kernel doc explicitly calls out the firmware bug: *"The WMI implementation
+in some of Asus' BIOSes is buggy. This can result in fans stopping, fans getting
+stuck at max speed, or temperature readouts getting stuck. This is not an issue
+with the driver, but the BIOS. The Prime X470 Pro seems particularly bad for
+this. The more frequently the WMI interface is polled the greater the potential
+for this to happen. Until you have subjected your computer to an extended soak
+test while polling the sensors frequently, don't leave you computer unattended.
+Upgrading to new BIOS version with method version greater than or equal to two
+should rectify the issue."* (This section used to carry a different sentence in
+quotation marks that the kernel doc does not contain.) When users report
+stuck-fan or artificially-low fan behaviour on a supported ASUS WMI board, the
 durable fix is a BIOS update to a WMI method version ≥ 2, NOT a kernel
-workaround.
+workaround — the driver refuses to bind below version 2 in any case.
 
 All classifications carry a standing note about potential WMI polling issues
 and the BIOS-update remedy.
@@ -409,11 +429,13 @@ confidence.
 
 ### sensors-detect lag
 
-The `lm_sensors` tool `sensors-detect` must be run after kernel updates or
-hardware changes to configure ISA-bus Super I/O drivers (nct6775, it87, etc.).
-Until it runs, these drivers may not load and their sensors are invisible.
-The daemon ships `/etc/modules-load.d/control-ofc.conf` to auto-load common
-drivers, but some configurations still require explicit `sensors-detect`.
+`sensors-detect` is **not** needed to load the Super I/O drivers: the daemon
+package ships `/etc/modules-load.d/control-ofc.conf` to load the common ones, and
+the System State page's readiness report identifies the chip without probing
+hardware. Treat `sensors-detect` as a last resort, and never run it after boot on
+a dual-chip Gigabyte board — it writes the Super-I/O unlock key and can latch the
+bridge in front of the secondary chip. (This section used to say it "must be run
+after kernel updates".)
 
 `sensors-detect` maintains its own chip ID database, updated independently
 of the kernel. New chips may be supported by the kernel driver before

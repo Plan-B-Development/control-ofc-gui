@@ -50,9 +50,11 @@ The kernel documentation is explicit:
 > degrees. It does not represent an actual physical temperature like die
 > or case temperature."
 
-Tctl is the value the platform uses to drive cooling decisions. On some AMD
-CPU SKUs (particularly older Threadripper), Tctl = Tdie + a designed offset
-(e.g., +27C). On most consumer Ryzen CPUs, Tctl and Tdie are identical.
+Tctl is the value the platform uses to drive cooling decisions. The driver's
+offset table (`tctl_offset_table` in `k10temp.c`, checked at 7.3-rc4) covers only
+Family 17h parts: Ryzen 5 1600X and Ryzen 7 1700X / 1800X (Tctl = Tdie + 20 °C),
+Ryzen 7 2700X (+10 °C) and Threadripper 19xx / 29xx (+27 °C). Later CPUs publish no
+offset and no separate Tdie.
 
 **GUI classification:** `cpu_control` at `high` confidence, with a note
 explaining that this is not a direct physical reading.
@@ -64,15 +66,26 @@ when the offset exists. The GUI always prefers Tdie when both are available.
 #### Tdie — CPU Die Temperature
 
 When exported by the driver, this is the real measured CPU die temperature.
-Not all CPU variants expose Tdie separately from Tctl.
+The driver exports it (`temp2`) **only** for the Family 17h offset SKUs above —
+Zen 2 and later CPUs, including every Ryzen 3000–9000 part, publish Tctl and the
+Tccd readings but no Tdie.
 
 **GUI classification:** `cpu_die` at `high` confidence.
 
 #### TccdN — Per-CCD Temperatures
 
-Per-CCD (Core Complex Die) temperatures, available on Zen 2+ CPUs with
-multiple CCDs (Tccd1, Tccd2, up to Tccd8). Not all CPU variants expose
+Per-CCD (Core Complex Die) temperatures, available on Zen 2+ CPUs (Tccd1,
+Tccd2, …). The kernel doc still says "up to 8", but the source labels up to
+Tccd16 from 7.3 (Turin-class parts have 16 CCDs). Not all CPU variants expose
 these.
+
+**Kernel 7.3-rc1 to rc3 reported false Tccd readings on Zen 5 mobile** (Strix
+Point, family 1Ah models 20h–2Fh): a Turin CCD range wrongly included those
+models, producing values such as `Tccd4: +148.6°C`. Fixed in 7.3-rc4 by
+[`451b1c19dc7c`](https://git.kernel.org/torvalds/c/451b1c19dc7c); stable 7.2.y was
+never affected. Because the daemon treats every `k10temp` channel as a CPU
+temperature, a Strix Point machine on those release candidates would trip the
+thermal emergency and run its fans at 100%.
 
 **GUI classification:** `cpu_ccd` at `high` confidence.
 
@@ -80,15 +93,22 @@ these.
 
 | CPU | Tdie | Tctl | TccdN | Offset |
 |---|---|---|---|---|
-| Most Ryzen 5000/7000/9000 | Yes | Yes (= Tdie) | Varies by SKU | None |
-| Threadripper (some SKUs) | Yes | Yes (= Tdie + offset) | Yes | +27C typical |
-| Older Ryzen (some SKUs) | May be absent | Yes | Varies | Varies |
+| Ryzen 5 1600X, Ryzen 7 1700X / 1800X | Yes | Yes (= Tdie + 20 °C) | — | 20 °C |
+| Ryzen 7 2700X | Yes | Yes (= Tdie + 10 °C) | — | 10 °C |
+| Threadripper 19xx / 29xx | Yes | Yes (= Tdie + 27 °C) | — | 27 °C |
+| Other Zen / Zen+ | No | Yes | — | none published |
+| Zen 2 and later (Ryzen 3000–9000, Threadripper 3000+) | No | Yes | Yes, varies by SKU | none published |
 
 ---
 
 ### sbtsi_temp: AMD SB-TSI board-side interface
 
 **Kernel docs:** https://docs.kernel.org/hwmon/sbtsi_temp.html
+
+The hwmon device is named **`sbtsi`** (only the module is `sbtsi_temp`), and from
+kernel 7.3 the driver depends on ARM / ARM64 — it is meant for the BMC, not the
+managed host — so x86 desktops stop seeing it. SB-TSI readings on a desktop
+usually arrive through the Super-I/O driver instead (`AMD TSI Addr 98h`).
 
 SB-TSI (SideBand Temperature Sensor Interface) is an SMBus-compatible
 temperature sensor interface on AMD SoCs. It provides a **board-side /
@@ -238,14 +258,16 @@ For thermistor channels, only vendor documentation, BIOS labels, or
 controlled load testing can determine the physical placement (e.g., "VRM
 heatsink", "chipset area", "rear I/O").
 
-#### force=1 historical note
+#### force=1 and customer IDs
 
-The nct6683 driver was initially tested with Intel firmware and defaults to
-instantiating only on Intel boards unless `force=1` is used. However, many
-AMD boards are now explicitly listed as supported. If your AMD board uses
-an nct6683-family chip and the driver does not auto-detect it, `force=1`
-may be needed, but check the kernel documentation's supported board list
-first.
+The in-kernel `nct6683` driver instantiates only for EC customer IDs it knows —
+Intel, Mitac, several MSI IDs (from 5.11 on), AMD (the BC-250, 6.15) and a growing
+set of ASRock IDs (6.7, 6.14, 7.0, 7.1, 7.2) — unless `force=1` is given. With
+`force=1` it reads an unknown board too, but **the PWM files stay read-only**: the
+driver makes them writable only on Mitac OEM systems, and has no `pwmN_enable`.
+So `force=1` buys monitoring, never control. (Do not confuse it with the
+out-of-tree `nct6687` driver's `force=1`, which attaches to any Nuvoton ID in
+0xD000–0xDFFF and can mis-claim an NCT679x chip — see doc 19.)
 
 #### sensors-detect lag
 
@@ -293,8 +315,13 @@ an it87 temperature channel measures.
 The `it87` driver has an `ignore_resource_conflict=1` parameter, but the
 kernel documentation explicitly warns:
 
-> "This is inherently risky because ACPI and the driver may access the
-> chip simultaneously."
+> "Note: This is inherently risky since it means that both ACPI and this driver
+> may access the chip at the same time. This can result in race conditions and,
+> worst case, result in unexpected system reboots."
+
+(The same doc says the parameter exists because "system-wide
+acpi_enfore_resources=lax can result in boot failures on some systems" — which
+is why it is preferred over the kernel parameter.)
 
 See the Fan Control Guide (doc 21) for details on when and how to use this.
 
@@ -320,6 +347,8 @@ Reference: https://github.com/lm-sensors/lm-sensors/issues/454
 ### asus_ec_sensors: ASUS Embedded Controller
 
 **Kernel docs:** https://docs.kernel.org/hwmon/asus_ec_sensors.html
+
+The hwmon device is named **`asusec`**; `asus_ec_sensors` is the module.
 
 This is one of the best data sources for sensor metadata on Linux. The
 ASUS embedded controller provides **semantic labels** that map directly to
@@ -360,7 +389,8 @@ updates. A special `:GLOBAL_LOCK` mode is also documented for edge cases.
 
 Same label vocabulary as `asus_ec_sensors` (VRM, T_Sensor, Water In/Out,
 etc.) but accessed via WMI (Windows Management Instrumentation) ACPI
-methods. Typically found on older ASUS AMD boards (X470, B450, X570 era).
+methods. Found on 16 older ASUS AMD boards, listed by exact name: X370, X470,
+B450 and X399 boards (no X570 board is on the list).
 
 #### Confidence reduction
 
@@ -417,9 +447,8 @@ ordering may vary by board model and BIOS version.
 #### Real-world example
 
 A Gigabyte B550M DS3H AC user reported receiving `temp1` through `temp6`
-with no labels. The issue was closed as "not planned" — the upstream driver
-developers do not intend to add label support because the information is
-not available through the WMI interface.
+with no labels. The reporter closed the issue themselves; labels are not
+available through the WMI interface.
 
 Reference: https://github.com/t-8ch/linux-gigabyte-wmi-driver/issues/19
 
@@ -667,8 +696,8 @@ a one-time popup; acknowledged warnings are remembered in
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
-| `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hang under GPU load ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)); [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101) panics on 6.18.20 and 6.19.10. Pre-RDNA3 GPUs are unaffected. |
-| `smu_mismatch_navi48_r9700` | all current kernels (tested through 7.0; **not an upper bound** — device-scoped, still fires on 7.1+) | R9700 only (PCI `0x7551`) | Critical | No working `fan_curve` path — SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101)); `pwm1` read-only. RX 9070 XT (`0x7550`) **not** affected. |
+| `rdna_hang_kernel_6_18_6_19` | 6.18.x **and** 6.19.x | RDNA3 (RX 7000) and RDNA4 (RX 9000) | Critical | Hard hangs under benchmark load were reported on both ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)); one bisected RDNA4 hang was fixed in 6.18.7 ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). The advice is the latest 6.18 LTS or a current 7.x kernel — never 6.15–6.17, which were not longterm and are end-of-life. Pre-RDNA3 GPUs are unaffected. |
+| `smu_mismatch_navi48_r9700` | all current kernels | R9700 (PCI `0x7551`) | Critical | **Premise refuted (DEC-421):** the SMU interface-version message appears on every Navi 48 card, the RX 9070 XT included, and is not a fault (kernel 7.0 removed it as confusing). `pwm1` is read-only on all RDNA4 by design; the PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). |
 
 For mitigation guidance, see `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions.
 

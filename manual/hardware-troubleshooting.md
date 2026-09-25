@@ -25,10 +25,10 @@ When you fetch hardware diagnostics, the report populates with:
 | **Board note** | Listed under *Board notes for this hardware* when a known vendor + chip combination has documented BIOS-level workarounds (e.g., Gigabyte + IT8696E → Smart Fan 6 BIOS notes). Reference material with an evidence status, not an alarm — see [Vendor quirks](#vendor-quirks) |
 | **Chips table** | Each detected Super I/O / sensor chip with its expected driver, load status, mainline-or-not, and PWM header count |
 | **Kernel modules table** | Modules the daemon expects for your hardware: whether they are loaded and whether they ship in the mainline Linux kernel |
-| **ACPI conflicts** | Warnings if an ACPI region claims the same I/O ports as a hwmon driver (most common with `it87` on AMD AM5 boards — driver may need `acpi_enforce_resources=lax`) |
+| **ACPI conflicts** | Warnings if an ACPI region claims the same I/O ports as a hwmon driver (most common with `it87` on Gigabyte boards — for `it87` prefer the driver-local `options it87 ignore_resource_conflict=1`; the system-wide `acpi_enforce_resources=lax` is the fallback, and the only option for `nct6775`) |
 | **Module conflicts** | Warnings when two modules try to claim the same chip (e.g., both `it87` and `nct6775`) |
 | **BIOS interference** | Per-header `pwm_enable` reclaim count and severity colour |
-| **Thermal safety** | Whether the daemon found a CPU sensor it can use for the emergency / release / recovery safety logic. The panel shows the emergency limit this machine is actually using |
+| **Thermal safety** | Whether the daemon found a CPU sensor it can use for the thermal emergency and its release. The panel shows the emergency limit this machine is actually using |
 | **GPU diagnostics** | AMD discrete GPU detection, fan control method, and the `amdgpu.ppfeaturemask` state required for PMFW fan curves |
 
 ## Test PWM Control
@@ -214,7 +214,7 @@ If the result says the telemetry update rate is **unknown**, that is a real answ
 
 ## Test GPU Fan Control
 
-AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), an SMU firmware/driver mismatch swallows it, or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
+AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
 
 **Test GPU Fan Control** (on the **System State** page — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
 
@@ -223,12 +223,12 @@ AMD GPU fan control fails *silently* far more often than motherboard headers: th
 | **GPU fan control is working** | The fan responded to the test. Nothing to do |
 | **Zero-RPM idle (normal)** | The curve applied but the fan stays stopped because the GPU is below its zero-RPM stop temperature. Expected — the fan spins up under load |
 | **No RPM sensor to corroborate** | The write was confirmed via curve read-back, but this GPU exposes no `fan1_input` to measure RPM |
-| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect an SMU firmware/driver mismatch or a BIOS overdrive lock (see the GPU advisories on the **System State** page) |
-| **Fan did not respond** | The curve applied but RPM did not change with zero-RPM disabled — an SMU firmware issue or a known kernel regression for this GPU. Confirm the fan is physically connected and check your kernel version |
+| **The GPU ignored the write** | Accepted at sysfs but not applied. Add `amdgpu.ppfeaturemask=0xffffffff` to the kernel command line and reboot; if it is already set, suspect a BIOS overdrive lock and check the GPU advisories on the **System State** page. (The "SMU driver interface version" message some RDNA4 cards log is not itself a fault.) |
+| **Fan did not respond** | The curve applied but RPM did not change with zero-RPM disabled. Confirm the fan is physically connected. A few cards have per-unit fan faults that no kernel change has been shown to fix (e.g. some R9700s, [ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)) — compare the fan's RPM under load and consider a warranty claim |
 | **BIOS/EC reclaimed control** (legacy `pwm1` GPUs) | `pwm1_enable` reverted to automatic — disable any vendor "Smart Fan" / EC fan-control option in firmware setup |
 | **Write was rejected** | The driver/firmware refused the write. Ensure `amdgpu.ppfeaturemask=0xffffffff` is set and that `amdgpu` (not `vfio-pci`) is bound to the GPU |
 
-The firmware **OD_RANGE minimum** (commonly ~15%) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the **issue checklist**. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
+The card's **OD_RANGE minimum** (board-specific, read from the card's own `fan_curve`; often around 15%, higher on some cards) and zero-RPM idle are reported as informational outcomes, never as failures — a healthy idle GPU is never flagged as broken. Failure verdicts add their fix to the **issue checklist**. If the control is not shown at all, the GPU has no write path (read-only — see "GPU fan control says feature_unavailable" below) or the daemon is older than 1.11.0.
 
 ## Intel Arc GPUs are monitor-only
 
@@ -275,7 +275,7 @@ Since v2.74.0 the count is **dated**, not merely counted. The daemon reports how
 
 Since v2.56.0 each header's own card in **Cooling Hardware** shows this count too, in its **Details ▸ Capabilities** block — a header that has never been reclaimed reads *Not observed*. A header currently under firmware control **and** with reclaims on record shows a **Control reclaimed** status; a header that was reclaimed in the past but is back under the daemon's control does not, because that is contention the daemon won rather than a live problem.
 
-The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically — control still works in the WARN/HIGH cases, but BIOS Smart Fan 6 should be set to "Manual" for the affected headers (see the vendor guidance the report auto-shows for Gigabyte + IT8696E systems).
+The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically, so control still works in the WARN/HIGH cases. The remedy is per vendor, and the board notes the report shows for your chip carry it. On Gigabyte boards, keep `it87-dkms-git` current — its 2026-08-24 fixes (PR #128) address the firmware logic that retakes headers. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: on some boards it locks Linux out of that header.
 
 ## Vendor quirks
 
@@ -335,7 +335,7 @@ this priority order:
 The fallback table currently covers the **Gigabyte X870E AORUS MASTER** as a worked example:
 
 - IT8696E primary chip — 5 verified silkscreen labels: `CPU_FAN`, `SYS_FAN1`, `SYS_FAN2`, `SYS_FAN3`, `CPU_OPT`
-- IT87952E secondary chip — 3 community-reported labels (`SYS_FAN5_PUMP`, `SYS_FAN6_PUMP`, `SYS_FAN4`, from [frankcrawford/it87 issue #103](https://github.com/frankcrawford/it87/issues/103)) suffixed `(unverified)` until silkscreen tracing on a physical board confirms them
+- IT87952E secondary chip — 3 labels (`SYS_FAN5_PUMP`, `SYS_FAN6_PUMP`, `SYS_FAN4`) from two owners' configs in [frankcrawford/it87 issue #103](https://github.com/frankcrawford/it87/issues/103) and the it87 project's own Gigabyte sensor catalogue. They are still suffixed `(unverified)` because one other source orders them differently, and the order decides which header gets the pump floor — a per-channel test on a physical board will settle it
 
 If you see an `(unverified)` suffix on a header label, treat the assignment as a hint, not a fact. The Fan Wizard is the safe way to confirm — it stops one fan at a time so you can see exactly which physical fan corresponds to which header.
 
@@ -350,7 +350,7 @@ Fan control depends on sensors: curves need temperatures, and the daemon's therm
 
 ### About `sensors-detect`
 
-Prefer the readiness report first — it identifies your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a dual-chip Gigabyte board** — it can wedge the Super-I/O bridge so the secondary chip vanishes **until the machine is powered down at the wall — a reboot is not enough**, because the chip stays alive on +5 V standby (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
+Prefer the readiness report first — it identifies your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a dual-chip Gigabyte board** — it can wedge the Super-I/O bridge so the secondary chip vanishes, and **a reboot may not bring it back — power down at the wall**, because the bridge keeps standby power (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
 
 ## Voltages, and why most of them have no name
 
@@ -396,90 +396,59 @@ they are not on the live poll.
 Open the **System State** page, look at the **Hardware Readiness** report:
 
 - If the chips table shows the expected chip but **status is "not loaded"**, the kernel module is missing. The chip column lists which module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
-- If the status is "loaded" but **writable_headers is 0**, run **Test PWM Control** on a header. A `pwm_enable_reverted` result means the BIOS is overriding control — fix it in BIOS Smart Fan settings.
-- If `acpi_enforce_resources=lax` is required (common with `it87`), the ACPI conflicts row will tell you so.
+- If the status is "loaded" but **writable_headers is 0**, the bound driver publishes the pwm files read-only. On MSI and ASRock Nuvoton boards that usually means the in-kernel `nct6683` is bound — it never makes PWM writable outside Mitac OEM systems — so the out-of-tree driver in the chips table is needed. See [Driver Setup](driver-setup.md).
+- If headers are writable but a **Test PWM Control** result is `pwm_enable_reverted`, the firmware is taking control back — see the board notes on that page. On Gigabyte boards, keep `it87-dkms-git` current; setting the header to *Full Speed* in BIOS Smart Fan is a fail-safe, not a fix, and on some boards it locks Linux out of that header.
+- If an ACPI resource conflict blocks the driver, the ACPI conflicts row says so. For `it87` prefer `options it87 ignore_resource_conflict=1`; `acpi_enforce_resources=lax` is the system-wide fallback.
 
 ### "Some of my fan headers are missing — only 5 of 8 show up"
 
-Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the dual-IO Gigabyte boards (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) where the secondary ITE chip silently failed to enumerate.
+Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the Gigabyte boards with two ITE chips (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) and one of them did not appear.
 
-There are **three** causes, and they are not interchangeable. All three are
-fixable, but they need *different* remedies, and the remedy for one does nothing
-for the others. Find out which one you have **before** trying anything.
+**First, rule out a false alarm (it87 builds from 2026-09-09).** From its v2.0 release the out-of-tree `it87` driver names Gigabyte chips with a suffix — `it8696_a008090a` instead of `it8696`. Control-OFC does not recognise the new names yet, so it reports both chips missing while they are working. Check:
 
-**Find out which:** run `sudo dmesg | grep it87` (or `journalctl -k -b | grep it87`).
+```
+cat /sys/class/hwmon/hwmon*/name
+```
 
-| What the kernel says | Which case | Remedy |
-| --- | --- | --- |
-| Nothing, or "module not found" | Driver not installed | Case A — install the driver |
-| `Unsupported chip (DEVID=0xFFFF)` | Super-I/O stuck in config mode | Case B — reboot |
-| `Unsupported chip (DEVID=0x8883)` | An ITE bridge is latched in config mode | Case C — **full power cut** |
-| No `Unsupported chip` line at all, and only one chip found | Not one of these three | See the note under case C |
+If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are present — ignore the banner. The rename also changes every fan header's id; see [Driver Setup → *it87 v2.0 renames your chips*](driver-setup.md#it87-v20-renames-your-chips) for what to re-check.
 
-> **Read the DEVID, not just the chip count.** `0xFFFF` and `0x8883` look
-> identical from the outside — one hwmon device where there should be two — and
-> they need different fixes. Note also that a `0xFFFF` secondary prints **no**
-> `Unsupported chip` line in some driver builds, so an absent line is not the
-> same as a clean result.
+**Case A — the driver is not loaded.** Run `sudo dmesg | grep -i it87` (or `journalctl -k -b | grep -i it87`). Each chip the driver found prints a line such as `Found IT8696E chip at 0xa40 … revision 0`. If there are no `it87` lines at all, or `modprobe` says "module not found":
 
-**Case A — the driver build is too old or missing.** Current (2026-03+)
-`it87-dkms-git` builds reach the secondary chip through an MMIO path that is on
-by default; older builds needed `mmio=on` set manually.
+1. Install `it87-dkms-git` (see [Driver Setup](driver-setup.md)). Builds from 2026-03 onward reach the secondary chip through an MMIO path that is on by default; only older builds needed `options it87 mmio=on`.
+2. Reboot, then click **Rescan Hardware**.
 
-1. Reinstall `it87-dkms-git` (a `-git` package reinstall builds the current
-   upstream snapshot — see [Driver Setup](driver-setup.md)).
-2. Only on older (pre-2026-03) builds: create `/etc/modprobe.d/it87.conf`
-   containing `options it87 mmio=on`.
-3. Reboot, then click **Rescan Hardware**.
+**Case B — the driver is loaded, but a chip is missing.** The secondary chip is blocked. Work down the recovery ladder below; it is the one upstream gives, and it is right whichever way the chip is blocked.
 
-**Case B — the bridge was left in configuration mode**, most commonly by a
-previous run of `sensors-detect`. The secondary chip's DEVID then reads
-`0xFFFF`.
+> **Why this page no longer says "read the DEVID".** It used to tell you to look for `Unsupported chip (DEVID=0xFFFF)` or `Unsupported chip (DEVID=0x8883)` in the kernel log and choose a fix from that. Neither line appears on a normal system. The driver prints that message only at debug level, and a chip that answers `0xFFFF` makes the driver give up without printing anything. The two values are also not two different faults. Upstream reads `0xFFFF` without the Super-I/O unlock key and `0x8883` with it, on the same blocked chip ([issue #70](https://github.com/frankcrawford/it87/issues/70)). The ladder clears both.
 
-1. Avoid running `sensors-detect` after boot.
-2. Reboot — this clears it.
-3. Click **Rescan Hardware**.
+**What is happening.** Your board's secondary Super-I/O sits behind an ITE eSPI-to-LPC bridge. Something wrote a Super-I/O *config-mode unlock* to port 0x2E/0x4E, which put the **bridge** into configuration mode — and while it is there, the bridge answers in place of the IT87952E behind it. `it87` looks for a chip, gets the bridge, and gives up. You lose every header on the secondary chip: on an X870E AORUS MASTER that is 3 of 8 fan headers and 3 of 9 temperatures.
 
-**Case C — the secondary answers `0x8883`: an ITE bridge is latched in
-configuration mode.** This *is* fixable, but it needs a full power cut rather
-than a reboot, which is why it is worth identifying properly.
-
-**What is happening.** Your board's secondary Super-I/O sits behind an ITE
-eSPI-to-LPC bridge. Something wrote a Super-I/O *config-mode unlock* to port
-0x2E/0x4E, which put the **bridge** into configuration mode — and while it is
-there, the bridge answers device-ID `0x8883` in place of the IT87952E behind it.
-`it87` looks for a chip, gets the bridge, and gives up. You lose every header on
-the secondary chip: on an X870E AORUS MASTER that is 3 of 8 fan headers and 3 of
-9 temperatures.
-
-**What writes that unlock.** Almost always the `nct6775` or `w83627ehf` kernel
-modules. Both write the unlock *before* reading the device ID, so they do the
-damage even though they then fail to load with "No such device" — they are
-Nuvoton/Winbond drivers and your board is ITE, so they were never going to bind.
-Running `sensors-detect` does the same thing.
+**What writes that unlock.** Almost always the `nct6775` or `w83627ehf` kernel modules. Both write the unlock *before* reading the device ID, so they do the damage even though they then fail to load with "No such device" — they are Nuvoton/Winbond drivers and your board is ITE, so they were never going to bind. Running `sensors-detect` does the same thing.
 
 > **Measured, not theorised.** On 2026-09-05, on an X870E AORUS MASTER: loading
-> `nct6775` turned a working `it87952-isa-0a60` into `Unsupported chip
-> (DEVID=0x8883)` within a single boot, while reloading `it87` by itself changed
-> nothing. Suppressing both modules and cutting power restored 3 fans, 3 PWMs
-> and 3 thermistor temperatures.
+> `nct6775` made the working `it87952-isa-0a60` chip disappear within a single
+> boot, while reloading `it87` by itself changed nothing. Suppressing both
+> modules and cutting power restored 3 fans, 3 PWMs and 3 thermistor
+> temperatures.
 
-**The latch survives a reboot.** It also survives a normal shut-down, because
-the board keeps the Super-I/O powered on +5V standby. Only removing mains power
-clears it. This is the single most important thing on this page: *if you reboot,
-test, and see no change, that does not mean the fix failed.*
+**The block can survive a reboot.** It can also survive a normal shut-down, because the bridge keeps its standby power. On that X870E AORUS MASTER only removing mains power cleared it. This is the most important thing on this page: *if you reboot, test, and see no change, that does not mean the fix failed — go on to the power cut.*
 
 #### Recovery, step by step
 
-1. **Check whether the guard is already in place.** Recent
-   `control-ofc-daemon` packages ship one:
+1. **Check whether the package's guard covers your board.** Recent
+   `control-ofc-daemon` packages install a guard that suppresses the two modules
+   on the Gigabyte boards it lists, and logs each time it does:
 
    ```
-   ls /usr/lib/modprobe.d/control-ofc-superio.conf
+   sudo journalctl -b -t control-ofc-superio-guard
    ```
 
-   If that file exists, skip to step 3 — the modules are already suppressed on
-   your board.
+   A line such as *not loading nct6775: X870E AORUS MASTER has an ITE
+   Super-I/O* means your board is covered — skip to step 3. No line means your
+   board is not on the guard's list (or nothing asked for the modules this
+   boot). Do not use `lsmod` for this: the modules fail to load on these boards
+   even when their probe has already done the damage, so an empty `lsmod` proves
+   nothing.
 
 2. **Otherwise, suppress the two modules yourself.** Create
    `/etc/modprobe.d/control-ofc-superio-local.conf`:
@@ -501,25 +470,39 @@ test, and see no change, that does not mean the fix failed.*
    systemctl is-enabled lm_sensors.service
    ```
 
-4. **Power down fully — this is the step that actually clears the latch.**
-   Shut the machine down, then **either** switch the PSU off at the back (the
-   `0`/`O` side of the rocker) **or** unplug it at the wall. Wait about 10
-   seconds. A reboot will *not* work, and neither will a normal shut-down that
-   leaves the PSU switched on.
+4. **Reboot, then click Rescan Hardware.** If the missing chip is back, you are
+   done.
 
-5. **Power back on and verify:**
+5. **Still missing: power down fully.** Shut the machine down, then **either**
+   switch the PSU off at the back (the `0`/`O` side of the rocker) **or** unplug
+   it at the wall. Wait about 10 seconds. A normal shut-down that leaves the PSU
+   switched on is not enough.
+
+6. **Power back on and verify:**
 
    ```
-   sudo dmesg | grep it87
+   sudo dmesg | grep -i it87
    sensors | grep -c '^it8'
    ```
 
    You want a second `Found IT...E chip` line, and two `it8*` chips rather than
-   one. The `Unsupported chip (DEVID=0x8883)` line should be gone.
+   one.
 
-6. **Click Rescan Hardware** in the app. The dual-chip warning on the **System
+7. **Click Rescan Hardware** in the app. The dual-chip warning on the **System
    State** page disappears once every expected chip is present, and the new
    headers appear on the **Controls** page.
+
+**Optional — seeing the ID the driver read, for a bug report.** On kernels built
+with dynamic debug (Arch's and CachyOS's are), you can make the driver print it:
+
+```
+echo 'options it87 dyndbg=+p' | sudo tee /etc/modprobe.d/it87-debug.conf
+# reboot, then:
+sudo dmesg | grep -i 'unsupported chip'
+sudo rm /etc/modprobe.d/it87-debug.conf
+```
+
+This changes nothing about the fix — the ladder is the same either way.
 
 #### If it still fails after a genuine power cut
 
@@ -535,22 +518,23 @@ this order:
 things worse:
 
 - **`mmio=on`** — already the driver default; setting it changes nothing.
-- **Reinstalling `it87-dkms-git`** — the latch is not a driver bug, and the
-  failure reproduces at upstream HEAD.
+- **Reinstalling `it87-dkms-git`** — the block is not a driver bug, and the
+  failure reproduces at upstream HEAD. (A rebuild after 2026-09-09 also renames
+  your chips — see above.)
 - **`force_id`** — the reporter on
   [issue #81](https://github.com/frankcrawford/it87/issues/81) forced the ID and
   still lost three fans and a water pump. Upstream tells people explicitly not
   to use it.
-- **`sensors-detect`** — this is one of the things that *causes* case C.
+- **`sensors-detect`** — this is one of the things that *causes* the block.
 
 **This is per-board, not per-family.** Other boards in the same generation with
 the same IT8696E + IT87952E pairing work out of the box — the X870E AORUS ELITE
-is owner-confirmed with both chips controllable
+X3D is owner-confirmed with both chips controllable
 ([issue #89](https://github.com/frankcrawford/it87/issues/89)). Background on
 the bridge itself is in
 [issue #64](https://github.com/frankcrawford/it87/issues/64).
 
-> One historical exception to "MMIO is good": on **IT8665E** boards (X399 era, e.g. ASUS ROG Zenith Extreme) the MMIO default *broke* PWM writes. This was fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO support for that chip in the driver, closing [issue #106](https://github.com/frankcrawford/it87/issues/106). On a current build you need no parameter — update the driver. `options it87 mmio=off` is only needed on a build predating that merge.
+> One historical exception to "MMIO is good": on **IT8665E** boards (X399-era ASUS ROG Zenith Extreme, and ASUS AM4 300/400-series boards such as the PRIME X470-PRO) the MMIO default *broke* PWM writes. This was fixed upstream by [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22), which removed MMIO support for that chip in the driver, closing [issue #106](https://github.com/frankcrawford/it87/issues/106). On a current build you need no parameter — update the driver. `options it87 mmio=off` is only needed on a build predating that merge.
 
 ### "Fans run at full speed regardless of profile"
 
@@ -577,8 +561,8 @@ The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel
 
 Currently catalogued:
 
-- **`rdna_hang_kernel_6_18_6_19` (Critical):** Linux **6.18.x and 6.19.x** on RDNA3/RDNA4 GPUs (RX 7000/9000 series) hard-hang under load ([Phoronix EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025); [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101) reports panics on 6.18.20 and 6.19.10). Pin to a **6.15–6.17** longterm kernel — **do not roll back to 6.18, which is also affected.**
-- **`smu_mismatch_navi48_r9700` (Critical):** the AMD R9700 (PCI `0x7551`) has no working `fan_curve` path on current kernels — an SMU interface-version mismatch (firmware v50 vs driver v46, [ROCm #6101 — closed 2026-07, fault still reported](https://github.com/ROCm/ROCm/issues/6101)) leaves `pwm1` read-only and commanded fan changes ineffective. Device-scoped, not 7.0-specific; the RX 9070 XT (`0x7550`) is **not** affected.
+- **`rdna_hang_kernel_6_18_6_19` (Critical):** raised on Linux **6.18.x and 6.19.x** with an RDNA3/RDNA4 GPU (RX 7000/9000 series). [Phoronix](https://www.phoronix.com/review/old-amdgpu-eoy2025) reported hard hangs under benchmark load on both in December 2025, unbisected. One bisected RDNA4 hang on 6.18 ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)) was fixed in **6.18.7** and 6.19. If you see hangs, update to the **latest 6.18 longterm** point release or a current stable **7.x** kernel. **Do not** move to 6.15, 6.16 or 6.17: none of them was ever a longterm kernel, and all are end-of-life. Daemons up to v2.56 word this advisory the opposite way; follow this page.
+- **`smu_mismatch_navi48_r9700` (Critical):** raised for an AMD R9700 (PCI `0x7551`). The "SMU driver interface version" message it points at appears on **every** Navi 48 card, the RX 9070 XT included, and is not a fault. The firmware is designed to be backward compatible, and kernel 7.0 removed the message as confusing ([commit e471627d5627](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713)). `pwm1` is read-only on every RDNA4 card by design; fan control goes through the firmware's `fan_curve`, which works on at least some R9700s. Separately, a few R9700 owners report the fan not responding under load ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). Those reports are per-unit and unresolved. If yours does not follow a curve, return it to automatic, watch its RPM under load, and consider a warranty claim.
 
 If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings` field of your `app_settings.json` and won't re-fire on reconnect or restart. To force the popup to re-appear (e.g. after a kernel update), edit `app_settings.json` and remove the relevant entry, then restart the GUI.
 

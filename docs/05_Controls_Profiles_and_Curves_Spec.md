@@ -251,8 +251,9 @@ reject + an independent eval-time clamp). The GUI-side defaults are:
   giving the other fans the control's own `minimum_pct` (the daemon's number
   for them).
 - **20%** for chassis / OpenFan-only controls.
-- **0%** for GPU-only controls (PMFW enforces its own OD_RANGE
-  minimum, typically 15%; see DEC-053).
+- **0%** for GPU-only controls (the card has its own PMFW `OD_RANGE`
+  minimum — board-specific, often around 15%; the kernel rejects fan-curve
+  points below it and the daemon clamps to it; see DEC-053).
 
 The role floor is a **default**, not a ceiling — users can raise
 `minimum_pct` further via the controls page, and the GUI never
@@ -277,7 +278,7 @@ control-level, `controls_view.min_pwm_badge`). Since DEC-417 it also takes the
 header pump-role term above, as a required argument:
 - **GPU members (`source == "amd_gpu"`)** are floored at **0%** — always,
   regardless of how the control is composed. The GPU's PMFW firmware owns
-  its idle minimum (the OD_RANGE ~15% clamp; zero-RPM via the per-member
+  its idle minimum (its OD_RANGE minimum, board-specific and often ~15%; zero-RPM via the per-member
   `fan_zero_rpm` toggle), so a GUI floor would be redundant and would stop
   the fan from idling.
 - **Non-GPU members** honour the control-wide `minimum_pct` exactly as
@@ -290,8 +291,9 @@ chassis/CPU fans. There, the daemon engine writes the GPU member down to its
 30% floor, each tracking an independent step-rate trajectory. A GPU-only
 control was already at 0% (its `minimum_pct` is 0). The **daemon profile
 engine applies this per-member rule on every tick** (it is the sole writer as
-of 2.0.0), so a mixed-control GPU idles to 0%; the PMFW write path then clamps to the firmware
-OD_RANGE (~15%) and honours the per-member `fan_zero_rpm` idle stop. The control card's
+of 2.0.0), so a mixed-control GPU idles to 0%; the daemon's PMFW write path then clamps to the
+card's OD_RANGE minimum (board-specific, often ~15% — the kernel rejects a lower curve point) and
+honours the per-member `fan_zero_rpm` idle stop. The control card's
 `Min: NN%` badge shows the non-GPU floor; its tooltip notes that GPU members
 in a mixed control are not floored. The curve editor's lower bound is
 unchanged (it still clamps to the strictest non-GPU floor for shared
@@ -301,7 +303,8 @@ control — the fastest way to do that is **Dedicate GPU Fan** (below).
 
 #### Dedicate GPU Fan — one-click 0-RPM idle (DEC-221)
 A shared curve can't be authored below its chassis member's floor, and a bare
-0% curve value alone still spins at the PMFW OD_RANGE minimum (~15%). To make a
+0% curve value alone still spins at the card's OD_RANGE minimum (often ~15%): the kernel
+rejects a point below it, so the daemon clamps up to it. To make a
 writable AMD GPU fan idle at **true 0 RPM** when the GPU is cool, the Controls
 page offers a one-click **Dedicate GPU Fan** action (shown only when the daemon
 reports `amd_gpu.present`, `fan_write_supported`, and `gpu_zero_rpm_available`).

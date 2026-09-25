@@ -8,7 +8,7 @@ Locks in the four behavioural commitments of the refresh:
 2. New escape hatch: IT8665E guidance carries the ``mmio=off``
    remediation for the maintainer-confirmed MMIO regression (issue #106).
 3. New/updated chip knowledge: IT8622E (mainline), IT87952E (mainline
-   enumeration ≥ 6.4, DKMS for dual-chip control), IT8689E Rev 1
+   enumeration ≥ 6.3, DKMS for dual-chip control), IT8689E Rev 1
    (control mainline since 7.1; temps-to-90 partial stopgap. Candidate
    fix is now frankcrawford/it87 PR #128, merged 2026-08-24 but
    unverified on IT8689E silicon; PR #114 was rejected 2026-08-25).
@@ -97,7 +97,7 @@ class TestRemediationOrdering:
         if "mmio" in lowered:
             assert "already the driver default" in lowered
 
-    def test_readiness_dual_chip_fix_gives_the_discriminator(self):
+    def test_readiness_dual_chip_fix_gives_the_ladder(self):
         diag = HardwareDiagnosticsResult(
             hwmon=HwmonDiagnostics(
                 chips_detected=[HwmonChipInfo(chip_name="it8696", header_count=5)],
@@ -114,10 +114,12 @@ class TestRemediationOrdering:
         fix = problems["dual_chip"]["fix"].lower()
         # `UDOC-h`: this used to assert the ORDER of two remedies ("update
         # before mmio=on"). Ordering futile advice does not make it useful —
-        # on a 0x8883 board neither step can work. The line now hands over the
-        # discriminator instead, so the user finds out which fault they have
-        # before changing anything.
-        assert "dmesg" in fix
+        # on a 0x8883 board neither step can work. It then asserted a DEVID
+        # discriminator, which DEC-421 retired (the driver never prints the ID
+        # at the default log level). The line now gives the one ladder that is
+        # right either way; `dmesg` stays as the driver-loaded check.
+        assert "sudo dmesg" in fix
+        assert "devid" not in fix
         assert "power" in fix and ("wall" in fix or "power cut" in fix), (
             "DEC-332: the 0x8883 case is RECOVERABLE, so this copy must give "
             "the remedy rather than tell the user to give up. It must also say "
@@ -193,7 +195,8 @@ class TestChipKnowledgeUpdates:
     def test_it87952_mainline_enumeration_but_dkms_control(self):
         g = lookup_chip_guidance("it87952")
         assert g is not None
-        # Matches the daemon's chip_driver_in_mainline (kernel ≥ 6.4).
+        # Matches the daemon's chip_driver_in_mainline (kernel ≥ 6.3 — IT87952E
+        # landed in v6.3 via d44cb4cd7456; corrected from 6.4 by DEC-421).
         assert g.in_mainline is True
         flat = " ".join([g.driver_package, *g.known_issues]).lower()
         assert "it87-dkms-git" in flat, "entry must state dual-chip CONTROL needs the DKMS build"

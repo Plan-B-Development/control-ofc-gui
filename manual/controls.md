@@ -110,7 +110,7 @@ When a writable, zero-RPM-capable AMD GPU is detected, a **Dedicate GPU Fan** bu
 - binds a dedicated curve to a **GPU temperature** sensor (edge/junction preferred) — the default idles at 0% up to 45 °C, then ramps (20% / 40% / 60% / 100% at 47 / 58 / 75 / 95 °C);
 - turns on the GPU firmware's **zero-RPM idle stop** for that fan.
 
-That last step is the important one: a 0% point on the curve alone is *not* enough — the GPU firmware raises a bare 0% command up to its own minimum (~15%), so the fan keeps spinning. True 0 RPM comes from the zero-RPM stop, which the firmware releases as soon as the GPU warms and the curve ramps up. The daemon restores automatic zero-RPM control when it shuts down. In the dialog you pick the sensor and can un-tick zero-RPM to keep the fan always spinning at the firmware minimum instead.
+That last step is the important one: a 0% point on the curve alone is *not* enough — the card does not accept a fan-curve point below its own minimum (board-specific, often around 15%), so the daemon raises it to that minimum and the fan keeps spinning. True 0 RPM comes from the zero-RPM stop, which the firmware releases as soon as the GPU warms and the curve ramps up. The daemon restores automatic zero-RPM control when it shuts down. In the dialog you pick the sensor and can un-tick zero-RPM to keep the fan always spinning at the firmware minimum instead.
 
 This is the one-click equivalent of building a GPU-only role by hand and ticking **Allow zero-RPM idle** in the [role dialog](#editing-a-fan-role).
 

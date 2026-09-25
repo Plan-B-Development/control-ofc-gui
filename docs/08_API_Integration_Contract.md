@@ -124,8 +124,9 @@ Notable fields:
   contract-mismatch resolution).
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions
-  applicable to the active GPU (e.g. RDNA3/4 hard-hang on Linux 6.19,
-  R9700 SMU mismatch on 7.0). Field is omitted entirely when empty so
+  applicable to the active GPU (e.g. `rdna_hang_kernel_6_18_6_19`,
+  `smu_mismatch_navi48_r9700` — both rules are being revised after the
+  2026-09-24 review found their advice wrong, register row BRD-b). Field is omitted entirely when empty so
   pre-1.6.1 daemons (which don't set it) yield an empty list on the GUI
   side without parser changes. The GUI surfaces `high` and `critical`
   entries as a one-time popup gated by
@@ -1286,16 +1287,21 @@ and the GUI parser defaults to `[]`:
   no `E` suffix (matches the `chip_name` format under
   `hwmon.chips_detected`). Empty for boards not in the lookup. The GUI
   uses `set(expected_chips) − set(detected_chip_names)` to drive a
-  Fans-tab warning banner with the dual-chip remediation (driver update
-  first; the `mmio=on` modprobe.d line only on pre-2026-03 driver
-  builds — DEC-144).
+  warning banner with the recovery ladder (DEC-421: stop the trigger, reboot,
+  then remove mains power; the `mmio=on` modprobe.d line only on pre-2026-03
+  driver builds). Since DEC-421 a few single-chip Gigabyte boards are listed
+  with **one** chip, so the list is not always a pair. The comparison is exact,
+  so the it87 v2.0 chip names (`it8696_a008090a`, 2026-09-09 builds) do not
+  match it yet (register row BRD-a).
 - `kernel_detected_chips: list[str]` — best-effort kernel-level chip
-  detection parsed from `/dev/kmsg` `it87:` lines. Populated when the
-  kernel ring buffer is readable (Arch default
-  `kernel.dmesg_restrict=0`); empty otherwise. Useful for distinguishing
-  "kernel saw the chip but driver did not bind" from "kernel never saw
-  the chip"; not authoritative — the source of truth for "what works"
-  is `hwmon.chips_detected`.
+  detection parsed from `/dev/kmsg` `it87:` lines. **In the shipped
+  deployment this is always empty** (DEC-421): the packaged systemd unit sets
+  `ProtectKernelLogs=true`, which denies `/dev/kmsg`, and Arch and CachyOS
+  kernels are built with `CONFIG_SECURITY_DMESG_RESTRICT=y`. (This entry used
+  to say "Arch default `kernel.dmesg_restrict=0`", which is false.) Even where
+  it is readable, the driver's `Unsupported chip (DEVID=…)` line is `pr_debug`,
+  so a blocked secondary never appears in it. Not authoritative — the source
+  of truth for "what works" is `hwmon.chips_detected`.
 
 `board_firmware_counts` (daemon ≥ 2.36.0, additive — `api_version` unchanged,
 **omitted when the firmware did not say**) is what the board itself declares it
@@ -1434,9 +1440,10 @@ and the GUI parser defaults safely:
   failure). Defaults `false`.
 - `gpu.fan_speed_min_pct` / `gpu.fan_speed_max_pct: int | None` — PMFW
   `fan_curve` `OD_RANGE` fan-speed bounds (percent, typically `15` / `100`
-  on RDNA3+). The firmware-enforced minimum is the real reason a PMFW GPU
-  fan cannot be driven below ~15% via the curve; surfaced so it is not
-  mistaken for a GUI/daemon clamp. `null` for non-PMFW GPUs (and, on daemon ≥ 2.18.0, for a PMFW GPU whose reported `OD_RANGE` speed pair is inverted or outside 0–100 — the daemon rejects an implausible range rather than trusting it, DEC-266).
+  on RDNA3+, but board-specific — one R9700 reports about 30). The firmware
+  minimum is why a PMFW GPU fan cannot be driven lower via the curve: the
+  kernel rejects a point below it, and the daemon clamps to it. Surfaced so it
+  is not mistaken for a GUI/daemon policy floor. `null` for non-PMFW GPUs (and, on daemon ≥ 2.18.0, for a PMFW GPU whose reported `OD_RANGE` speed pair is inverted or outside 0–100 — the daemon rejects an implausible range rather than trusting it, DEC-266).
 - `gpu.fan_minimum_pwm: int | None` — best-effort percent parse of the
   `gpu_od/fan_ctrl/fan_minimum_pwm` attribute. `null` when absent /
   unparseable.
