@@ -25,7 +25,11 @@ from control_ofc.api.models import (
     SensorReading,
     SubsystemStatus,
 )
-from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_reading,
+    classify_sensor,
+    format_sensor_tooltip,
+)
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import JOURNAL_TIMEOUT_S, DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
@@ -106,8 +110,7 @@ class TestSecurityEscape:
         """Finding 1.2: the appended `Source:` line carries the daemon source."""
         rows = build_sensor_rows(
             [SensorReading(id="s1", kind="cpu_temp", label="Tctl", value_c=40.0, source="<b>src")],
-            overrides={},
-            board_vendor="ASUS",
+            classify=lambda s: classify_reading(s, board_vendor="ASUS", overrides={}),
         )
         assert "<b>src" not in rows[0].tooltip
         assert "&lt;b&gt;src" in rows[0].tooltip

@@ -49,9 +49,13 @@ def _page(qtbot, *, settings=None, selection=None, client=None, board_vendor="")
     s = _state()
     diag = DiagnosticsService(s)
     if board_vendor:
-        diag.last_hw_diagnostics = HardwareDiagnosticsResult(
-            thermal_safety=ThermalSafetyInfo(state="normal"),
-            board=BoardInfo(vendor=board_vendor),
+        # Through the one writer, so `AppState.board_info` — which the page
+        # classifies against (`DC-g`) — sees the vendor, not just the cache.
+        diag.set_hw_diagnostics(
+            HardwareDiagnosticsResult(
+                thermal_safety=ThermalSafetyInfo(state="normal"),
+                board=BoardInfo(vendor=board_vendor),
+            )
         )
     page = OverviewPage(
         state=s,

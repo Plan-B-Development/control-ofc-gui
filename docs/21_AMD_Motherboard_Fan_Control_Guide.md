@@ -699,7 +699,7 @@ documentation explicitly lists many supported boards.
 ASUS boards often expose two separate driver paths:
 
 1. **Sensor enrichment** — `asus_ec_sensors` and/or `asus_wmi_sensors`
-   provide extra temperature readings (VRM, T_Sensor, Water In/Out,
+   provide extra temperature readings (VRM, T_Sensor, water in/out,
    chipset, etc.) via the ASUS embedded controller or WMI interface.
    These are **read-only sensor sources**, not PWM write paths.
 

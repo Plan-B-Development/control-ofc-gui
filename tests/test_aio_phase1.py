@@ -53,11 +53,12 @@ class TestCoolantClassification:
         assert c.confidence == "medium"
 
     def test_asus_ec_water_in_out_regression(self):
-        c_in = classify_sensor("asus_ec_sensors", "Water In")
+        # `DC-e`: the labels the kernel's asusec device actually publishes.
+        c_in = classify_sensor("asusec", "Water_In")
         assert c_in.source_class == "coolant_in"
         assert c_in.confidence == "high"
         assert "inlet" in c_in.display_description.lower()
-        c_out = classify_sensor("asus_ec_sensors", "Water Out")
+        c_out = classify_sensor("asusec", "Water_Out")
         assert c_out.source_class == "coolant_out"
 
     def test_ordinary_sensor_not_coolant(self):

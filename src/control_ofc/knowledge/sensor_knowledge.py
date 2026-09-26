@@ -20,6 +20,7 @@ Classification is based on verified Linux kernel documentation:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from html import escape
 
@@ -97,14 +98,35 @@ def _classify_coolant(chip_name: str, label: str, lower_label: str) -> SensorCla
     before driver-specific handlers so coolant is recognised consistently
     (NZXT Kraken, Aquacomputer, ASUS-EC water, or any coolant-labelled header).
     """
-    if "water in" in lower_label or "coolant in" in lower_label:
+    # The kernel's `asusec` device spells its water channels with underscores
+    # (`Water_In`, `Water_Out`, `Water_Block_In`, `Water_Block_Out` —
+    # asus-ec-sensors.c), while `asus_wmi_sensors` passes the BIOS's own name
+    # through, which is spaced (`Water In`). Matching only the spaced form sent
+    # every real asusec label to the generic hint below (`DC-e`), so both are
+    # folded to one spelling here.
+    spaced = lower_label.replace("_", " ")
+    if "water block in" in spaced:
+        return SensorClassification(
+            source_class="coolant_in",
+            display_description="Water block inlet temperature",
+            confidence="high",
+            notes=["Coolant entering the CPU water block"],
+        )
+    if "water block out" in spaced:
+        return SensorClassification(
+            source_class="coolant_out",
+            display_description="Water block outlet temperature",
+            confidence="high",
+            notes=["Coolant leaving the CPU water block"],
+        )
+    if "water in" in spaced or "coolant in" in spaced:
         return SensorClassification(
             source_class="coolant_in",
             display_description="Water coolant inlet temperature",
             confidence="high",
             notes=["Liquid cooling loop inlet"],
         )
-    if "water out" in lower_label or "coolant out" in lower_label:
+    if "water out" in spaced or "coolant out" in spaced:
         return SensorClassification(
             source_class="coolant_out",
             display_description="Water coolant outlet temperature",
@@ -260,7 +282,7 @@ def classify_sensor_with_overrides(
     label: str,
     temp_type: int | None = None,
     board_vendor: str = "",
-    overrides: dict[str, str] | None = None,
+    overrides: Mapping[str, str] | None = None,
 ) -> SensorClassification:
     """Classify a sensor, honouring a user override map (``sensor_id`` -> forced
     ``source_class``).
@@ -282,6 +304,28 @@ def classify_sensor_with_overrides(
                 notes=["Marked as coolant by user override"],
             )
     return classify_sensor(chip_name, label, temp_type, board_vendor)
+
+
+def classify_reading(
+    sensor, *, board_vendor: str, overrides: Mapping[str, str]
+) -> SensorClassification:
+    """Classify a live ``SensorReading`` with the board vendor and the user's
+    class overrides — both required, so no caller can silently leave one out.
+
+    ``DC-g``: two surfaces called :func:`classify_sensor` with its defaulted
+    ``board_vendor`` and no overrides, so an ASUS ``CPUTIN`` read as a CPU input
+    and "Treat as coolant" was ignored there while the Overview table honoured
+    both — DEC-379's defaulted-argument shape. Surfaces reach this through
+    ``AppState.classify_sensor``, which supplies both from one place.
+    """
+    return classify_sensor_with_overrides(
+        sensor.id,
+        chip_name=sensor.chip_name,
+        label=sensor.label,
+        temp_type=sensor.temp_type,
+        board_vendor=board_vendor,
+        overrides=overrides,
+    )
 
 
 #: Every ``source_class`` that is a coolant reading (any side of the loop).
@@ -314,7 +358,7 @@ def _classify_k10temp(label: str, lower_label: str) -> SensorClassification:
             source_class="cpu_die",
             display_description="CPU die temperature (internal sensor)",
             confidence="high",
-            notes=["Primary CPU temperature — prefer this over Tctl"],
+            notes=["Measured die temperature — Tctl may sit a fixed offset above it on some CPUs"],
         )
     if lower_label == "tctl":
         return SensorClassification(

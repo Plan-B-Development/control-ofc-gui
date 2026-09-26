@@ -30,8 +30,7 @@ from control_ofc.api.models import (
 )
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
-    classify_sensor,
-    classify_sensor_with_overrides,
+    SensorClassification,
     format_sensor_tooltip,
 )
 from control_ofc.services.diagnostics_service import format_uptime
@@ -617,8 +616,13 @@ def build_fan_rows(
     return rows
 
 
+#: How a builder classifies a sensor — in the app, ``AppState.classify_sensor``,
+#: which supplies the board vendor and the user's overrides (``DC-g``).
+SensorClassifier = Callable[[SensorReading], SensorClassification]
+
+
 def build_sensor_rows(
-    sensors: list[SensorReading], *, overrides: dict[str, str], board_vendor: str
+    sensors: list[SensorReading], *, classify: SensorClassifier
 ) -> list[SensorRowVM]:
     """Mirror of `_set_sensor_row` (minus Qt): 8-column data + hover tooltip.
 
@@ -627,14 +631,7 @@ def build_sensor_rows(
     """
     rows: list[SensorRowVM] = []
     for s in sensors:
-        classification = classify_sensor_with_overrides(
-            s.id,
-            chip_name=s.chip_name,
-            label=s.label,
-            temp_type=s.temp_type,
-            board_vendor=board_vendor,
-            overrides=overrides,
-        )
+        classification = classify(s)
         is_quirky = classification.source_class == "bogus"
         is_low_confidence = classification.confidence == "low"
         prefix = "⚠ " if is_quirky else ("? " if is_low_confidence else "")
@@ -679,7 +676,7 @@ def build_sensor_summary(
     *,
     hidden_count: int,
     unavailable_count: int,
-    board_vendor: str,
+    classify: SensorClassifier,
 ) -> str:
     """Mirror of `_recompute_sensor_summary`: the 'Sensors: N total · …' line."""
     n = len(all_sensors)
@@ -694,13 +691,10 @@ def build_sensor_summary(
     # was the one kind with no line in the breakdown.
     coolant = sum(1 for s in all_sensors if s.kind == "coolant_temp")
     stale = sum(1 for s in all_sensors if s.freshness != Freshness.FRESH)
-    low_conf = 0
-    for s in all_sensors:
-        c = classify_sensor(
-            chip_name=s.chip_name, label=s.label, temp_type=s.temp_type, board_vendor=board_vendor
-        )
-        if c.confidence == "low":
-            low_conf += 1
+    # Classified exactly as the table's rows are, overrides included (`DC-g`) —
+    # a sensor the user marked coolant shows high confidence there, so it must
+    # not be counted low-confidence here.
+    low_conf = sum(1 for s in all_sensors if classify(s).confidence == "low")
     parts = [f"{n} total"]
     if cpu:
         parts.append(f"{cpu} CPU")

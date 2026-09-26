@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Fixed
+
+**ASUS water-temperature channels are recognised as inlet and outlet** (DEC-428). The ASUS EC
+driver names these channels `Water_In`, `Water_Out`, `Water_Block_In` and `Water_Block_Out`, with
+underscores. The GUI only matched `Water In` with a space, so on real hardware they showed as generic
+coolant at medium confidence. They now show as coolant inlet or outlet at high confidence, and the
+two water-block channels are described as such. The spaced labels that ASUS WMI boards report still
+match.
+
+**The Dashboard and the Sensor Detail window classify sensors the same way the Overview table
+does** (DEC-428). The Dashboard's sensor tooltip ignored the board vendor. On an ASUS board it
+called a `CPUTIN` reading a CPU input while the Overview table flagged it as unreliable. Both the
+tooltip and the Sensor Detail window also ignored "Treat as coolant". The Overview summary's
+low-confidence count now honours "Treat as coolant" too.
+
+**The Tdie tooltip no longer tells you to prefer it over Tctl** (DEC-428). The preferred-CPU sensor
+the daemon recommends is Tctl, so the note now just says Tctl may run a fixed offset above Tdie on
+some CPUs.
+
+### Documentation
+
+**The sensor guides (`docs/20`, `docs/22`) now describe what the GUI actually does** (DEC-428):
+
+- Board overrides only appear in their own section of the Sensor Detail window. They do not change
+  a sensor's classification anywhere.
+- Nothing in the GUI picks Tdie over Tctl. The recommended CPU sensor is the daemon's
+  `default_cpu`, which ranks Tctl first. The AIO setup takes the first package, Tctl or Tdie sensor
+  in the daemon's list order.
+- The ASUS EC water labels are listed with their real spelling.
+
 ## [2.83.3] — 2026-09-25
 
 ### Fixed

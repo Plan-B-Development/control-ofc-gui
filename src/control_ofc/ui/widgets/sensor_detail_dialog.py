@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 
 from control_ofc.knowledge.sensor_knowledge import (
     BOARD_SENSOR_OVERRIDES,
-    classify_sensor,
     kernel_doc_url_for_chip,
     lookup_board_override,
     temp_type_label,
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
         SensorReading,
         SensorThresholds,
     )
+    from control_ofc.knowledge.sensor_knowledge import SensorClassification
 
 
 _CONFIDENCE_DISPLAY: dict[str, str] = {
@@ -137,21 +137,22 @@ def build_sensor_detail_html(
     sensor: SensorReading,
     board: BoardInfo | None,
     daemon_classification: InventoryTempSensor | None = None,
+    *,
+    classification: SensorClassification,
 ) -> str:
     """Build the full self-contained HTML document for the detail dialog.
+
+    ``classification`` is the caller's — in the app, ``AppState.classify_sensor``,
+    so the board vendor and the user's "Treat as coolant" override reach this
+    dialog exactly as they reach the Overview row it was opened from (`DC-g`).
+    It is required, not defaulted: a default is what let this dialog classify
+    without the overrides.
 
     Daemon-supplied strings (id, label, chip_name, board vendor/name/BIOS)
     are HTML-escaped at every interpolation site. Threshold values are
     formatted by us from floats, so they need no escaping.
     """
     t = active_theme()
-    board_vendor = board.vendor if board is not None else ""
-    classification = classify_sensor(
-        chip_name=sensor.chip_name,
-        label=sensor.label,
-        temp_type=sensor.temp_type,
-        board_vendor=board_vendor,
-    )
 
     def h(title: str) -> str:
         return f'<h3 style="color:{t.text_primary};margin-bottom:2px">{escape(title)}</h3>'
@@ -351,6 +352,8 @@ class SensorDetailDialog(QDialog):
         board: BoardInfo | None,
         daemon_classification: InventoryTempSensor | None = None,
         parent: QWidget | None = None,
+        *,
+        classification: SensorClassification,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Diagnostics_SensorDetail_Dialog")
@@ -363,7 +366,11 @@ class SensorDetailDialog(QDialog):
         self._browser = QTextBrowser()
         self._browser.setObjectName("Diagnostics_SensorDetail_Browser")
         self._browser.setOpenExternalLinks(True)
-        self._browser.setHtml(build_sensor_detail_html(sensor, board, daemon_classification))
+        self._browser.setHtml(
+            build_sensor_detail_html(
+                sensor, board, daemon_classification, classification=classification
+            )
+        )
         layout.addWidget(self._browser, 1)
 
         btn_row = QHBoxLayout()
@@ -379,9 +386,15 @@ class SensorDetailDialog(QDialog):
         sensor: SensorReading,
         board: BoardInfo | None,
         daemon_classification: InventoryTempSensor | None = None,
+        *,
+        classification: SensorClassification,
     ) -> None:
         """Replace contents in place — used when the dialog is reopened on a
         different row of the table without rebuilding the widget."""
         title = sensor.label or sensor.id or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
-        self._browser.setHtml(build_sensor_detail_html(sensor, board, daemon_classification))
+        self._browser.setHtml(
+            build_sensor_detail_html(
+                sensor, board, daemon_classification, classification=classification
+            )
+        )

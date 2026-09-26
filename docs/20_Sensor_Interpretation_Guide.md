@@ -40,6 +40,15 @@ The `source_class` field is a machine-readable category (e.g. `cpu_die`,
 human-readable string shown in tooltips. The `confidence` field indicates how
 certain the classification is.
 
+**Every surface that shows a sensor's class or confidence goes through one
+accessor, `AppState.classify_sensor(sensor)`** (`DC-g`). It supplies
+`board_vendor` from `AppState.board_info` (which a blank rescan never
+downgrades) and the user's "Treat as coolant" overrides, so the Overview table,
+its summary line, the Sensor Detail dialog and the Dashboard series-panel
+tooltip classify a sensor identically. Before it, the series panel passed no
+vendor and no overrides and the dialog no overrides: on an ASUS board the
+Dashboard called a bogus `CPUTIN` a CPU input while the Overview row flagged it.
+
 ## Driver-specific rules
 
 ### k10temp (AMD CPU internal sensors)
@@ -48,7 +57,7 @@ Kernel docs: https://docs.kernel.org/hwmon/k10temp.html
 
 | Label | source_class | Confidence | Notes |
 |---|---|---|---|
-| `Tdie` | `cpu_die` | high | Primary CPU die temperature. Prefer this over Tctl. |
+| `Tdie` | `cpu_die` | high | Measured CPU die temperature. Its tooltip notes that Tctl may sit a fixed offset above it on some CPUs. |
 | `Tctl` | `cpu_control` | high | Platform cooling reference. Not a direct physical reading. May differ from Tdie by a designed offset on some SKUs. |
 | `Tccd1`, `Tccd2`, ... | `cpu_ccd` | high | Per-CCD (core complex die) temperature. Available on Zen 2+ with multiple CCDs. |
 | Other | `cpu_internal` | high | Generic fallback for any other k10temp label. |
@@ -64,9 +73,15 @@ checked at 7.3-rc4) covers only Family 17h parts: Ryzen 5 1600X and Ryzen 7
 (27 °C — Zen and Zen+, not Zen 2 as this section used to say). The driver
 publishes Tdie (`temp2`) only for those; Zen 2 and later publish Tctl plus the
 per-CCD `Tccd` readings (up to 16 labels from 7.3). The kernel doc gives no
-general `Tctl = Tdie + offset` formula. The GUI should always
-prefer Tdie when available and should never present Tctl as the "actual" CPU
-temperature.
+general `Tctl = Tdie + offset` formula. The GUI never presents Tctl as the
+"actual" CPU temperature — its tooltip calls it a control value — but **nothing
+in the GUI prefers Tdie when it picks a sensor** (`DC-i`). The preferred-CPU
+recommendation (the ★ in Settings → preferred CPU sensor) is the daemon's
+`default_cpu`, which ranks Tctl first, then a package reading, then Tdie
+(`hwmon/classify.rs::cpu_class_rank`) — so on the five offset parts above it
+recommends the offset Tctl. The AIO setup's CPU fallback takes the first CPU
+sensor, in the daemon's list order, whose label names a package, Tctl or Tdie
+(`profile_service._pick_cpu_sensor_id`).
 
 ### sbtsi_temp (AMD SB-TSI board-side interface)
 
@@ -175,7 +190,9 @@ The it87 driver provides minimal labeling. Most sensors appear as generic
 | Named label | `super_io_channel` | medium |
 
 The driver does not expose which physical sensor type is connected to each
-channel. Board-specific overrides are the primary path to higher confidence.
+channel. A board-specific override can name such a channel in the Sensor Detail
+dialog, but it does not change the classification or its confidence (see
+[Board-specific override database](#board-specific-override-database)).
 
 ### asus_ec_sensors (ASUS Embedded Controller)
 
@@ -192,8 +209,17 @@ board features.
 |---|---|---|
 | Contains `T_Sensor` | `external_probe` | high |
 | Contains `VRM` | `vrm` | high |
-| Contains `Water In` | `coolant_in` | high |
-| Contains `Water Out` | `coolant_out` | high |
+| `Water_In` | `coolant_in` | high |
+| `Water_Out` | `coolant_out` | high |
+| `Water_Block_In` | `coolant_in` (described as the water block inlet) | high |
+| `Water_Block_Out` | `coolant_out` (described as the water block outlet) | high |
+
+The water rows are the labels `asus-ec-sensors.c` publishes, with underscores.
+The classifier folds underscores to spaces, so the spaced `Water In` / `Water Out`
+that `asus_wmi_sensors` passes through from the BIOS match the same rows. Until
+`DC-e` only the spaced form matched, and every real `asusec` water channel fell
+through to plain `coolant` at medium confidence. Water labels are matched on any
+chip, ahead of the driver branches.
 | Contains `Chipset` | `chipset` | high |
 | Contains `CPU` + `Package` | `cpu_package` | high |
 | Contains `Motherboard` | `board_ambient` | high |
@@ -351,8 +377,10 @@ Three places consume this knowledge base:
 AMD's Tctl (Control Temperature) is a derived value used by the platform cooling
 algorithm. On some SKUs it equals Tdie; on others it has a designed positive
 offset. Displaying Tctl as the "CPU temperature" can mislead users into thinking
-their CPU is hotter than it actually is. The GUI should prefer Tdie when both are
-available and should annotate Tctl with a note explaining its nature.
+their CPU is hotter than it actually is. The GUI annotates Tctl with a note
+explaining its nature. It does not choose Tdie over Tctl anywhere it picks a
+sensor: the preferred-CPU recommendation is the daemon's Tctl-first
+`default_cpu` (see the k10temp section above).
 
 Reference: https://docs.kernel.org/hwmon/k10temp.html
 
@@ -467,9 +495,13 @@ class BoardSensorOverride:
     notes: list[str] = field(default_factory=list)
 ```
 
-Overrides are checked by `lookup_board_override(board_vendor, board_model, label)`
-before the driver-based classification. If an override matches, it takes
-precedence.
+**Board overrides are display-only** (`DC-h`). `lookup_board_override(board_vendor,
+board_model, label)` has one caller, the Sensor Detail dialog, which shows a
+matching entry in its own "Board override" section. It does not replace the
+driver-based classification: the Overview table, its summary, tooltips and the
+dialog's own header line all show the driver classification and its confidence
+(or the user's "Treat as coolant", which does apply everywhere) — so on an ASRock X670E, `AMD TSI Addr 98h` is `medium_high` there while the
+override beside it says `high`.
 
 ### Current entries
 

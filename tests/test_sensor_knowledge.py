@@ -17,6 +17,14 @@ class TestK10temp:
         assert c.confidence == "high"
         assert "die" in c.display_description.lower()
 
+    def test_the_tdie_note_does_not_contradict_the_recommendation(self):
+        """`DC-i`: the preferred-CPU recommendation is the daemon's Tctl-first
+        `default_cpu`, so the Tdie tooltip describes the reading, never "prefer"."""
+        c = classify_sensor("k10temp", "Tdie")
+        assert c.notes
+        assert not any("prefer" in n.lower() for n in c.notes)
+        assert any("offset" in n.lower() for n in c.notes)
+
     def test_k10temp_tctl_is_control_temp(self):
         c = classify_sensor("k10temp", "Tctl")
         assert c.source_class == "cpu_control"
@@ -153,14 +161,37 @@ class TestAsusEc:
         assert c.source_class == "vrm"
         assert c.confidence == "high"
 
-    def test_asus_ec_water_in_out(self):
-        c_in = classify_sensor("asus_ec_sensors", "Water In")
-        assert c_in.source_class == "coolant_in"
-        assert c_in.confidence == "high"
+    # `DC-e`: asus-ec-sensors.c names its water channels with underscores, and
+    # the hwmon device is `asusec`. The old test pinned "Water In" on the module
+    # name — a label and a chip the driver never emits — so the classifier's
+    # spaced-only match passed while every real label fell to the medium hint.
+    @pytest.mark.parametrize(
+        ("label", "source_class", "place"),
+        [
+            ("Water_In", "coolant_in", "coolant inlet"),
+            ("Water_Out", "coolant_out", "coolant outlet"),
+            ("Water_Block_In", "coolant_in", "block inlet"),
+            ("Water_Block_Out", "coolant_out", "block outlet"),
+        ],
+    )
+    def test_the_driver_water_labels_classify_by_side(self, label, source_class, place):
+        c = classify_sensor("asusec", label)
+        assert c.source_class == source_class
+        assert c.confidence == "high"
+        assert place in c.display_description.lower()
 
-        c_out = classify_sensor("asus_ec_sensors", "Water Out")
-        assert c_out.source_class == "coolant_out"
-        assert c_out.confidence == "high"
+    def test_block_and_loop_channels_read_differently(self):
+        loop = classify_sensor("asusec", "Water_In")
+        block = classify_sensor("asusec", "Water_Block_In")
+        assert loop.source_class == block.source_class
+        assert loop.display_description != block.display_description
+
+
+class TestAsusWmiWater:
+    def test_the_bios_spaced_water_labels_still_classify(self):
+        """asus_wmi_sensors passes the BIOS name through, which is spaced."""
+        assert classify_sensor("asus_wmi_sensors", "Water In").source_class == "coolant_in"
+        assert classify_sensor("asus_wmi_sensors", "Water Out").source_class == "coolant_out"
 
 
 class TestAsusWmi:

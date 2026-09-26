@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.knowledge.sensor_knowledge import classify_reading
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.overview_view import (
     build_daemon_health_vm,
@@ -427,10 +428,19 @@ class OverviewPage(QWidget):
 
     # ── Sensor table rendering ───────────────────────────────────────
 
-    def _board_vendor(self) -> str:
-        if self._diag.last_hw_diagnostics is not None:
-            return self._diag.last_hw_diagnostics.board.vendor
-        return ""
+    def _classify(self, sensor):
+        """Classify ``sensor`` through ``AppState.classify_sensor`` — the one
+        accessor every surface uses, so the table, the summary and the Sensor
+        Detail dialog agree (`DC-g`). Without a state (a bare page in tests)
+        it falls back to the diagnostics cache and the settings' overrides."""
+        if self._state is not None:
+            return self._state.classify_sensor(sensor)
+        diag = self._diag.last_hw_diagnostics
+        return classify_reading(
+            sensor,
+            board_vendor=diag.board.vendor if diag is not None else "",
+            overrides=self._sensor_overrides(),
+        )
 
     def _refresh_summary(self) -> None:
         hidden_ids = self._hidden_sensor_ids()
@@ -439,7 +449,7 @@ class OverviewPage(QWidget):
                 self._all_sensors,
                 hidden_count=sum(1 for s in self._all_sensors if s.id in hidden_ids),
                 unavailable_count=len(self._unavailable_sensors),
-                board_vendor=self._board_vendor(),
+                classify=self._classify,
             )
         )
 
@@ -447,9 +457,6 @@ class OverviewPage(QWidget):
         hidden_ids = self._hidden_sensor_ids()
         visible = [s for s in self._all_sensors if s.id not in hidden_ids]
         hidden = [s for s in self._all_sensors if s.id in hidden_ids]
-        board_vendor = self._board_vendor()
-        overrides = self._sensor_overrides()
-
         total = len(visible)
         if hidden:
             total += 1 + (len(hidden) if self._hidden_group_expanded else 0)
@@ -458,18 +465,14 @@ class OverviewPage(QWidget):
         self._sensor_table.setRowCount(total)
         self._sensor_table.clearSpans()
 
-        for i, vm in enumerate(
-            build_sensor_rows(visible, overrides=overrides, board_vendor=board_vendor)
-        ):
+        for i, vm in enumerate(build_sensor_rows(visible, classify=self._classify)):
             self._populate_sensor_row(i, vm, dimmed=False)
 
         if hidden:
             toggle_row = len(visible)
             self._set_hidden_toggle_row(toggle_row, len(hidden))
             if self._hidden_group_expanded:
-                for j, vm in enumerate(
-                    build_sensor_rows(hidden, overrides=overrides, board_vendor=board_vendor)
-                ):
+                for j, vm in enumerate(build_sensor_rows(hidden, classify=self._classify)):
                     self._populate_sensor_row(toggle_row + 1 + j, vm, dimmed=True)
 
         self._refresh_summary()
@@ -792,11 +795,16 @@ class OverviewPage(QWidget):
         board = self._diag.last_hw_diagnostics.board if self._diag.last_hw_diagnostics else None
         self._ensure_daemon_classifications()
         daemon_cls = self._daemon_classifications.get(sensor_id)
+        classification = self._classify(sensor)
         if self._sensor_detail_dialog is None:
-            self._sensor_detail_dialog = SensorDetailDialog(sensor, board, daemon_cls, parent=self)
+            self._sensor_detail_dialog = SensorDetailDialog(
+                sensor, board, daemon_cls, parent=self, classification=classification
+            )
             self._sensor_detail_dialog.finished.connect(self._on_sensor_detail_closed)
         else:
-            self._sensor_detail_dialog.set_sensor(sensor, board, daemon_cls)
+            self._sensor_detail_dialog.set_sensor(
+                sensor, board, daemon_cls, classification=classification
+            )
         self._sensor_detail_dialog.show()
         self._sensor_detail_dialog.raise_()
         self._sensor_detail_dialog.activateWindow()

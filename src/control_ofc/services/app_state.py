@@ -23,6 +23,7 @@ from control_ofc.api.models import (
     SensorReading,
 )
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
+from control_ofc.knowledge.sensor_knowledge import SensorClassification, classify_reading
 from control_ofc.services.alerts import AlertCondition, AlertLedger
 from control_ofc.services.session_stats import SessionStatsTracker
 
@@ -335,6 +336,22 @@ class AppState(QObject):
         """
         cleaned = self._set_or_clear(self.sensor_class_overrides, sensor_id, source_class)
         self.sensor_class_override_changed.emit(sensor_id, cleaned)
+
+    def classify_sensor(self, sensor: SensorReading) -> SensorClassification:
+        """The one way a surface classifies a sensor for display (``DC-g``).
+
+        Supplies both inputs a bare ``classify_sensor`` call can silently omit:
+        the board vendor (from ``board_info``, which never downgrades on a blank
+        rescan — DEC-229) and the user's class overrides (DEC-156). Every
+        GUI surface that shows a sensor's class or confidence reads it here, so
+        the Overview table, its summary, the Sensor Detail dialog and the
+        Dashboard tooltip cannot disagree about the same sensor.
+        """
+        return classify_reading(
+            sensor,
+            board_vendor=self.board_info.vendor,
+            overrides=self.sensor_class_overrides,
+        )
 
     def fan_display_name(self, fan_id: str) -> str:
         """Return the best display name for a fan.

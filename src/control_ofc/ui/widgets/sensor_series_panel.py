@@ -389,11 +389,15 @@ class SensorSeriesPanel(QFrame):
                 session_min = stats.min_c
                 session_max = stats.max_c
 
-        classification = classify_sensor(
-            chip_name=s.chip_name,
-            label=s.label,
-            temp_type=s.temp_type,
-        )
+        # `DC-g`: through the one accessor, so this tooltip carries the board
+        # vendor and the user's overrides exactly as the Overview row does.
+        # Without a state there is neither to supply.
+        if self._state is not None:
+            classification = self._state.classify_sensor(s)
+        else:
+            classification = classify_sensor(
+                chip_name=s.chip_name, label=s.label, temp_type=s.temp_type
+            )
         return format_sensor_tooltip(
             classification,
             sensor_id=s.id,

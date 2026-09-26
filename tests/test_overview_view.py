@@ -18,7 +18,13 @@ from control_ofc.api.models import (
     SensorReading,
     SensorThresholds,
 )
+from control_ofc.knowledge.sensor_knowledge import classify_reading
 from control_ofc.services import overview_view as ov
+
+
+def _classifier(board_vendor: str = "", overrides: dict[str, str] | None = None):
+    """The pure half of ``AppState.classify_sensor`` with fixed inputs."""
+    return lambda s: classify_reading(s, board_vendor=board_vendor, overrides=overrides or {})
 
 
 def _sensor(sid: str = "hwmon:k10temp:0000:00:18.3:Tctl", **kw) -> SensorReading:
@@ -127,7 +133,7 @@ def test_build_fan_rows_freshness_state_map():
 
 
 def test_build_sensor_rows_moves_source_into_tooltip():
-    r = ov.build_sensor_rows([_sensor(source="amd_gpu")], overrides={}, board_vendor="")[0]
+    r = ov.build_sensor_rows([_sensor(source="amd_gpu")], classify=_classifier())[0]
     assert r.chip == "k10temp"
     assert "Source: amd_gpu" in r.tooltip  # the daemon-subsystem column is now hover-only
     assert r.confidence_state in ("ok", "info", "neutral", "warn")
@@ -135,13 +141,13 @@ def test_build_sensor_rows_moves_source_into_tooltip():
 
 def test_build_sensor_rows_alarm_suffix():
     s = _sensor(value_c=95.0, thresholds=SensorThresholds(crit_c=90.0))
-    r = ov.build_sensor_rows([s], overrides={}, board_vendor="")[0]
+    r = ov.build_sensor_rows([s], classify=_classifier())[0]
     assert "⚠ ALARM" in r.value_text
     assert r.is_alarm
 
 
 def test_build_sensor_rows_prefix_matches_flags():
-    r = ov.build_sensor_rows([_sensor()], overrides={}, board_vendor="")[0]
+    r = ov.build_sensor_rows([_sensor()], classify=_classifier())[0]
     if r.is_quirky:
         assert r.label.startswith("⚠ ")
     elif r.is_low_confidence:
@@ -156,8 +162,7 @@ def test_build_sensor_rows_low_confidence_gets_question_prefix():
     # k10temp sensor, so this arm (and the low→warn map entry) was dead.
     r = ov.build_sensor_rows(
         [_sensor(sid="x:temp1", chip_name="mystery", label="temp1")],
-        overrides={},
-        board_vendor="",
+        classify=_classifier(),
     )[0]
     assert r.is_low_confidence and not r.is_quirky
     assert r.label.startswith("? ")
@@ -168,8 +173,7 @@ def test_build_sensor_rows_quirky_gets_warning_prefix():
     # B5: the ASUS + nct6776 + CPUTIN quirk classifies as bogus → "⚠ " prefix.
     r = ov.build_sensor_rows(
         [_sensor(sid="x:cputin", chip_name="nct6776", label="CPUTIN")],
-        overrides={},
-        board_vendor="ASUS",
+        classify=_classifier("ASUS"),
     )[0]
     assert r.is_quirky
     assert r.label.startswith("⚠ ")
@@ -180,7 +184,9 @@ def test_build_sensor_rows_quirky_gets_warning_prefix():
 
 def test_build_sensor_summary_counts():
     sensors = [_sensor(kind="cpu_temp"), _sensor(sid="x:edge", kind="gpu_temp", label="edge")]
-    line = ov.build_sensor_summary(sensors, hidden_count=1, unavailable_count=2, board_vendor="")
+    line = ov.build_sensor_summary(
+        sensors, hidden_count=1, unavailable_count=2, classify=_classifier()
+    )
     assert line.startswith("Sensors: 2 total")
     assert "1 CPU" in line and "1 GPU" in line
     assert "2 unavailable" in line and "1 hidden" in line
@@ -188,10 +194,10 @@ def test_build_sensor_summary_counts():
 
 def test_build_sensor_summary_empty_and_unavailable_only():
     assert (
-        ov.build_sensor_summary([], hidden_count=0, unavailable_count=0, board_vendor="")
+        ov.build_sensor_summary([], hidden_count=0, unavailable_count=0, classify=_classifier())
         == "Sensors: —"
     )
-    line = ov.build_sensor_summary([], hidden_count=0, unavailable_count=3, board_vendor="")
+    line = ov.build_sensor_summary([], hidden_count=0, unavailable_count=3, classify=_classifier())
     assert "3 unavailable" in line
 
 

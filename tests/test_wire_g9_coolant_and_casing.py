@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from control_ofc.api.models import SensorReading
+from control_ofc.knowledge.sensor_knowledge import classify_reading
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.overview_view import build_sensor_summary
 from control_ofc.services.series_selection import default_series_keys
@@ -28,7 +29,12 @@ WIRE_SENSOR_KINDS = frozenset({"cpu_temp", "mb_temp", "disk_temp", "gpu_temp", "
 
 
 def _summary(sensors: list[SensorReading]) -> str:
-    return build_sensor_summary(sensors, hidden_count=0, unavailable_count=0, board_vendor="")
+    return build_sensor_summary(
+        sensors,
+        hidden_count=0,
+        unavailable_count=0,
+        classify=lambda s: classify_reading(s, board_vendor="", overrides={}),
+    )
 
 
 # ── WIRE-c: the root cause ───────────────────────────────────────────────────

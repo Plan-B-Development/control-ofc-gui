@@ -61,7 +61,10 @@ explaining that this is not a direct physical reading.
 
 **Common pitfall:** Many monitoring tools and users interpret Tctl as "the
 CPU temperature." This is partly true for cooling purposes but misleading
-when the offset exists. The GUI always prefers Tdie when both are available.
+when the offset exists. The GUI labels Tctl a control value, but nothing in it
+prefers Tdie when it picks a sensor: the preferred-CPU recommendation is the
+daemon's `default_cpu`, which ranks Tctl first (then package, then Tdie), and the
+AIO setup's CPU fallback takes the first package/Tctl/Tdie label in list order.
 
 #### Tdie — CPU Die Temperature
 
@@ -360,8 +363,10 @@ specific board features.
 |---|---|---|
 | `T_Sensor` | External temperature sensor header (user-attached probe) | high |
 | `VRM` / `VRM temperature` | VRM heatsink area | high |
-| `Water In` | Liquid cooling loop inlet temperature probe header | high |
-| `Water Out` | Liquid cooling loop outlet temperature probe header | high |
+| `Water_In` | Liquid cooling loop inlet temperature probe header | high |
+| `Water_Out` | Liquid cooling loop outlet temperature probe header | high |
+| `Water_Block_In` | Coolant temperature entering the CPU water block | high |
+| `Water_Block_Out` | Coolant temperature leaving the CPU water block | high |
 | `Chipset` / `PCH` | Chipset (PCH) area temperature | high |
 | `CPU Package` | CPU package temperature (EC's reading, may differ from k10temp) | high |
 | `Motherboard` | Vendor-defined board ambient/reference point | high |
@@ -588,8 +593,13 @@ die temperature.
 designed offset above Tdie. The platform uses this inflated value to trigger
 cooling responses earlier.
 
-**GUI handling:** Prefers Tdie when available. Annotates Tctl with an
-explanatory note. Never presents Tctl as "actual CPU temperature."
+**GUI handling:** Annotates Tctl with an explanatory note and never presents it
+as "actual CPU temperature." It does **not** prefer Tdie when it picks a sensor:
+the preferred-CPU recommendation is the daemon's `default_cpu`, which ranks Tctl
+first (`hwmon/classify.rs::cpu_class_rank`: Tctl, then package, then Tdie), so on
+the offset parts (1600X, 1700X, 1800X, 2700X, Threadripper 19xx/29xx) it
+recommends the offset Tctl; the AIO setup's CPU fallback takes the first
+package/Tctl/Tdie label in the daemon's list order.
 
 Reference: https://docs.kernel.org/hwmon/k10temp.html
 
@@ -683,8 +693,9 @@ vendor documentation, BIOS labels, or controlled load testing can determine
 the mapping.
 
 **GUI handling:** Classifies as "board thermistor channel" rather than
-inventing a location. Board-specific overrides can provide higher-confidence
-mappings where validated.
+inventing a location. A board-specific override, where one is validated, is
+shown in its own section of the Sensor Detail dialog; it is display-only and does
+not change the channel's classification or confidence anywhere else in the GUI.
 
 ---
 

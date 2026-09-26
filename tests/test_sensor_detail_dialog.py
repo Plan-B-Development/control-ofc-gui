@@ -15,11 +15,26 @@ from control_ofc.api.models import (
     SensorReading,
     SensorThresholds,
 )
-from control_ofc.knowledge.sensor_knowledge import kernel_doc_url_for_chip, temp_type_label
+from control_ofc.knowledge.sensor_knowledge import (
+    classify_sensor,
+    kernel_doc_url_for_chip,
+    temp_type_label,
+)
 from control_ofc.ui.widgets.sensor_detail_dialog import (
     SensorDetailDialog,
     build_sensor_detail_html,
 )
+
+
+def _cls(sensor: SensorReading, board: BoardInfo | None = None):
+    """The classification a caller hands the dialog — here the bare classifier
+    with the board's vendor; the app passes ``AppState.classify_sensor``."""
+    vendor = board.vendor if board is not None else ""
+    return classify_sensor(sensor.chip_name, sensor.label, sensor.temp_type, vendor)
+
+
+def _html(sensor: SensorReading, board: BoardInfo | None, daemon_cls=None) -> str:
+    return build_sensor_detail_html(sensor, board, daemon_cls, classification=_cls(sensor, board))
 
 
 def _reading(**kw) -> SensorReading:
@@ -89,7 +104,7 @@ class TestKernelDocUrl:
 
 class TestBuildSensorDetailHtml:
     def test_renders_sensor_id_and_label(self):
-        html = build_sensor_detail_html(
+        html = _html(
             _reading(id="hwmon:k10temp:Tctl", label="Tctl"),
             BoardInfo(vendor="ASRock", name="X670E Steel Legend", bios_version="3.20"),
         )
@@ -98,7 +113,7 @@ class TestBuildSensorDetailHtml:
         assert "Tctl" in html
 
     def test_renders_classification_notes(self):
-        html = build_sensor_detail_html(
+        html = _html(
             _reading(id="hwmon:k10temp:Tctl", label="Tctl"),
             None,
         )
@@ -109,14 +124,14 @@ class TestBuildSensorDetailHtml:
         sensor = _reading(
             thresholds=SensorThresholds(crit_c=105.0, max_c=95.0, crit_alarm=False),
         )
-        html = build_sensor_detail_html(sensor, None)
+        html = _html(sensor, None)
         assert "105.0" in html
         assert "95.0" in html
         assert "Critical" in html
 
     def test_thresholds_section_emits_placeholder_when_missing(self):
         sensor = _reading(thresholds=None)
-        html = build_sensor_detail_html(sensor, None)
+        html = _html(sensor, None)
         # Section header still appears so the user knows we looked; body
         # explains why nothing is shown rather than appearing as a phantom gap.
         assert "Thresholds" in html
@@ -126,27 +141,27 @@ class TestBuildSensorDetailHtml:
         """Sensor exposes only crit_c — the others must not appear as
         '—' filler rows. DEC-117 §D8 'never invent absent values'."""
         sensor = _reading(thresholds=SensorThresholds(crit_c=105.0))
-        html = build_sensor_detail_html(sensor, None)
+        html = _html(sensor, None)
         assert "Critical" in html
         assert "Emergency" not in html
         assert "Lower critical" not in html
 
     def test_headroom_to_crit_rendered(self):
         sensor = _reading(value_c=80.0, thresholds=SensorThresholds(crit_c=105.0))
-        html = build_sensor_detail_html(sensor, None)
+        html = _html(sensor, None)
         # 25 °C headroom: should report "below crit"
         assert "below crit" in html.lower()
 
     def test_driver_doc_link_rendered(self):
-        html = build_sensor_detail_html(_reading(chip_name="k10temp"), None)
+        html = _html(_reading(chip_name="k10temp"), None)
         assert "docs.kernel.org/hwmon/k10temp.html" in html
 
     def test_unknown_chip_omits_driver_doc_link(self):
-        html = build_sensor_detail_html(_reading(chip_name="bogus_unknown"), None)
+        html = _html(_reading(chip_name="bogus_unknown"), None)
         assert "docs.kernel.org" not in html
 
     def test_board_context_rendered_when_supplied(self):
-        html = build_sensor_detail_html(
+        html = _html(
             _reading(),
             BoardInfo(vendor="ASRock", name="X670E Steel Legend", bios_version="3.20"),
         )
@@ -163,16 +178,14 @@ class TestHtmlEscaping:
         """A chip name containing HTML-special characters must not break out
         of its cell — DEC-106 pattern, mirrored from readiness_report."""
         hostile = '<script>alert("xss")</script>'
-        html = build_sensor_detail_html(
-            _reading(chip_name=hostile, id=hostile, label=hostile), None
-        )
+        html = _html(_reading(chip_name=hostile, id=hostile, label=hostile), None)
         assert "<script>" not in html
         # The escaped form must appear instead.
         assert escape(hostile) in html
 
     def test_hostile_board_vendor_is_escaped(self):
         hostile = 'ASUS"><script>evil()</script>'
-        html = build_sensor_detail_html(
+        html = _html(
             _reading(),
             BoardInfo(vendor=hostile, name="Z790-A", bios_version="1.0"),
         )
@@ -186,18 +199,20 @@ class TestHtmlEscaping:
 class TestSensorDetailDialog:
     def test_dialog_titles_with_sensor_label(self, qtbot):
         sensor = _reading(label="Tctl")
-        dlg = SensorDetailDialog(sensor, None)
+        dlg = SensorDetailDialog(sensor, None, classification=_cls(sensor))
         qtbot.addWidget(dlg)
         assert "Tctl" in dlg.windowTitle()
 
     def test_dialog_object_names_for_test_lookup(self, qtbot):
-        dlg = SensorDetailDialog(_reading(), None)
+        dlg = SensorDetailDialog(_reading(), None, classification=_cls(_reading()))
         qtbot.addWidget(dlg)
         assert dlg.objectName() == "Diagnostics_SensorDetail_Dialog"
         assert dlg._browser.objectName() == "Diagnostics_SensorDetail_Browser"
 
     def test_set_sensor_updates_in_place(self, qtbot):
-        dlg = SensorDetailDialog(_reading(label="Tctl"), None)
+        sensor = _reading(label="Tctl")
+        dlg = SensorDetailDialog(sensor, None, classification=_cls(sensor))
         qtbot.addWidget(dlg)
-        dlg.set_sensor(_reading(label="Tccd1"), None)
+        nxt = _reading(label="Tccd1")
+        dlg.set_sensor(nxt, None, classification=_cls(nxt))
         assert "Tccd1" in dlg.windowTitle()
