@@ -559,7 +559,7 @@ Open the **System State** page, look at the **GPU diagnostics** row. If `amdgpu.
 
 ### "A popup said my kernel has a known regression — should I worry?"
 
-The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`). When the running kernel matches a known issue affecting your hardware, the GUI raises a one-time popup, and the warning is listed as an advisory row under **GPU diagnostics** on the **System State** page until you acknowledge it. The popup's details carry the upstream references.
+The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`). When the running kernel matches a known issue affecting your hardware, the GUI raises a popup, and the warning is listed as an advisory row under **GPU diagnostics** on the **System State** page until you acknowledge it. The popup's details carry the upstream references.
 
 Currently catalogued:
 
@@ -570,7 +570,7 @@ Daemon v2.56.0 and older raise two older advisories instead. Both were retired b
 - **`rdna_hang_kernel_6_18_6_19`:** it flagged every 6.18 and 6.19 kernel and told you to pin 6.15–6.17. Ignore that part. Follow the advice above instead, and update the daemon.
 - **`smu_mismatch_navi48_r9700`:** the "SMU driver interface version" message it points at appears on **every** Navi 48 card, the RX 9070 XT included, and is not a fault. The firmware is designed to be backward compatible, and kernel 7.0 removed the message as confusing ([commit e471627d5627](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713)). `pwm1` is read-only on every RDNA4 card by design; fan control goes through the firmware's `fan_curve`, which works on at least some R9700s. Separately, a few R9700 owners report the fan not responding under load ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). Those reports are per-unit and unresolved. If yours does not follow a curve, return it to automatic, watch its RPM under load, and consider a warranty claim.
 
-If you acknowledge a popup it is remembered in the `acknowledged_kernel_warnings` field of your `app_settings.json` and won't re-fire on reconnect or restart. To force the popup to re-appear (e.g. after a kernel update), edit `app_settings.json` and remove the relevant entry, then restart the GUI.
+The popup has two buttons. **OK** hides it for the rest of this session: it will not come back on a reconnect or the daemon's periodic refresh, but it appears again the next time you start Control-OFC. **Don't show again** hides it for good, by recording its id in the `acknowledged_kernel_warnings` field of `~/.config/control-ofc/app_settings.json`. To bring dismissed advisories back, press **Clear dismissed** beside *Dismissed driver advisories* in **Settings → Prompts & Dismissals**; there is no need to edit the file.
 
 ---
 

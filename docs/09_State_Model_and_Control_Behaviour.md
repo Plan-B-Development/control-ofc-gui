@@ -18,8 +18,10 @@ The application should explicitly model these state axes:
 ### Operation mode
 The `OperationMode` enum (the status-banner **Mode**) has three values:
 - automatic (the daemon engine is controlling)
-- read_only (the **control gate** is engaged: the daemon is pre-2.0 / does not advertise `control.autonomous_control`, so the GUI offers no control)
+- read_only — the daemon is **not connected** (the banner reads *Read-only*). It is the mode before the first successful poll and after the daemon is lost; the next successful poll returns it to *automatic*
 - demo
+
+The pre-2.0 **control gate** is not a mode. Against a daemon that does not advertise `control.autonomous_control` the GUI shows a persistent upgrade banner and offers no control, while the Mode still reads *Automatic* (see **Control authority** → gated).
 
 A manual override is **not** a fourth mode — while one is active the banner still reads *Automatic*; the override is a per-control overlay tracked under **Control authority** below (DEC-163).
 
@@ -127,7 +129,7 @@ What lives where as of 2.0.0:
 ## Shutdown behaviour
 On app shutdown:
 - there is no control loop to stop and no lease to release (the daemon keeps controlling regardless of the GUI's lifecycle)
-- release any active manual override cleanly (the daemon's deadman is the backstop if the GUI dies)
+- stop the manual-override renew timers. The GUI does **not** release an active override on close: the override outlives the GUI until the daemon's deadman lets it lapse, at most 15 s after the last renew (the daemon's `OVERRIDE_TTL_SECS`), and the curve then resumes. A crash ends the same way
 - in demo mode, stop the `DemoController` timer
 - flush GUI logs/config if needed
 - leave the daemon as-is; do not invent direct shutdown control of hardware

@@ -165,8 +165,10 @@ Notable fields:
   know with the daemon's `message` (the GUI does). Field is omitted entirely when empty so
   pre-1.6.1 daemons (which don't set it) yield an empty list on the GUI
   side without parser changes. The GUI surfaces `high` and `critical`
-  entries as a one-time popup gated by
-  `app_settings.acknowledged_kernel_warnings`.
+  entries as a popup gated by `app_settings.acknowledged_kernel_warnings`
+  ("Don't show again") and, since G159, shown at most once per id per GUI
+  session — capabilities are re-fetched every 300 s and on reconnect, and
+  each fetch used to re-open it.
 - `devices.intel_gpu` (DEC-121, daemon ≥ 1.12.0) describes an Intel **discrete**
   GPU (Arc — `xe`/`i915`). Read-only monitoring: fields are `present`,
   `model_name`, `display_label`, `pci_id`/`pci_bdf`, `pci_device_id`, `driver`

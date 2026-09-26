@@ -159,7 +159,7 @@ and owns its own schema-version handling. There is no separate
 2. Do not embed business logic in widgets.
 3. Keep control logic unit-testable.
 4. Keep API models typed and explicit.
-5. Keep read-only mode and disconnected mode intentional.
+5. Keep the disconnected (Read-only) mode intentional.
 6. Defer tray work. *(Discharged rather than reversed — the tray was built as a
    separate process in the daemon repo (DEC-352), so no tray work landed in this
    module structure. The GUI's only related change is the single-instance guard in

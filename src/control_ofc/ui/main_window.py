@@ -494,9 +494,11 @@ class MainWindow(QWidget):
             self._state.set_mode(OperationMode.READ_ONLY)
 
         # DEC-098: surface daemon-emitted kernel-version warnings (since DEC-422
-        # the drm/amd #4765 hang on RDNA3/RDNA4) as a one-time popup. We listen
-        # on capabilities_updated rather than checking once at startup so a
-        # daemon restart with new detection logic refreshes the popup state.
+        # the drm/amd #4765 hang on RDNA3/RDNA4) as a popup, at most once per
+        # advisory id per session (G159, `DC-ad`) until "Don't show again". We
+        # listen on capabilities_updated rather than checking once at startup so
+        # a daemon restart with new detection logic can raise a new id.
+        self._kernel_warnings_shown: set[str] = set()
         self._state.capabilities_updated.connect(self._on_capabilities_updated_for_kernel_warnings)
 
         # DEC-161: offer the one-time local→daemon profile import when the
@@ -1253,13 +1255,18 @@ class MainWindow(QWidget):
         super().closeEvent(event)
 
     def _on_capabilities_updated_for_kernel_warnings(self, caps) -> None:
-        """Surface daemon-emitted kernel-version warnings as a one-time popup.
+        """Surface daemon-emitted kernel-version warnings as a popup.
 
         DEC-098: ``amd_gpu.kernel_warnings`` is populated by the daemon when
         the running kernel matches a known amdgpu regression. We show a
-        ``QMessageBox`` for each unacknowledged ``high``/``critical`` entry
-        and remember the dismissal in ``acknowledged_kernel_warnings`` so
-        the popup doesn't fire on every reconnect or restart.
+        ``QMessageBox`` for each unacknowledged ``high``/``critical`` entry.
+        "Don't show again" persists the id in ``acknowledged_kernel_warnings``;
+        OK persists nothing, so the id pops again next session.
+
+        G159 (`DC-ad`): capabilities are re-fetched every
+        ``CAPABILITIES_REFRESH_INTERVAL_S`` and on every reconnect, and each
+        emission used to re-open the popup for an id the user had just OK'd.
+        ``_kernel_warnings_shown`` bounds it to once per id per session.
         """
         if self._demo_mode:
             return
@@ -1272,10 +1279,15 @@ class MainWindow(QWidget):
         unack = [
             w
             for w in gpu.kernel_warnings
-            if w.id not in acknowledged and w.severity in ("high", "critical")
+            if w.id not in acknowledged
+            and w.id not in self._kernel_warnings_shown
+            and w.severity in ("high", "critical")
         ]
         if not unack:
             return
+        # Marked before the modal runs: `exec()` spins a nested event loop, and
+        # a capabilities refresh landing inside it must not open a second copy.
+        self._kernel_warnings_shown.update(w.id for w in unack)
 
         # Lazy-import QMessageBox so this method stays cheap when there's
         # nothing to show (the common case).
@@ -1306,15 +1318,19 @@ class MainWindow(QWidget):
                 box.setDetailedText("\n".join(detail_lines))
 
             box.setInformativeText(
-                "Click 'Don't show again' to suppress this advisory until "
-                "the warning ID changes (e.g. you boot a different kernel "
-                "or the daemon adds new detections)."
+                "OK hides this advisory until Control-OFC next starts. 'Don't show "
+                "again' hides it for good; to bring it back, press Clear dismissed "
+                "beside Dismissed driver advisories in Settings ▸ Prompts & Dismissals."
             )
             box.addButton(QMessageBox.StandardButton.Ok)
             dismiss = box.addButton("Don't show again", QMessageBox.ButtonRole.DestructiveRole)
             box.exec()
             if box.clickedButton() is dismiss:
                 acknowledged.add(warning.id)
+                # The persisted set now suppresses it. Dropping it from the
+                # session set lets Settings' "Clear dismissed" bring it back at
+                # the next refresh, as the popup's own text promises.
+                self._kernel_warnings_shown.discard(warning.id)
                 log.info("Acknowledged kernel warning %s", warning.id)
                 self._diag.log_event(
                     "info",

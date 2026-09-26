@@ -59,6 +59,17 @@ class TestSupportedDaemon:
 
         assert ("shutdown.exit_floor_pct", 80) in client.writes
 
+    def test_the_tooltip_names_every_kind_of_fan_the_floor_covers(
+        self, qapp, app_state, settings_service
+    ):
+        """G159 (`DC-j`): the floor covers OpenFan channels AND headers with no
+        ``pwmN_enable`` (DEC-388); the tooltip used to name OpenFan alone, while
+        the row's own sublabel already named both."""
+        page, _client = _page(app_state, settings_service, exit_floor=True)
+        tip = page._exit_floor_spin.toolTip()
+        assert "OpenFan fans" in tip
+        assert "motherboard headers with no automatic mode" in tip
+
     def test_a_focus_out_without_an_edit_writes_nothing(self, qapp, app_state, settings_service):
         page, client = _page(app_state, settings_service, exit_floor=True)
         page._exit_floor_spin.editingFinished.emit()

@@ -714,8 +714,8 @@ Beyond chip- and driver-level quirks, recent Linux kernels have shipped
 regressions that affect amdgpu specifically. The daemon ships a curated
 catalogue (`hwmon/kernel_warnings.rs`, DEC-098) and surfaces matches via
 `GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises
-a one-time popup; acknowledged warnings are remembered in
-`app_settings.acknowledged_kernel_warnings`.
+a popup once per session per advisory; warnings dismissed with "Don't show
+again" are remembered in `app_settings.acknowledged_kernel_warnings`.
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|

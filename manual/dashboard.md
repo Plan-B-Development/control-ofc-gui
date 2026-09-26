@@ -33,8 +33,12 @@ Below it, five banners appear only when they apply:
   this GUI was built against, a sign the `control-ofc-daemon` and `control-ofc-gui`
   packages were upgraded out of lockstep. Align the two; some features may otherwise
   misbehave
-- **Thermal protection active** — the daemon has overridden fan control to protect the
-  hardware, and will hand control back to your profile once temperatures recover
+- **Thermal protection active** — the daemon is applying a minimum fan speed under your
+  profile, which still applies wherever it asks for more. The banner says when your
+  profile resumes fully: once the CPU cools after an emergency, or once a current CPU
+  temperature reading returns when there was none. It reports the daemon's state; on a
+  machine with no fan the daemon can drive, the state can be active while no fan was
+  written
 - **Fan control engine** — how the daemon's control loop itself is doing. It is the
   only thing writing fan speeds, and it owns the thermal emergency, so this is the
   banner worth reading first. *Running slowly* means it is late but still driving

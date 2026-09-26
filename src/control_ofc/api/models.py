@@ -58,7 +58,8 @@ class KernelWarning:
 
     Mirrors `crate::hwmon::kernel_warnings::KernelWarning` on the daemon.
     Severity is one of ``"info" | "medium" | "high" | "critical"``; the GUI
-    surfaces high/critical entries as a one-time popup and logs everything.
+    surfaces high/critical entries as a popup (once per id per session, until
+    "Don't show again") and logs everything.
     """
 
     id: str = ""

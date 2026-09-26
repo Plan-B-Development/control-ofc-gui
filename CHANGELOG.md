@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Fixed
+
+**The GPU kernel advisory no longer re-opens every five minutes** (DEC-432). Pressing **OK** on
+the popup recorded nothing, so it came back on every capabilities refresh (about every five
+minutes) and every reconnect until you chose **Don't show again**. It now appears at most once per
+advisory each time Control-OFC starts. The popup no longer says a dismissal lasts "until the
+warning ID changes (e.g. you boot a different kernel)" — an advisory's id names the issue, not the
+kernel. It now says what OK and **Don't show again** do, and where **Clear dismissed** is.
+
+**Thermal-protection wording says what the daemon does** (DEC-432). The Safety detail said the
+daemon had "forced all controllable fans to 100%", but GPU fans are never part of that and keep
+their own curve. It now says the daemon runs every OpenFan fan and every writable fan header it can
+drive, on the motherboard or on a USB fan controller or AIO cooler, at full speed, and that GPU fans
+are not included. The Dashboard banner said the daemon "has overridden fan control". It sets a
+minimum under your profile, so the banner now says that, and says when your profile resumes. For a
+missing CPU reading that is when a current reading returns, not "once temperatures recover". The
+**Exit minimum** tooltip in Settings named only OpenFan fans; it now also names motherboard headers
+with no automatic mode, which the setting has always covered.
+
+**The PWM Test Report's consent text matches what stops a run** (DEC-432). It said a test stops
+"and the run with it" if a temperature passes the limit or readings go stale. Only the daemon's
+thermal protection ends the run. The other two stop the test that meets them, and the daemon
+refuses each later test while the condition lasts. The text and the manual now list all three.
+
+### Documentation
+
+- Closing Control-OFC does not release a manual override. The override lapses on its own at most
+  15 seconds later, and the curve resumes (DEC-432).
+- **Read-only** in the status banner means the daemon is not connected. An older daemon that needs
+  upgrading is shown by its own banner, and the Mode still reads **Automatic** (DEC-432).
+- The three starter profiles, and the daemon's example `quiet.json`, control no fans until you add
+  fans to their role and pick a sensor (DEC-432).
+
 ## [2.83.3] — 2026-09-26
 
 ### Fixed

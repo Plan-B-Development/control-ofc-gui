@@ -602,6 +602,37 @@ class TestThermalBanner:
         # green. Pin the literal so the wire string can't silently drift.
         assert "emergency" in dash._thermal_banner._message_label.text()
 
+    def test_the_banner_describes_a_floor_not_a_takeover(self, qtbot, window, app_state):
+        """G159 (`DC-j`): forced duties are floors over the profile (DEC-307), and
+        a thermal state is never proof a fan was written (DEC-371), so the banner
+        must neither claim the daemon "overrode" control nor name 100 %."""
+        dash = window.dashboard_page
+        for state in ("emergency", "no_sensor_fallback"):
+            app_state.set_status(DaemonStatus(thermal_state="normal"))
+            app_state.set_status(DaemonStatus(thermal_state=state))
+            text = dash._thermal_banner._message_label.text()
+            assert state in text, "presence: this is the banner for this state"
+            assert "overridden" not in text
+            assert "100" not in text
+            assert "applying a minimum fan speed under your profile" in text
+
+    def test_each_state_names_its_own_resume_condition(self, qtbot, window, app_state):
+        """G159 review: `no_sensor_fallback` clears when a fresh CPU reading
+        returns, not when temperatures fall; the old shared sentence said the
+        latter for every state."""
+        dash = window.dashboard_page
+        expected = {
+            "emergency": "once the CPU cools",
+            "no_sensor_fallback": "once a current CPU temperature reading returns",
+            "recovery": "once temperatures recover",
+        }
+        for state, resume in expected.items():
+            app_state.set_status(DaemonStatus(thermal_state="normal"))
+            app_state.set_status(DaemonStatus(thermal_state=state))
+            text = dash._thermal_banner._message_label.text()
+            assert state in text, "presence: this is the banner for this state"
+            assert text.endswith(f"Your profile resumes fully {resume}.")
+
     def test_recovery_state_shows_banner(self, qtbot, window, app_state):
         # "recovery" (the two 60% cooldown cycles after release) is a
         # non-"normal" state: the banner must stay up and name it.

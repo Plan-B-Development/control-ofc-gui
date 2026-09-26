@@ -76,6 +76,13 @@ _INSPECTOR_WIDE_THRESHOLD_PX = 1100
 # must not import a UI-facing service — so the page owns the lookup back.
 _CHART_MODE_BY_VALUE = {m.value: m for m in ChartMode}
 
+#: When each thermal state hands back to the profile (G159). `recovery` (older
+#: daemons) and any unrecognised state fall back to "once temperatures recover".
+_THERMAL_RESUME: dict[str, str] = {
+    "emergency": "once the CPU cools",
+    "no_sensor_fallback": "once a current CPU temperature reading returns",
+}
+
 
 class DashboardPage(QWidget):
     """Landing page showing fan speeds, temperatures, and profile status."""
@@ -808,10 +815,18 @@ class DashboardPage(QWidget):
             if thermal == "normal":
                 self._thermal_banner.hide_banner()
             else:
+                # G159 (`DC-j`): forced duties are floors over the profile, not
+                # replacements (DEC-307), so "has overridden fan control" was
+                # false wherever the curve already asked for more; and a thermal
+                # state is never proof a fan was written (DEC-371), so this says
+                # what the daemon applies, not what the fans do. Each state ends
+                # on its own condition: no_sensor_fallback clears when a fresh
+                # CPU reading returns, not when anything cools.
+                resume = _THERMAL_RESUME.get(thermal, "once temperatures recover")
                 self._thermal_banner.show_error(
-                    f"Thermal protection active ({thermal}) — the daemon has overridden "
-                    "fan control to protect your hardware. Fans return to your profile "
-                    "once temperatures recover."
+                    f"Thermal protection active ({thermal}) — the daemon is applying a "
+                    "minimum fan speed under your profile, which still applies wherever "
+                    f"it asks for more. Your profile resumes fully {resume}."
                 )
 
         # Engine liveness (DEC-249). The profile engine is the sole PWM writer

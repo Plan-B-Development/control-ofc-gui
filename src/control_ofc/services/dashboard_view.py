@@ -124,9 +124,16 @@ _THERMAL_REASONS: dict[str, str] = {
         "Temperature exceeded the safety threshold. The daemon forced fans up and is holding "
         "a recovery speed until the system cools further."
     ),
+    # G159 (`DC-j`): "has forced all controllable fans to 100%" said more than
+    # the daemon does — GPU fans are outside the force (DEC-130) and keep their
+    # curve (DEC-399), and DEC-371 says a thermal state is never proof a fan
+    # was written. This names the state and its reach, not an outcome. The reach
+    # is every OpenFan channel and writable hwmon header, AIO/USB devices included.
     "emergency": (
-        "A critical temperature was reached. The daemon has forced all controllable fans to "
-        "100% to protect the hardware until temperatures fall."
+        "A critical CPU temperature was reached, so the daemon's thermal protection is "
+        "active: it runs every OpenFan fan and every writable fan header it can drive — on "
+        "the motherboard, or on a USB fan controller or AIO cooler — at full speed until "
+        "temperatures fall. GPU fans are not included; the GPU protects itself."
     ),
     "no_sensor_fallback": (
         # DEC-269: "reachable" was true when the only trigger was a sensor that

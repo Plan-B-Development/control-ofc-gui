@@ -255,6 +255,18 @@ def test_the_consent_text_names_no_figure_when_the_daemon_published_none():
         assert "diagnostic limit" in text
 
 
+def test_the_consent_text_says_only_thermal_protection_ends_the_run():
+    """G159 (`DC-v`): the runner ends the run only when ``thermal_state`` leaves
+    ``normal``. The limit and stale readings end one test, and the daemon's
+    pre-start guards refuse the later ones — the old text said all three stop
+    "the run with it"."""
+    text = cat.consent_safety_text(parse_capabilities({"limits": {"diagnostic_max_temp_c": 85}}))
+    assert "and the run with it" not in text
+    assert "thermal protection becomes active, the run stops" in text
+    assert "A test also stops if a temperature passes 85 °C" in text
+    assert "refuses later tests while that lasts" in text
+
+
 def _review_text(qtbot, tmp_path, settings_service, monkeypatch, limits: dict | None) -> tuple:
     """Open the real window, click through to the review page, return the label
     text and the capabilities it was rendered from."""

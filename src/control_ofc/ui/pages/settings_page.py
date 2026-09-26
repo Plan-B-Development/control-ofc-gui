@@ -1039,7 +1039,9 @@ class SettingsPage(QWidget):
         self._exit_floor_spin.setSingleStep(5)
         self._exit_floor_spin.setSuffix(" %")
         self._exit_floor_spin.setToolTip(
-            "Lowest speed the daemon leaves OpenFan fans at when it stops (applies at once)"
+            "Lowest speed the daemon leaves a fan it cannot hand back to firmware at when "
+            "it stops — OpenFan fans, and motherboard headers with no automatic mode "
+            "(applies at once)"
         )
         self._exit_floor_spin.editingFinished.connect(
             lambda: self._write_daemon_key(

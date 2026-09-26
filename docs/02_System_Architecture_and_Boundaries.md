@@ -419,11 +419,11 @@ Daemon reachable, profile active, the daemon engine controlling.
 Daemon reachable, an expiring daemon override (DEC-163) pinning one or more controls; the engine
 resumes curve control automatically when the override is released or expires.
 
-### Connected read-only
-Daemon reachable, but writes unavailable or blocked.
-
-### Disconnected
-Daemon unavailable. App still runs and shows clear state.
+### Disconnected (Mode: Read-only)
+Daemon unavailable. App still runs and shows clear state; the status banner's Mode reads
+*Read-only* until the next successful poll. There is no connected read-only mode: a pre-2.0 daemon
+behind the control gate is reported by a persistent upgrade banner, and the Mode still reads
+*Automatic*.
 
 ### Demo mode
 Synthetic data; fully explorable without hardware.

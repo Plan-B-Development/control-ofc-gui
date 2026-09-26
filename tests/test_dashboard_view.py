@@ -126,7 +126,18 @@ class TestSafetyDetailText:
     def test_state_and_reason(self):
         text = safety_detail_text("emergency", "Emergency", [], 0, cpu_reading_is_stale=False)
         assert "State: Emergency" in text
-        assert "critical temperature" in text.lower()
+        assert "critical cpu temperature" in text.lower()
+
+    def test_the_emergency_reason_excludes_gpu_fans_and_claims_no_outcome(self):
+        """G159 (`DC-j`): the old reason said the daemon "has forced all
+        controllable fans to 100%". GPU fans are outside the force (DEC-130,
+        DEC-399), and DEC-371 forbids wording a thermal state as a result."""
+        text = safety_detail_text("emergency", "Emergency", [], 0, cpu_reading_is_stale=False)
+        assert "all controllable fans" not in text
+        assert "100%" not in text
+        assert "GPU fans are not included" in text
+        # The force reaches every writable hwmon header, AIO/USB devices included.
+        assert "USB fan controller or AIO cooler" in text
 
     def test_hottest_cpu_surfaced(self):
         text = safety_detail_text(

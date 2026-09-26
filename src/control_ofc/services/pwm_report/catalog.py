@@ -379,6 +379,11 @@ def consent_safety_text(capabilities: object | None) -> str:
     GUI enforces it, so a literal here promises whatever the constant was when
     the sentence was written. An older daemon does not publish it, and the text
     then names the rule without a figure — never a guessed one.
+
+    G159 (`DC-v`): only thermal protection ends the RUN (``runner.observe``).
+    The limit and stale readings end the test that meets them — the
+    diagnostic's own abort — and every later start is refused by the daemon's
+    pre-start guards while either lasts, so those tests read "not tested".
     """
     limits = getattr(capabilities, "limits", None)
     limit_c = getattr(limits, "diagnostic_max_temp_c", None)
@@ -389,8 +394,8 @@ def consent_safety_text(capabilities: object | None) -> str:
     return (
         "The daemon performs every test and puts every header back when a test "
         "ends — even if Control-OFC is closed. A pump-protected header is never "
-        "driven below 30 %. A test stops, and the run with it, if the daemon's "
-        f"thermal protection becomes active, {hot} or if "
-        "temperature readings go stale; the tests after it are listed as not "
-        "tested. You can cancel at any time."
+        "driven below 30 %. If the daemon's thermal protection becomes active, the "
+        "run stops and the tests after it are listed as not tested. A test also "
+        f"stops {hot} or if temperature readings go stale, and the daemon refuses "
+        "later tests while that lasts. You can cancel at any time."
     )

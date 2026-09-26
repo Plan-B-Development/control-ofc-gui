@@ -62,16 +62,18 @@ Therefore `Controls` is the top-level navigation label, with profile management 
   only what was saved.
 
 ## Default built-in profiles
-Provide initial starter profiles:
+Three starter profiles are created on first launch when no profiles exist
+(`profile_service.default_profiles`):
 - Quiet
 - Balanced
 - Performance
 
-These do not need to be perfect hardware-tuned profiles. They need to be:
-- safe
-- understandable
-- immediately usable
-- editable by the user
+Each ships **one "All Fans" control with no members, and a curve with no sensor**, so
+activating a starter as shipped **controls no fan** — the GUI cannot know which headers a
+machine has or which sensor to follow. They are templates: understandable and editable,
+and safe because they drive nothing until the user assigns fans and picks a sensor. The
+daemon's packaged example, `/etc/control-ofc/profiles/quiet.json`, is the same: its one
+control has an empty `members` list.
 
 ## Fan groups
 Groups are flexible user labels, not rigid system types.
@@ -84,7 +86,9 @@ Groups are flexible user labels, not rigid system types.
 - a fan belongs to **at most one** group (the shipped UI calls these *fan roles*) — outputs already assigned elsewhere appear greyed out, so a fan is never owned by two roles
 - show group badges consistently across the app
 
-### Suggested built-in starter groups
+### Suggested starter groups (not shipped)
+None of these ships — the starter profiles carry only their empty *All Fans* group. They are
+examples of labels a user might create.
 - Intake
 - Exhaust
 - CPU

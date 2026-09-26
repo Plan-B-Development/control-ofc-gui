@@ -187,7 +187,7 @@ The horizontal banner at the top of every page shows:
 |---------|---------|
 | **Connection indicator** | Green "Connected", yellow "Degraded", or red "Disconnected" |
 | **Profile name** | The currently active fan profile, or "No profile" |
-| **Mode** | "Automatic" (curve-driven), "Read-only", or "Demo mode" |
+| **Mode** | "Automatic" (connected — the daemon runs your fans), "Read-only" (the daemon is not connected; it clears on the next successful poll), or "Demo mode". An older daemon that needs upgrading is reported by a "Daemon upgrade required" banner, not by this field |
 | **Warning count** | Number of active warnings. Clickable on **every** page — click it to jump to the **Logs** page, the single surface that lists them |
 | **DEMO badge** | Visible only in demo mode |
 

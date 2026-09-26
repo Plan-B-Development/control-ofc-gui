@@ -1321,7 +1321,8 @@ currently flagged (DEC-422):
 
 Daemon v2.56.0 and older raise two retired advisories instead. `rdna_hang_kernel_6_18_6_19` flagged every 6.18/6.19 kernel and advised pinning 6.15–6.17. `smu_mismatch_navi48_r9700` was keyed on an SMU interface-version message that appears on every Navi 48 card and is not a fault (kernel 7.0 removed it as confusing). The PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). The GUI still explains both correctly.
 
-The GUI raises a one-time popup when an advisory matches your hardware; the
+The GUI raises a popup when an advisory matches your hardware — once per
+session, until you choose "Don't show again"; the
 catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and
 surfaced via `GET /capabilities`. See
 `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions

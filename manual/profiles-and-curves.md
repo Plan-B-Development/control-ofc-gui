@@ -42,7 +42,7 @@ Only one profile can be **active** at a time. The daemon evaluates the active pr
 
 ### Built-in Profiles
 
-Control-OFC ships with three default profiles (Quiet, Balanced, Performance) that are created on first launch if no profiles exist. These are fully editable — they are regular profiles, not special.
+Control-OFC ships with three default profiles (Quiet, Balanced, Performance) that are created on first launch if no profiles exist. These are fully editable — they are regular profiles, not special. **As shipped they control no fans:** each has one *All Fans* role with no fans in it, and a curve with no sensor chosen. Add your fans to the role and pick a sensor for the curve before you activate one.
 
 ### Profile Storage
 
