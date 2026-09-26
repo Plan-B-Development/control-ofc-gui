@@ -120,9 +120,14 @@ what made DEC-227's gap invisible, and mutation testing showed it also masked
 whether the surviving guard worked: with the helper in place, disabling the
 service seal left the whole demo suite green.
 
-**The seal is scoped, not total.** It covers hardware-derived state only:
-`fan_aliases`, `fan_zones`, `hidden_chart_series`, `series_colors`,
-`sensor_class_overrides`, `controls_card_sizes`, and `chart_series_seeded`.
+**The seal is scoped, not total.** It covers hardware-derived state only — the
+nine keys of `_DEMO_SEALED_KEYS`: `fan_aliases`, `fan_zones`, `hidden_chart_series`,
+`series_colors`, `sensor_class_overrides`, `controls_card_sizes`,
+`chart_series_seeded`, and the PWM Test Report's `hardware_notes` and
+`cooler_notes` (DEC-404). **Profiles are sealed separately and completely**
+(DEC-431): `ProfileService(persist=False)` reads the real profile folder but never
+writes or removes a file in it, and Settings → Import Config is disabled, because it
+writes profile files directly.
 Ordinary preferences — theme, startup page, card size, window geometry,
 `demo_on_disconnect`, the directory overrides — save normally even in demo.
 Sealing everything was tried first and was wrong twice over:

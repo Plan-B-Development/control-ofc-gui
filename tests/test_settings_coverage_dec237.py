@@ -34,6 +34,10 @@ THEME_PAGE_FIELDS = frozenset({"theme_name", "card_size"})
 # Fields with no user-facing control, each for a stated reason. These are the
 # only fields allowed to have no way to reach them.
 IMPLICIT_FIELDS: dict[str, str] = {
+    "theme_name_scheme": (
+        "DEC-431 migration marker: which Default Dark naming rule theme_name follows. "
+        "Set by the loader, never by a control."
+    ),
     "version": "schema version — bumped by migrations, never by the user",
     "window_geometry": "restored from the last session; the user 'sets' it by moving the window",
     "last_page_index": "session state, written on page change; governed by restore_last_page",

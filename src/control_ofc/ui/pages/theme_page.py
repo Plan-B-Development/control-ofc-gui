@@ -31,6 +31,7 @@ from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
 from control_ofc.ui.theme import (
+    BUILTIN_DEFAULT_THEME_NAME,
     ThemeTokens,
     default_dark_theme,
     load_theme,
@@ -67,6 +68,10 @@ class ThemePage(QWidget):
         header.addWidget(subtitle)
         header.addStretch()
 
+        # Where the editor's tokens came from: None for the bundled palette, else
+        # the theme file's path. Apply persists the built-in name from this, not
+        # from the combo, which a Save or Import rebuilds (DEC-431, `DC-cj`).
+        self._editor_source_path: str | None = None
         self._theme_combo = QComboBox()
         self._theme_combo.setObjectName("Settings_Combo_theme")
         # No visible label — the page title is the only context a sighted user
@@ -92,7 +97,7 @@ class ThemePage(QWidget):
         header.addWidget(export_btn)
         root.addLayout(header)
 
-        self._theme_name_label = QLabel("Current theme: Default Dark")
+        self._theme_name_label = QLabel(f"Current theme: {BUILTIN_DEFAULT_THEME_NAME}")
         self._theme_name_label.setProperty("class", "CardMeta")
         root.addWidget(self._theme_name_label)
 
@@ -177,12 +182,18 @@ class ThemePage(QWidget):
 
     def _refresh_theme_list(self) -> None:
         self._theme_combo.clear()
-        self._theme_combo.addItem("Default Dark", None)
+        self._theme_combo.addItem(BUILTIN_DEFAULT_THEME_NAME, None)
         td = themes_dir()
         if td.exists():
             for p in sorted(td.glob("*.json")):
                 try:
                     t = load_theme(p)
+                    if t.name == BUILTIN_DEFAULT_THEME_NAME:
+                        # Startup never reads a file under the reserved name, so
+                        # listing one would let the page show a theme that is not
+                        # in force (DEC-431).
+                        log.warning("Skipping theme %s: %r is reserved", p, t.name)
+                        continue
                     self._theme_combo.addItem(t.name, str(p))
                 except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
                     log.warning("Skipping invalid theme %s: %s", p, e)
@@ -206,10 +217,23 @@ class ThemePage(QWidget):
         ``sorted(td.glob("*.json"))`` order and ``main._resolve_startup_theme``
         resolves the persisted name by walking the *same* order — so duplicates by
         name still land on the same file. That coupling is undocumented elsewhere;
-        this comment is the documentation.
+        this comment is the documentation. Index 0 is the bundled palette, listed
+        as ``BUILTIN_DEFAULT_THEME_NAME`` and persisted under that name (DEC-431);
+        "Default Dark" means a saved file of that name when one exists and the
+        bundled palette otherwise — exactly as ``_resolve_startup_theme`` reads it.
         """
         saved_name = self._settings_svc.settings.theme_name
-        idx = self._theme_combo.findText(saved_name)
+        # A file entry of that name first — none can carry the reserved name,
+        # which `_refresh_theme_list` leaves out — else the bundled entry for
+        # either of its names ("Default Dark" when no copy was saved); else leave it.
+        idx = next(
+            (
+                i
+                for i in range(1, self._theme_combo.count())
+                if self._theme_combo.itemText(i) == saved_name
+            ),
+            0 if saved_name in ("Default Dark", BUILTIN_DEFAULT_THEME_NAME) else -1,
+        )
         if idx < 0:
             return
         if idx != self._theme_combo.currentIndex():
@@ -225,7 +249,8 @@ class ThemePage(QWidget):
     def _apply_selected_theme(self) -> None:
         path_str = self._theme_combo.currentData()
         tokens = default_dark_theme() if path_str is None else load_theme(Path(path_str))
-        self._theme_name_label.setText(f"Current theme: {tokens.name}")
+        self._editor_source_path = path_str
+        self._theme_name_label.setText(f"Current theme: {self._editor_display_name(tokens)}")
         self._theme_editor.set_tokens(tokens)
         # Sync font controls with loaded theme
         idx = self._font_combo.findData(tokens.font_family)
@@ -234,10 +259,19 @@ class ThemePage(QWidget):
         else:
             self._font_combo.setCurrentIndex(0)  # system default
         self._font_size_spin.setValue(tokens.base_font_size_pt)
-        self._set_status(f"Theme '{tokens.name}' loaded into editor")
+        self._set_status(f"Theme '{self._editor_display_name(tokens)}' loaded into editor")
+
+    def _editor_display_name(self, tokens: ThemeTokens) -> str:
+        """The editor's theme as the picker names it: the bundled palette is
+        ``BUILTIN_DEFAULT_THEME_NAME`` although its tokens say "Default Dark"."""
+        return BUILTIN_DEFAULT_THEME_NAME if self._editor_source_path is None else tokens.name
 
     def _save_current_theme(self) -> None:
         tokens = self._theme_editor.tokens
+        # The font controls reach the tokens here as they do on Apply, so the
+        # saved file matches what the editor shows (DEC-431, `DC-r`).
+        tokens.font_family = self._font_combo.currentData() or ""
+        tokens.base_font_size_pt = self._font_size_spin.value()
         name = tokens.name or "Custom"
         try:
             dest = theme_file_path(name)
@@ -253,6 +287,14 @@ class ThemePage(QWidget):
             self._set_status(f"Cannot save theme '{name}': {e}")
             return
         self._refresh_theme_list()
+        # The editor now holds that file, and the picker points at it: rebuilding
+        # the list left the built-in entry selected, so a Save then Apply named
+        # the built-in palette (DEC-431, `DC-cj`).
+        self._editor_source_path = str(dest)
+        idx = self._theme_combo.findData(str(dest))
+        if idx >= 0:
+            self._theme_combo.setCurrentIndex(idx)
+        self._theme_name_label.setText(f"Current theme: {tokens.name}")
         self._set_status(f"Theme '{name}' saved")
 
     def _apply_editor_theme_to_app(self) -> None:
@@ -260,17 +302,20 @@ class ThemePage(QWidget):
         # Apply typography settings from the font controls
         tokens.font_family = self._font_combo.currentData() or ""
         tokens.base_font_size_pt = self._font_size_spin.value()
-        self._theme_name_label.setText(f"Current theme: {tokens.name}")
+        # The bundled palette persists under its reserved name, so choosing it
+        # survives a restart even beside a saved "Default Dark" (DEC-431).
+        name = self._editor_display_name(tokens)
+        self._theme_name_label.setText(f"Current theme: {name}")
         # Persist the card-size tier before emitting so the Controls page reads
         # the new value when set_theme re-applies card sizing (DEC-128).
-        self._settings_svc.update(
-            theme_name=tokens.name, card_size=self._card_size_combo.currentData()
-        )
+        self._settings_svc.update(theme_name=name, card_size=self._card_size_combo.currentData())
         self.theme_changed.emit(tokens)
-        self._set_status(f"Theme '{tokens.name}' applied to application")
+        self._set_status(f"Theme '{name}' applied to application")
 
     def _on_theme_edited(self, tokens) -> None:
-        self._theme_name_label.setText(f"Current theme: {tokens.name} (modified)")
+        self._theme_name_label.setText(
+            f"Current theme: {self._editor_display_name(tokens)} (modified)"
+        )
 
     def _import_theme(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

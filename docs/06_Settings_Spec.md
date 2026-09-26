@@ -140,9 +140,17 @@ target file already exists.
 
 **Persisted theme is restored at startup.** `AppSettings.theme_name`
 is read in `main.py` and the matching JSON file in `themes_dir()` is
-applied before the main window is shown. If the persisted name does
-not match any installed theme the GUI falls back to Default Dark and
-logs the miss.
+applied before the main window is shown. **Default Dark has two names
+since DEC-431.** The built-in palette is listed and persisted as
+`BUILTIN_DEFAULT_THEME_NAME` ("Default Dark (built-in)"), which always
+resolves to the bundled tokens without a file scan. "Default Dark" means
+a copy saved from the editor when one exists and the built-in palette
+otherwise. A settings file written before DEC-431 (no `theme_name_scheme`
+marker) has its "Default Dark" migrated to the built-in name on load,
+because the old startup never read a saved copy — so an upgrade shows
+exactly what the user saw before. If the persisted name does
+not match any installed theme the GUI falls back to the built-in palette
+and logs the miss.
 
 ### C. Safety display
 Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: at the trip point → drive every OpenFan channel and writable hwmon header the machine has to 100% PWM, hold until a fresh reading at or below 80°C — even while the CPU sensor is stale or gone — then resume active control at once (no recovery rung since DEC-386); 40% floor if no CPU reading is fresh for 5 cycles with nothing latched. **The trip point is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the CPU's own design ceiling — and `emergency_threshold_c` on `GET /diagnostics/hardware` reports the value in use. **Both duties are floors over the active profile's output, never replacements (DEC-307).** GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). **The GUI reads exactly one field from `GET /capabilities`'s `limits`:** `diagnostic_max_temp_c`, which the PWM Test Report's consent page interpolates. The daemon also sends `pwm_percent_min`, `pwm_percent_max` and `openfan_stop_timeout_s`; `api/models.py` models none of them. The stop timeout sized the Fan Wizard's spin-down until DEC-426, which removed that cap because the daemon does not restart a stopped OpenFan fan. Nothing else on this page comes from `limits` — the role-aware curve floors are **GUI-baked policy** (`profile_service.role_minimum_pct`, DEC-095), not a daemon-reported limit, and every thermal value above comes from `GET /diagnostics/hardware`, as stated earlier in this section.

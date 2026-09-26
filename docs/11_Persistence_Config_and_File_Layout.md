@@ -43,6 +43,8 @@ Recommended approach:
 ```text
 ~/.config/control-ofc/
   app_settings.json
+  backups/
+    settings_backup_<YYYYmmdd_HHMMSS>.json   # app_settings.json only, before each import
   themes/
     default_dark.json
     imported_theme_name.json
@@ -112,8 +114,10 @@ live in the XDG **data** tier, not config or cache:
 ### "Your setup" facts (DEC-404 decision 7)
 
 Two keys in `app_settings.json`, both **machine-specific** (in `MACHINE_SPECIFIC_KEYS`, so a
-settings export never carries them and an import never applies them) and **demo-sealed** (a demo
-session never writes them — demo's synthetic ids collide with real hardware):
+settings export never carries them and an import never applies them), **demo-sealed** (a demo
+session never writes them — demo's synthetic ids collide with real hardware) and **left out of
+the support bundle** (`_BUNDLE_EXCLUDED_SETTING_KEYS`, DEC-431 — they hold free text the user
+typed, and a bundle is made to be handed to someone else):
 
 - `hardware_notes` — per stable header id: `{connected, fans_behind, bios_mode, notes}`, the
   first and third from fixed vocabularies (`services/pwm_report/setup_facts.py`), `fans_behind`
@@ -210,12 +214,16 @@ no read-modify-write, so any single `update()` rewrites every key at once. That 
    condition.
 2. **`load()` arms the service, including when the file is absent** — on a fresh install
    the defaults *are* the truth, and the first save legitimately creates the file.
-3. **An ephemeral service never saves.** `make_ephemeral()` is a one-way latch used by
-   demo mode (see `docs/10`). One-way because a re-armable service would put the clobber
-   back within reach of a later caller.
+3. **An ephemeral service drops the hardware-derived keys.** `make_ephemeral()` is a
+   one-way latch used by demo mode (see `docs/10`). It does **not** stop saving: `update()`
+   drops the nine `_DEMO_SEALED_KEYS` from the call — from memory as well as disk, so a
+   Settings export cannot carry them either — and every other key saves normally.
+   One-way because a re-armable service would put the clobber back within reach of a
+   later caller.
 
-Both refusals block the *write* only; in-memory state still updates, so the session
-behaves normally and simply leaves no trace on disk.
+Rule 1 blocks the *write* only; in-memory state still updates. Demo profiles are a
+separate guard in `ProfileService` (`persist=False`, DEC-431): demo reads the real profile
+folder and never writes or removes a file in it.
 
 `load()` also distinguishes **unparseable** from **unreadable**. A file that fails to
 parse is renamed to `app_settings.json.corrupt` and normal saving resumes — the first

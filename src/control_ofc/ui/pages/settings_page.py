@@ -346,6 +346,8 @@ class SettingsPage(QWidget):
         self._apply_openfan_presence_annotation()
         if self._state is not None:
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
+            self._state.mode_changed.connect(self._refresh_import_availability)
+        self._refresh_import_availability()
 
     # ─── Tab builders ────────────────────────────────────────────────
 
@@ -2184,6 +2186,7 @@ class SettingsPage(QWidget):
         )
         import_btn.clicked.connect(self._import_settings)
         btn_row.addWidget(import_btn, 1)
+        self._import_config_btn = import_btn
         v.addLayout(btn_row)
 
         backup_note = QLabel("A backup is created automatically before import.")
@@ -2784,7 +2787,25 @@ class SettingsPage(QWidget):
         except (OSError, ValueError, TypeError) as e:
             self._set_export_result(f"Export failed: {e}", "CriticalChip")
 
+    def _refresh_import_availability(self, *_args) -> None:
+        """Import Config is unavailable in demo mode (DEC-431, `DC-q`).
+
+        Import writes the real settings, profile and theme files — profiles
+        straight into the profile folder, around the profile service's demo
+        guard — and demo must never put a profile there.
+        """
+        demo = self._in_demo_mode()
+        self._import_config_btn.setEnabled(not demo)
+        self._import_config_btn.setToolTip(
+            "Import changes your real configuration — not available in demo mode."
+            if demo
+            else "Import settings, profiles and themes from an exported file."
+        )
+
     def _import_settings(self) -> None:
+        if self._in_demo_mode():
+            # The button is disabled in demo; this covers any other caller.
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Import Settings", "", "JSON files (*.json);;All files (*)"
         )
@@ -2811,6 +2832,20 @@ class SettingsPage(QWidget):
                     )
                     return
 
+            # DC-p (DEC-431): a file with nothing this importer reads — a settings
+            # backup is exactly that — used to make a backup and report "Settings
+            # imported" while changing nothing. Refuse it before touching disk.
+            if not any(
+                isinstance(raw.get(key), dict) for key in ("settings", "profiles", "themes")
+            ):
+                self._set_export_result(
+                    "Nothing imported — this file has no settings, profiles or themes. "
+                    "To restore a settings backup, copy it over app_settings.json "
+                    "with the GUI closed.",
+                    "WarningChip",
+                )
+                return
+
             # Auto-backup current settings before applying anything.
             backup_path = self._create_backup()
 
@@ -2825,6 +2860,11 @@ class SettingsPage(QWidget):
 
                 merged = self._settings_svc.settings.to_dict()
                 merged.update({k: v for k, v in incoming.items() if k not in MACHINE_SPECIFIC_KEYS})
+                # DEC-431: a theme_name from an export written before the two-name
+                # Default Dark rule is read by the old rule, exactly as a settings
+                # file is on load — the merge would otherwise lend it our marker.
+                if "theme_name" in incoming and "theme_name_scheme" not in incoming:
+                    merged["theme_name_scheme"] = 0
                 imported = self._settings_svc.import_settings_from_dict(merged)
                 self._settings_svc.apply_imported(imported)
                 self._load_current_settings()

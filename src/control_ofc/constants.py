@@ -8,6 +8,15 @@ try:
 except PackageNotFoundError:
     APP_VERSION = "dev"
 
+# The persisted ``theme_name`` that selects the bundled Default Dark palette, and
+# the Theme page's label for it. The bundled palette's own ``name`` stays "Default
+# Dark" (DEC-208), so once a user saves an edited copy under that name the two need
+# telling apart: "Default Dark" means the saved copy when one exists, this name
+# always means the built-in palette (DEC-431). A theme file carrying this name is
+# ignored at startup and left out of the picker. Here, not in ``ui/theme.py``, so
+# the Qt-free settings loader can migrate to it.
+BUILTIN_DEFAULT_THEME_NAME = "Default Dark (built-in)"
+
 # Daemon IPC
 DEFAULT_SOCKET_PATH = "/run/control-ofc/control-ofc.sock"
 API_TIMEOUT_S = 5.0

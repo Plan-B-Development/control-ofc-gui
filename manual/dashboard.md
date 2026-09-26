@@ -170,10 +170,10 @@ fan at a time so you can see which one slows down.
 
 > In demo mode you can rename fans to try the feature out, but the names are not
 > saved — demo hardware is not real, and your actual fan names are left untouched.
-> This applies to **everything** in a demo session, not just fan names: theme,
-> card sizes, chart selection and window position are all session-only. Demo's
-> synthetic hardware ids deliberately match real ones, so nothing a demo session
-> does is allowed to reach your settings file.
+> The same goes for everything tied to hardware — fan zones, chart colours and
+> hidden series, Controls card sizes — and for profiles, which demo never writes
+> to your profile folder. Ordinary preferences such as the theme, window position
+> and chart mode do save. See [Settings](settings.md) for the full list.
 
 > Both the **event log** and the **alerts** live on the [Logs page](diagnostics.md) —
 > the log table is history, and the alert bar above it is what is wrong right now, with

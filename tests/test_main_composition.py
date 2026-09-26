@@ -357,6 +357,11 @@ def _assert_window_and_services_are_wired(h: _Harness) -> None:
     assert kw["profile_service"]._client is kw["client"], (
         "the ProfileService and the window must hold the SAME client object"
     )
+    # DEC-431 (`DC-q`): a demo session reads the real profiles and writes none.
+    # A relationship, not a literal, so each of the three arms pins its side.
+    assert kw["profile_service"]._persist is (not kw["demo_mode"]), (
+        "the profile service must persist exactly when the window is not in demo mode"
+    )
     assert kw["diagnostics_service"]._state is kw["state"], (
         "diagnostics must be built against the state the window renders"
     )

@@ -49,6 +49,11 @@ _BUNDLE_EXCLUDED_SETTING_KEYS = frozenset(
         "splitter_sizes",
         "logs_search_text",
         "logs_source_filter",
+        # DEC-431 (`DC-u`): the PWM Test Report's "Your setup" facts carry free
+        # text the user typed — per-header notes and the cooler model — and are
+        # documented as never leaving this machine (docs/11).
+        "hardware_notes",
+        "cooler_notes",
     }
 )
 

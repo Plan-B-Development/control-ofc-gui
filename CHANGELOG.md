@@ -22,6 +22,36 @@ low-confidence count now honours "Treat as coolant" too.
 CPU's PECI channels. The GUI now shows them as memory. The daemon release paired with this one
 also stops counting them as CPU readings for thermal safety.
 
+**Profiles you create, edit or delete in demo mode are no longer saved** (DEC-431). A demo session
+loads the profiles in your profile folder so you can see them, but anything you create, edit or
+delete there now stays in memory and is gone when demo ends. Before, demo wrote to the real folder: new and edited profiles
+were saved there, deleting one removed the file, and opening an older profile rewrote it in the
+current format. Demo's fan ids match real hardware, so a demo profile could later be synced to the
+daemon as if it were real. **Import Config** is now unavailable in demo, since it writes profiles
+straight into that folder. The manual also no longer claims demo saves nothing: settings tied to
+hardware (fan names, chart colours, card sizes and similar) stay in the session, but ordinary
+preferences such as the theme and window position do save.
+
+**Edits to the Default Dark theme survive a restart** (DEC-431). Saving Default Dark in the theme
+editor wrote your copy, but startup always used the built-in version, so the edit disappeared on the
+next launch. Your saved copy is now used, and the Theme page selects it. The built-in palette is
+listed separately as **Default Dark (built-in)**, and choosing it is also kept across restarts, so
+you can switch between the two. Nothing changes on upgrade: if your settings say Default Dark, you
+were seeing the built-in version, so they are switched to **Default Dark (built-in)** once. An
+older saved copy only takes over if you choose it and press Apply. **Save** also now keeps the font and base size shown in the editor.
+Before, those were saved only if you had pressed Apply first.
+
+**Importing a file with nothing in it is refused** (DEC-431). A file with no settings, profiles or
+themes, such as one of the automatic settings backups, used to make a new backup and report
+"Settings imported" while changing nothing. It now reports **Nothing imported** and explains how to
+restore a backup. The manual now says where the backup is, that it covers the settings file only
+(not profiles or themes), and that imported profiles reach the daemon only after **Sync Local
+Profiles to Daemon**.
+
+**The support bundle leaves out your PWM Test Report setup notes** (DEC-431). The per-header notes
+and the cooler model you type on the report's "Your setup" page were included in the support
+bundle, although the documentation says they never leave your machine.
+
 **The Tdie tooltip no longer tells you to prefer it over Tctl** (DEC-428). The preferred-CPU sensor
 the daemon recommends is Tctl, so the note now just says Tctl may run a fixed offset above Tdie on
 some CPUs.

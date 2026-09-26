@@ -147,7 +147,7 @@ If you want to explore the interface without hardware or a running daemon:
 control-ofc-gui --demo
 ```
 
-Demo mode generates synthetic sensor temperatures and fan speeds. All features work identically — you can create profiles, edit curves, and test the full UI. A **DEMO** badge appears in the status banner so you always know when synthetic data is being shown.
+Demo mode generates synthetic sensor temperatures and fan speeds. You can create profiles, edit curves and explore the UI, but not everything works as it does against a real daemon: the PWM Test Report will not start, hardware advisories and some checks are skipped, and Import Config is unavailable. **Profiles you create or edit in demo are not saved** — they last until demo ends. A **DEMO** badge appears in the status banner so you always know when synthetic data is being shown.
 
 You can also enable "Start in demo mode when daemon is unavailable" in Settings so the GUI falls back to demo automatically.
 

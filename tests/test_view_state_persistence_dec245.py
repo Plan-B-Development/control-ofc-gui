@@ -18,6 +18,7 @@ from control_ofc.services.app_settings_service import (
 )
 from control_ofc.services.layout_state import MIN_PANE_PX, clamp_restored_sizes
 from control_ofc.services.series_selection import ChartMode
+from control_ofc.ui.theme import BUILTIN_DEFAULT_THEME_NAME
 
 
 class TestClampRestoredSizes:
@@ -384,7 +385,10 @@ class TestWindowState:
         assert shown in page._theme_name_label.text(), (
             f"picker says {shown!r}, label says {page._theme_name_label.text()!r}"
         )
-        assert page._theme_editor.tokens.name == shown
+        # DEC-431: the bundled palette's tokens say "Default Dark" while its
+        # picker entry carries the reserved built-in name, so compare the name
+        # the page gives the editor's theme, not the raw token.
+        assert page._editor_display_name(page._theme_editor.tokens) == shown
 
     def test_unknown_saved_theme_leaves_the_selection_alone(self, qtbot, settings_service):
         from control_ofc.ui.pages.theme_page import ThemePage
@@ -392,7 +396,9 @@ class TestWindowState:
         settings_service.update(theme_name="Nonexistent Theme")
         page = ThemePage(settings_service=settings_service)
         qtbot.addWidget(page)
-        assert page._theme_combo.currentText() == "Default Dark"
+        # DEC-431: the bundled palette's picker entry carries its reserved name.
+        assert page._theme_combo.currentData() is None
+        assert page._theme_combo.currentText() == BUILTIN_DEFAULT_THEME_NAME
 
 
 def test_view_state_keys_are_machine_specific():

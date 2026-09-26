@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from control_ofc.constants import BUILTIN_DEFAULT_THEME_NAME
 from control_ofc.services.app_settings_service import AppSettings, AppSettingsService
 
 
@@ -40,7 +41,9 @@ def test_legacy_display_keys_ignored():
         "show_splash": False,
     }
     restored = AppSettings.from_dict(legacy)
-    assert restored.theme_name == "Default Dark"
+    # DEC-431: a pre-rule "Default Dark" meant the bundled palette, and is
+    # migrated to the name that now says so.
+    assert restored.theme_name == BUILTIN_DEFAULT_THEME_NAME
     # Round-tripping must not re-introduce the legacy keys.
     data = restored.to_dict()
     assert "fun_mode" not in data

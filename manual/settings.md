@@ -2,12 +2,17 @@
 
 The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. Changes are batched: edit as many cards as you like, then click **Save Changes** in the page header to persist them all at once.
 
-Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and full backup/restore lives in the **Sync & Backup** card below.
+Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and export, import and the automatic settings backup live in the **Sync & Backup** card below.
 
-> **In demo mode, nothing on this page is written to disk.** Changes apply for the
-> session so you can see what they do, but the settings file is left untouched —
-> demo's synthetic hardware ids match real ones, so a demo session is never
-> allowed to overwrite your real configuration.
+> **In demo mode, anything tied to your hardware stays in the session.** Demo's
+> synthetic hardware ids match real ones, so fan names, fan zones, chart colours
+> and hidden series, sensor-class overrides, Controls card sizes and the PWM Test
+> Report's setup notes are never saved, and **profiles you create, edit or delete
+> in demo are never written to your profile folder** — they are gone when demo
+> ends. Ordinary preferences are different: **Save Changes**, the theme, window
+> size and position, chart mode and panel dividers do save, so you are never
+> trapped in demo by a setting you cannot change. **Import Config** is not
+> available in demo, because it writes your real settings, profiles and themes.
 
 ![Settings page](../screenshots/auto/06_settings.png)
 
@@ -103,7 +108,7 @@ Nothing is removed unless you ask, and the reason is that the application genuin
 
 ## Sync & Backup
 
-This card (formerly the Import/Export tab) provides full backup and restore of all application state, plus a one-click push of your local profiles into the daemon. A **backup is created automatically before any import**.
+This card (formerly the Import/Export tab) exports and imports your configuration, plus a one-click push of your local profiles into the daemon. A **backup of your settings file is created automatically before any import** — see [the automatic backup](#the-automatic-backup) for what it covers and how to restore it.
 
 ### What Gets Exported
 
@@ -120,13 +125,21 @@ Machine-specific state is deliberately **excluded** so the file is safe to share
 
 **Import Config** restores from a previously exported file:
 
-1. The file is validated; a malformed or unsupported file is rejected with a clear message and nothing changes
-2. A timestamped **backup** of your current settings is created automatically
+1. The file is validated; a malformed or unsupported file is rejected with a clear message and nothing changes. A file with no settings, profiles or themes in it — a settings backup is one — is refused with **Nothing imported**, and no backup is made
+2. A timestamped **backup** of your current settings file is created automatically
 3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides are applied immediately. An import never changes your daemon's own configuration: daemon settings live on the daemon and are edited in the **Daemon Configuration** card, so a config shared with you cannot reconfigure your daemon
-4. Profiles from the export are written to disk (you are asked before overwriting existing ones); invalid profiles are skipped and counted
-5. Custom themes are copied to your themes directory; a theme containing an invalid colour is skipped
+4. Profiles from the export are written to your local profile folder (you are asked before overwriting existing ones); invalid profiles are skipped and counted
+5. Custom themes are copied to your themes directory, **replacing a theme file of the same name without asking**; a theme containing an invalid colour is skipped
 
-This makes it safe to experiment — you can always restore from the auto-backup. Some preferences (theme, chart range, aliases) take effect on the next launch.
+Some preferences (theme, chart range, aliases) take effect on the next launch.
+
+**Imported profiles are not in the daemon yet.** The daemon owns the profiles it runs, and an import only writes your local copies. Run **Sync Local Profiles to Daemon** (below) after importing, or the imported profiles will not appear in the daemon and cannot be activated. A profile whose id the daemon already holds is skipped by Sync unless you choose *import as copies*, and the daemon's own copy replaces your imported one on the next launch.
+
+### The automatic backup
+
+The backup is `~/.config/control-ofc/backups/settings_backup_<date>_<time>.json`, a copy of your **settings file only** (`app_settings.json`). **Profiles and themes are not backed up** — an import that overwrites them cannot be undone from this file, so export first if you want to keep them.
+
+To restore it, close the application, copy the backup over `~/.config/control-ofc/app_settings.json`, and start the application again. **Import Config** cannot restore it: it reads exported files only, and refuses a backup with *Nothing imported*.
 
 ### Importing Your Profiles into the Daemon
 
@@ -154,12 +167,12 @@ The **Theme** page is a separate entry in the sidebar (not part of Settings). It
 
 ### Theme selection
 
-A dropdown in the page header lists the built-in themes plus any custom themes saved in your themes directory, with four buttons:
+A dropdown in the page header lists the built-in **Default Dark (built-in)** palette first, then every theme in your themes directory (the presets and any you saved), with four buttons:
 
 | Button | Action |
 |--------|--------|
 | **Load** | Load the selected theme into the editor |
-| **Save** | Save the current editor state as a theme file |
+| **Save** | Save the current editor state — colours, font and base size — as a theme file. Saving **Default Dark** keeps your edited copy as a theme called *Default Dark*, listed beside *Default Dark (built-in)*; apply whichever you want, and that choice is kept across restarts |
 | **Import…** | Import a theme from an external `.json` file |
 | **Export…** | Export the current theme to a `.json` file |
 

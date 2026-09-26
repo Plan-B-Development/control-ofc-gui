@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from control_ofc.colors import is_valid_color
+from control_ofc.constants import BUILTIN_DEFAULT_THEME_NAME
 from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
 from control_ofc.services.pwm_report.setup_facts import (
     coerce_cooler_notes,
@@ -159,6 +160,23 @@ def _as_str_dict(value: object, default: dict[str, str]) -> dict[str, str]:
     return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
 
 
+def _migrate_theme_name(data: dict) -> str:
+    """``theme_name`` under DEC-431's two-name rule, migrating an older file.
+
+    Before DEC-431 startup read "Default Dark" as the bundled palette and never
+    looked at a saved ``default_dark.json``. That name now means the saved copy
+    when one exists, so a file written before the rule (no ``theme_name_scheme``)
+    has its "Default Dark" rewritten to ``BUILTIN_DEFAULT_THEME_NAME`` — what that
+    user was actually seeing. Without this an old saved copy, possibly from before
+    a palette change, would take over silently on upgrade. Runs once: the next
+    save writes the scheme marker.
+    """
+    name = _as_str(data.get("theme_name"), "Default Dark")
+    if _as_int(data.get("theme_name_scheme"), 0, lo=0, hi=1) < 1 and name == "Default Dark":
+        return BUILTIN_DEFAULT_THEME_NAME
+    return name
+
+
 # AIO Phase 1 (DEC-156): user sensor-classification overrides. Only "coolant"
 # is offered today; the whitelist stops an untrusted settings/import file from
 # injecting an arbitrary source_class string into the display layer.
@@ -264,6 +282,9 @@ class AppSettings:
     demo_on_disconnect: bool = False
     chart_default_range_index: int = 4  # 15m in TimelineChart
     theme_name: str = "Default Dark"
+    # DEC-431: 1 once theme_name follows the two-name Default Dark rule. A file
+    # without it predates the rule and is migrated on load (see from_dict).
+    theme_name_scheme: int = 1
     fan_aliases: dict[str, str] = field(default_factory=dict)
     # DEC-176: GUI-owned named physical zones for fans (fan_id -> zone name),
     # e.g. "Front Intake" / "Exhaust". Mirrors fan_aliases exactly — both are
@@ -465,7 +486,8 @@ class AppSettings:
             chart_default_range_index=_as_int(
                 data.get("chart_default_range_index"), 4, lo=0, hi=99
             ),
-            theme_name=_as_str(data.get("theme_name"), "Default Dark"),
+            theme_name=_migrate_theme_name(data),
+            theme_name_scheme=1,
             fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
             fan_aliases_seeded=_as_bool(data.get("fan_aliases_seeded"), False),

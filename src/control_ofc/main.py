@@ -24,6 +24,7 @@ from control_ofc.services.single_instance import SingleInstance, default_key, ra
 from control_ofc.ui.fonts import register_bundled_fonts
 from control_ofc.ui.main_window import MainWindow
 from control_ofc.ui.theme import (
+    BUILTIN_DEFAULT_THEME_NAME,
     ThemeTokens,
     apply_theme,
     default_dark_theme,
@@ -116,29 +117,32 @@ def _resolve_startup_theme(theme_name: str) -> ThemeTokens:
     """Return the persisted theme by name, or the default dark theme.
 
     Resolution order:
-      1. ``Default Dark`` (or empty / unknown name) — bundled default tokens
+      1. Empty name or ``BUILTIN_DEFAULT_THEME_NAME`` — bundled default tokens,
+         with no file scan (the picker's built-in entry, DEC-431)
       2. Any matching JSON file in ``themes_dir()`` whose loaded
-         ``ThemeTokens.name`` equals ``theme_name``
-      3. Fallback to default dark if the file is missing or invalid
+         ``ThemeTokens.name`` equals ``theme_name`` — **including** "Default
+         Dark": an edited copy saved under that name is what the user asked
+         for (DEC-431, `DC-r`). Deleting that file restores the bundled one.
+      3. Fallback to default dark if no file matches or the folder is missing
 
     Failures are logged but never raise: a corrupted theme must not prevent
     the GUI from starting. The user can re-pick a theme from Settings if
     their persisted choice is no longer loadable.
     """
-    if not theme_name or theme_name == "Default Dark":
+    if not theme_name or theme_name == BUILTIN_DEFAULT_THEME_NAME:
         return default_dark_theme()
     td = themes_dir()
-    if not td.exists():
-        return default_dark_theme()
-    for path in sorted(td.glob("*.json")):
-        try:
-            tokens = load_theme(path)
-        except (OSError, ValueError, KeyError) as exc:
-            log.warning("Skipping unreadable theme %s on startup: %s", path, exc)
-            continue
-        if tokens.name == theme_name:
-            return tokens
-    log.info("Persisted theme %r not found in %s; falling back to Default Dark", theme_name, td)
+    if td.exists():
+        for path in sorted(td.glob("*.json")):
+            try:
+                tokens = load_theme(path)
+            except (OSError, ValueError, KeyError) as exc:
+                log.warning("Skipping unreadable theme %s on startup: %s", path, exc)
+                continue
+            if tokens.name == theme_name:
+                return tokens
+    if theme_name != "Default Dark":
+        log.info("Persisted theme %r not found in %s; falling back to Default Dark", theme_name, td)
     return default_dark_theme()
 
 
@@ -268,7 +272,8 @@ def main() -> int:
     client: DaemonClient | None = None
     if not demo_mode:
         client = DaemonClient(socket_path=socket_path)
-    profile_service = ProfileService(client=client)
+    # DEC-431: demo reads the real profiles but never writes or removes one.
+    profile_service = ProfileService(client=client, persist=not demo_mode)
 
     # DEC-111: a single DiagnosticsService is shared between the polling
     # service, main window, and diagnostics page so every emitter writes into

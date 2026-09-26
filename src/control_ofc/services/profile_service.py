@@ -1790,8 +1790,15 @@ class ProfileService(QObject):
     validates-then-uploads and, when the daemon is unreachable, keeps the edit
     as a local draft (no background auto-sync — the user re-saves explicitly;
     migration Decision 3). With ``client=None`` the service is purely local —
-    byte-for-byte the pre-migration behaviour — which keeps demo mode and the
-    existing unit tests unchanged.
+    byte-for-byte the pre-migration behaviour — which keeps the existing unit
+    tests unchanged.
+
+    ``persist=False`` is demo mode (DEC-431, `DC-q`): the service still READS the
+    real profile folder, so demo shows the user's own profiles, but never writes
+    or removes a file in it — every save, delete, migration write-back and
+    default seed stays in memory and is gone when the session ends. Demo member
+    ids collide with real hardware (`openfan:chNN`), so a demo profile on disk
+    could later be synced to the daemon as if it were real.
 
     It is a :class:`QObject` (mirroring :class:`AppState`) so it can emit signals
     when its data changes, letting every page observe profile CRUD / activation
@@ -1804,11 +1811,15 @@ class ProfileService(QObject):
     active_changed = Signal(str)  # active profile id
     profiles_changed = Signal()  # the profile list changed (CRUD)
 
-    def __init__(self, client: DaemonClient | None = None) -> None:
+    def __init__(self, client: DaemonClient | None = None, *, persist: bool = True) -> None:
         super().__init__()
         self._profiles: dict[str, Profile] = {}
         self._active_id: str = ""
         self._client = client
+        # False in demo mode: nothing is ever written to or removed from the
+        # profile folder (DEC-431). The one gate is `_write_local` plus
+        # `delete_profile`'s unlink, which are the only disk writes here.
+        self._persist = persist
         # Profile ids known to exist in the daemon store (from the last
         # successful daemon load or upload). Selects create (POST) vs replace
         # (PUT) on save without a probe round-trip.
@@ -1997,7 +2008,8 @@ class ProfileService(QObject):
         persist migrations/sanitisations to the cache, seed defaults when empty.
         """
         d = profiles_dir()
-        d.mkdir(parents=True, exist_ok=True)
+        if self._persist:
+            d.mkdir(parents=True, exist_ok=True)
         loaded = False
         errors: list[tuple[str, str]] = []
 
@@ -2057,7 +2069,13 @@ class ProfileService(QObject):
         return errors
 
     def _write_local(self, profile: Profile) -> None:
-        """Write a profile to the local cache dir (atomic; 0600 via paths)."""
+        """Write a profile to the local cache dir (atomic; 0600 via paths).
+
+        A no-op in demo mode (``persist=False``, DEC-431): the profile stays in
+        memory only.
+        """
+        if not self._persist:
+            return
         path = profile_file_path(profile.id)
         atomic_write(path, json.dumps(profile.to_dict(), indent=2) + "\n")
 
@@ -2254,7 +2272,8 @@ class ProfileService(QObject):
                 )
         profile = self._profiles.pop(profile_id)
         path = profile_file_path(profile.id)
-        if path.exists():
+        # Demo mode removes the profile from memory only (DEC-431).
+        if self._persist and path.exists():
             path.unlink()
         self._daemon_ids.discard(profile_id)
         self._unpublished.discard(profile_id)

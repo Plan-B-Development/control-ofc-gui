@@ -13,6 +13,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from control_ofc.constants import (  # re-exported (DEC-431)
+    BUILTIN_DEFAULT_THEME_NAME as BUILTIN_DEFAULT_THEME_NAME,
+)
+
 if TYPE_CHECKING:  # PySide6 is imported lazily so token-only use stays Qt-free
     from PySide6.QtGui import QPalette
 
@@ -47,8 +51,11 @@ class ThemeTokens:
 
     # ─── Core ────────────────────────────────────────────────────────
     # Control-OFC green palette (DEC-208). The built-in theme keeps the name
-    # "Default Dark" so existing users' saved theme_name adopts green with no
-    # migration; the old blue palette ships as the "Classic Blue" preset.
+    # "Default Dark"; the old blue palette ships as the "Classic Blue" preset.
+    # Since DEC-431 a persisted theme_name selects the built-in palette as
+    # BUILTIN_DEFAULT_THEME_NAME, and "Default Dark" means a saved copy when one
+    # exists, so a later palette change reaches only users on the built-in name.
+    # AppSettings.from_dict migrates a pre-DEC-431 "Default Dark" to that name.
     app_bg: str = "#0A0E08"
     surface_1: str = "#0D1610"
     surface_2: str = "#14241C"
