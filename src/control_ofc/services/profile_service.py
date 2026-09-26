@@ -984,8 +984,9 @@ def sync_candidate_controls(profile: Profile, sync_curve_id: str) -> list[tuple[
 
 # DEC-102: known-dead member-id patterns. These ids were advertised by
 # pre-DEC-102 daemons that included AMD GPU `pwm1` in hwmon discovery.
-# RDNA3+ exposes that file read-only without `pwm1_enable`, so any write
-# returned EACCES → 503/retryable, producing a 1 Hz error storm in the
+# RDNA4 exposes that file read-only without `pwm1_enable` (RDNA3 exposes both,
+# but a write can silently no-op — DEC-430), so a write could return
+# EACCES → 503/retryable, producing a 1 Hz error storm in the
 # control loop. Daemon discovery now drops `chip_name == "amdgpu"`, so the
 # corresponding member id can never round-trip; sanitizing on load
 # repairs profiles that were authored against an older daemon.

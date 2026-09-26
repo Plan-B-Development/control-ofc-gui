@@ -132,6 +132,21 @@ Notable fields:
   and must still be listed. The same predicate gates the profile engine's hwmon
   backend, so on such a board an `hwmon:` control is also reported as
   `backend_unavailable` (`OFN-ah`, above) — the two answers cannot disagree.
+- `devices.amd_gpu.fan_control_method` is `"pmfw_curve"` (a PMFW `fan_curve`
+  exists), `"hwmon_pwm"` (legacy `pwm1`+`pwm1_enable`, **pre-RDNA3 only**),
+  `"read_only"` or `"none"`, and `fan_write_supported` is true exactly for the
+  first two. **Narrowed by DEC-430 (the first daemon release after 2.56.1):** an
+  RDNA3/RDNA4 card the daemon knows — every one libdrm 2.4.134's `amdgpu.ids`
+  lists — never reports `"hwmon_pwm"`, whatever files exist (an unlisted future
+  id is judged by file presence, `DC-ci`). An RX 7000
+  exposes `pwm1_enable` at 0644 but a write can silently no-op in the kernel, so
+  without its `fan_curve` it reports `"read_only"` / `false`, and
+  `POST /gpu/{id}/fan/reset` and `/fan/verify` answer `400 feature_unavailable`.
+  Older daemons report `"hwmon_pwm"` / `true` for that card. Same enum values,
+  so no client change is needed. `model_name` comes from libdrm's `amdgpu.ids` by
+  device **and revision**, and is absent for a card that table does not list;
+  `display_label` compacts only an `"RX "` name (`"9070XT"`) and keeps any other
+  as written (`"Pro W7900"`), falling back to `"AMD D-GPU"`.
 - `devices.amd_gpu.pci_id` (legacy) and `devices.amd_gpu.pci_bdf` (canonical)
   both carry the same PCI BDF address during the transition window; GUI
   parsers accept either name (see DEC-042 and the 2026-04-22
@@ -2528,7 +2543,7 @@ Response (daemon `GpuVerifyResponse` ↔ GUI `GpuVerifyResult`) — **no
 - `restore_failed: bool` — omitted when false (`skip_serializing_if`)
 
 Errors: `400 feature_unavailable` (read-only GPU — no PMFW `fan_curve` and no
-legacy `pwm1`+`pwm1_enable`), `404 validation_error` (unknown `gpu_id` — wire `code` is `validation_error`, not `not_found`). OD_RANGE
+legacy `pwm1`+`pwm1_enable`, and never the legacy path on RDNA3/RDNA4 — DEC-430), `404 validation_error` (unknown `gpu_id` — wire `code` is `validation_error`, not `not_found`). OD_RANGE
 clamping and zero-RPM idle are reported as informational verdicts, not errors.
 Old daemons predating the route answer `404`, which the GUI treats as
 "unsupported" and hides the control.

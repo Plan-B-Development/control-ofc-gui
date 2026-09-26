@@ -29,7 +29,10 @@ writes, PMFW handling, or GPU display naming.
 - Pre-RDNA3 GPUs (RX 6000 and older) use traditional `pwm1_enable=1` + `pwm1` control.
 
   **The two generations reach that outcome by different mechanisms, and the
-  difference is safety-relevant** (kernel source re-read 2026-08-26):
+  difference is safety-relevant** (kernel source re-read 2026-08-26, and again at
+  torvalds master on 2026-09-26 for DEC-430 — `hwmon_attributes_visible()` only
+  masks the read/write bits of `pwm1_enable` when the SMU lacks the mode
+  callbacks, and an attribute whose mode ends at 0 is never created):
 
   - **RDNA4 (RX 9000, `smu_v14_0_2_ppt.c`, SMU 14.0.2 / 14.0.3)** registers only the
     two fan getters, `.get_fan_speed_pwm` and `.get_fan_speed_rpm` — no
@@ -51,6 +54,13 @@ writes, PMFW handling, or GPU display naming.
     falsely report an RX 7000 fan as writable, which is exactly the class of lie
     the truthfulness rule in `CLAUDE.md` forbids. Confirm by reading the value back,
     or use the `fan_curve` path, which is the supported interface either way.
+  - **So the daemon fails closed on the device id (DEC-430).** File presence
+    cannot tell an RX 7000 from an RX 6000 — both have `pwm1` and `pwm1_enable` —
+    so `AmdGpuInfo::can_write_legacy_pwm` refuses every id in
+    `is_rdna3_or_rdna4` (every RDNA3/RDNA4 id libdrm 2.4.134 lists), whatever
+    files exist. An RDNA3/RDNA4 card's only write path is PMFW `fan_curve`; an id
+    missing from that list would be judged by file presence again (`DC-ci`). Until DEC-430 the daemon's own comments said RDNA3
+    lacked `pwm1_enable`; that was wrong, and this section was right.
 - GPU fan writes use an imperative model (`set_static_speed` via a flat PMFW curve);
   no lease is required. The curve's lowest allowed duty is the card's own `OD_RANGE`
   minimum, read from `fan_curve` — board-specific (often around 15%; one R9700 reports
@@ -90,14 +100,22 @@ writes, PMFW handling, or GPU display naming.
 
 - **Do not claim GPU fan write support unless PMFW `fan_curve` or hwmon `pwm1` is
   actually available.** The control method must be truthful: `"read_only"` when no
-  write path exists (no `pwm1_enable` AND no PMFW). *(Safety-critical; also stated in
-  `CLAUDE.md`.)*
+  write path exists — no PMFW, and either no `pwm1_enable` or an RDNA3/RDNA4 device
+  id (DEC-430). *(Safety-critical; also stated in `CLAUDE.md`.)*
+- The read-only hint says why: while overdrive is off it names
+  `amdgpu.ppfeaturemask`; with it on, it says the kernel did not expose the curve
+  (the kernel 7.0+ case above) instead of repeating advice the user already took.
 - Read-only GPU fans show a `(read-only)` suffix in fan-role member selection.
 
 ## Display and UX
 
-- GPU display label: the specific model if the PCI device ID is recognised
-  (e.g. "9070XT"), otherwise "AMD D-GPU".
+- GPU model name: libdrm's `amdgpu.ids`, matched on PCI device id **and
+  revision** — one id is often several cards (0x744C is the RX 7900 XTX, XT, GRE
+  and 7900M) — for every RDNA2/3/4 card it lists (DEC-430). An unlisted
+  (device, revision) has no model name rather than a guessed one.
+- GPU display label: the model name with an `"RX "` name compacted
+  (e.g. "9070XT") and any other kept as written ("Pro W7900"), otherwise
+  "AMD D-GPU".
 - GPU fan display name: `"{model} Fan"` from capabilities, falling back to
   `"D-GPU Fan"` (DEC-050).
 - GPU fans are **always** displayable on the dashboard — zero-RPM idle is normal, not
