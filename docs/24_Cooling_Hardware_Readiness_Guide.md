@@ -124,13 +124,25 @@ re-run **Test PWM Control** afterwards to confirm it actually helped.
 
 Passive detection is normally sufficient. When a Super-I/O chip is present but its
 driver is not loaded, the optional **Probe ports (advanced)** action can
-read the chip's configuration I/O ports directly to identify it. This:
+access the chip's configuration I/O ports directly to identify it. This:
 
-- requires the `CAP_SYS_RAWIO` capability (it is off by default and needs a daemon
-  opt-in);
-- accesses hardware I/O ports directly, so it asks for explicit confirmation;
-- is a deliberate one-shot — it never runs automatically, and the daemon refuses any
-  port already claimed by a driver or ACPI.
+- is off by default. The daemon operator enables it with `allow_port_probe = true`
+  under `[detection]` in `/etc/control-ofc/daemon.toml`, installs
+  `/usr/share/doc/control-ofc-daemon/superio-port-probe.conf.example` as
+  `/etc/systemd/system/control-ofc-daemon.service.d/superio-port-probe.conf` (it
+  grants the root-equivalent `CAP_SYS_RAWIO`), then runs
+  `sudo systemctl daemon-reload` and restarts `control-ofc-daemon`;
+- **is not read-only.** Where no chip answers a plain read (`0xffff` or `0x0000`), the daemon writes a
+  vendor unlock and exit sequence. The Nuvoton `0x87,0x87` unlock is the one
+  measured latching an ITE eSPI-to-LPC bridge until a full power cut, and it is
+  withheld only on boards the daemon lists as ITE-only. So the GUI asks for
+  explicit confirmation first;
+- **refuses the whole probe while any recognised Super-I/O driver is bound**, not
+  only the port that driver owns (DEC-433). With `it87` loaded on a dual-chip
+  Gigabyte board it therefore never runs. It also refuses when `/proc/ioports`
+  cannot be read, and skips a port that file shows reserved by a driver or ACPI;
+- is a deliberate one-shot — it never runs automatically, and a second run within
+  10 seconds is refused with a note to try again.
 
 Its result is labelled as coming from the active probe (evidence `port_probe`) so it
 is never confused with passive detection.

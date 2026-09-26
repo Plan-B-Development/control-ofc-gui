@@ -236,8 +236,19 @@ The **Super-I/O Architecture** section answers *"which motherboard sensor/fan ch
 
 #### Probe ports (advanced)
 
-Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can read the Super-I/O configuration ports directly to identify an unbound chip. The **Probe ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it needs two steps on the daemon host: set `allow_port_probe = true` **under the `[detection]` table** in
-`/etc/control-ofc/daemon.toml` **and** install the opt-in `superio-port-probe.conf.example` systemd drop-in (shipped in the daemon package's docs). Even when enabled, the probe only reads chip-ID registers, never touches a port a driver or the firmware is already using, and changes nothing. Clicking the button asks for confirmation first.
+Passive detection can't see a chip whose driver never loaded and that never appeared in the kernel log. For that case an **opt-in active probe** can access the Super-I/O configuration ports directly to identify an unbound chip. The **Probe ports (advanced)** button runs it — but it is **off by default** and stays disabled (with the reason in its tooltip) unless the daemon operator has deliberately enabled it, because it requires a root-equivalent capability (`CAP_SYS_RAWIO`). Enabling it takes three steps on the daemon host:
+
+1. Set `allow_port_probe = true` **under the `[detection]` table** in `/etc/control-ofc/daemon.toml`.
+2. Install the drop-in the daemon package ships as an example:
+   ```bash
+   sudo install -Dm644 /usr/share/doc/control-ofc-daemon/superio-port-probe.conf.example \
+     /etc/systemd/system/control-ofc-daemon.service.d/superio-port-probe.conf
+   ```
+3. Reload and restart: `sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon`.
+
+**The probe is not read-only.** Where no chip answers a plain read, the daemon writes a vendor unlock and exit sequence to the port. On some boards that can hide a chip until the machine is unplugged from mains power, which is why the drop-in's comments and the button's confirmation both spell it out. It never writes a configuration value.
+
+**It refuses to run while any Super-I/O driver it recognises is bound** — the whole probe, not just the port that driver uses. With `it87` loaded on a dual-chip Gigabyte board it therefore never runs. It also refuses when `/proc/ioports` can't be read, skips a port that a driver or the firmware has reserved, and turns away a second run within 10 seconds. Each refusal appears as a note in the section.
 
 The Super-I/O Architecture section requires `control-ofc-daemon` ≥ v2.7.0.
 

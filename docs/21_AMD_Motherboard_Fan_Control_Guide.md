@@ -196,9 +196,15 @@ included.
   `nct6687` and blacklists `nct6683` on every machine. That is safe on an
   NCT6797D board only because a current `nct6687d` no longer claims `0xd450`.
 
-The System State page surfaces this as a CRITICAL `module_collisions`
-banner when both modules are loaded simultaneously, and discourages PWM
-writes until the user resolves the load ordering.
+The System State page surfaces this as a critical *Driver module
+collision* condition (`module_collisions`) when both modules are loaded at
+once. The daemon does not stop writing while it is reported (DEC-433).
+First, until you have rebooted and it is no longer reported, deactivate the
+active profile (the tray's *Stop profile control*) and run no fan tests.
+That stops the curve, not every write: the daemon restores each header's
+original mode once (100 % if it cannot confirm it), and a thermal emergency
+still drives writable headers to 100 %. Only removing the wrong driver —
+the blacklist above, then a reboot — stops writes to the chip.
 
 ### 2. ASUS: an ITE chip, and a WMI firmware bug
 

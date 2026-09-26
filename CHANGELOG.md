@@ -26,6 +26,20 @@ with no automatic mode, which the setting has always covered.
 thermal protection ends the run. The other two stop the test that meets them, and the daemon
 refuses each later test while the condition lasts. The text and the manual now list all three.
 
+**The port-probe confirmation no longer calls the probe read-only** (DEC-433). Where no chip
+answers, the daemon writes a vendor unlock and exit sequence, which on some boards can hide a chip
+until the machine is unplugged from mains power. The dialog now says so, and says the daemon
+refuses to probe while any Super-I/O driver it recognises is bound.
+
+**The driver-collision advice says what to do** (DEC-433). With both `nct6687` and `nct6775`
+loaded, the condition card, its board notes and the fallback text for older daemons said "Do NOT
+write PWM", but you never write PWM, and the daemon keeps writing through a collision. They now
+say, first, to deactivate the active profile (the tray's **Stop profile control**; the GUI has no
+deactivate button) and run no fan tests until you have rebooted and the collision is gone. They
+also say what that does not do: the daemon still restores each header's original mode once, a
+thermal emergency still drives writable headers to 100 %, and only removing the wrong driver stops
+writes to the chip.
+
 ### Documentation
 
 - Closing Control-OFC does not release a manual override. The override lapses on its own at most
@@ -34,6 +48,13 @@ refuses each later test while the condition lasts. The text and the manual now l
   upgrading is shown by its own banner, and the Mode still reads **Automatic** (DEC-432).
 - The three starter profiles, and the daemon's example `quiet.json`, control no fans until you add
   fans to their role and pick a sensor (DEC-432).
+- The manual, docs/24 and docs/08 now say what enabling the port probe takes (the `[detection]`
+  flag, the drop-in's source and destination, a reload and restart), that the probe writes, and
+  that it refuses the whole probe while any Super-I/O driver it recognises is bound. With `it87` loaded on a
+  dual-chip Gigabyte board it therefore never runs (DEC-433).
+- The collision is described as a threat to NCT679x boards (MSI AM4 and the original 2019 X570),
+  not to MSI B550 and newer, which carry a genuine NCT6687D. docs/08 names the upstream fix,
+  nct6687d PR #164 (DEC-433).
 
 ## [2.83.3] — 2026-09-26
 

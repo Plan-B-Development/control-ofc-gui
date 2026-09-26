@@ -146,9 +146,13 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
                 "key": "module_collision",
                 "label": "Driver module collision",
                 "fix": (
-                    "Two drivers are fighting for the same chip. Unload one and "
-                    "blacklist it (see the per-pair remediation in the alert), "
-                    "then reboot."
+                    # DC-x (DEC-433): the daemon keeps writing through a
+                    # collision, so the first step is the one that stops it.
+                    "Two drivers are fighting for the same chip. Now: deactivate "
+                    "the active profile (the tray's Stop profile control) and run "
+                    "no fan tests. Then blacklist the wrong driver and reboot (see "
+                    "the per-pair remediation below) — deactivating stops the "
+                    "curve, but only removing that driver stops writes to the chip."
                 ),
                 "doc_url": "https://wiki.archlinux.org/title/Fan_speed_control",
                 "doc_title": "Arch Wiki: Fan speed control",

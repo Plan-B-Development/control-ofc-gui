@@ -170,6 +170,14 @@ class TestDetectProblems:
         problems = detect_readiness_problems(diag, duty_drift=NO_DRIFT)
         coll = [p for p in problems if p["key"] == "module_collision"]
         assert coll and coll[0]["severity"] == "critical"
+        # DC-x (DEC-433): the daemon keeps writing through a collision, so the
+        # card's fix names the step that stops it, and points at the per-pair
+        # remediation where the card renders it (its detail, below the fix) —
+        # not at the "alert" the redesign retired.
+        assert "deactivate the active profile" in coll[0]["fix"]
+        # The GUI has no deactivate control, so the fix names the route (F2).
+        assert "Stop profile control" in coll[0]["fix"]
+        assert "alert" not in coll[0]["fix"]
 
     def test_gpu_ppfeaturemask_detected(self):
         diag = _healthy(

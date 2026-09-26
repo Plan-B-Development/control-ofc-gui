@@ -668,8 +668,8 @@ top-to-bottom:
   same redesign — the footer rescan's chained refetch supersedes it.
 - **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
 - **Blocking-alert stack** — module collisions, module conflicts, and the
-  BIOS-interference headline (those that mean "do not write PWM until resolved"
-  or report active EC contention). Each is individually visibility-gated, so the
+  BIOS-interference headline (those that mean "deactivate the profile, then
+  remove the wrong driver" — DEC-433 — or report active EC contention). Each is individually visibility-gated, so the
   stack collapses to nothing on a healthy system, and is always on screen when
   present — never behind a collapse.
 - **Issue checklist** (DEC-124) — one row per detected problem

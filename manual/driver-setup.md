@@ -51,7 +51,7 @@ Rule of thumb by vendor (full matrix: [Hardware Compatibility](../docs/19_Hardwa
 | ASUS (AM4 300/400-series, e.g. PRIME X470-PRO) | ITE IT8665E | `it87-dkms-git` (AUR) — mainline has no IT8665E driver |
 | ASRock | Nuvoton NCT67xx, and on many boards an NCT6686D/NCT6683D carrying some or all fans | the NCT67xx needs none; the NCT668x fans are read-only in the kernel driver and need a board-specific out-of-tree driver — see the [ASRock notes](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) |
 
-> **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild (see the CRITICAL banner the **System State** page raises if both are loaded). Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
+> **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild. If both are loaded, the **System State** page shows a critical *Driver module collision* condition; deactivate the active profile at once (the tray's **Stop profile control** — the GUI has no deactivate button) and run no fan tests until you have rebooted and it is gone. That stops your curve, but not every write: the daemon still restores each header's original setting once, and only removing the wrong driver (blacklist it, then reboot) stops writes to the chip. Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
 
 ## Step 2 — Prerequisites (DKMS + kernel headers)
 

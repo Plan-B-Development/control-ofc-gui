@@ -1782,8 +1782,14 @@ class HardwarePage(QWidget):
         answer = QMessageBox.question(
             self,
             "Probe Super-I/O ports?",
-            "Active port probing reads hardware I/O ports directly (needs elevated "
-            "privileges). It is read-only but touches the hardware. Proceed?",
+            # DC-w (DEC-433): this dialog is a consent point, so it names the
+            # writes the daemon's probe makes and when the daemon refuses it.
+            "Active port probing accesses the motherboard's Super-I/O configuration "
+            "ports directly (needs elevated privileges). It is not read-only: where "
+            "no chip answers, the daemon writes a vendor unlock and exit sequence, "
+            "which on some boards can hide a chip until the machine is unplugged "
+            "from mains power. The daemon refuses to probe while any Super-I/O "
+            "driver it recognises is bound. Proceed?",
         )
         if answer == QMessageBox.StandardButton.Yes:
             self._run_readiness_probe()

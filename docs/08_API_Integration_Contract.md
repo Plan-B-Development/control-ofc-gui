@@ -1428,16 +1428,39 @@ and the GUI parser defaults to `[]`):
   loaded driver modules known to race for the same chip. Each entry has
   `module_a`, `module_b`, `severity` (`"critical" | "high" | "medium"`),
   `summary`, and `remediation` fields. The flagship entry is
-  `(nct6687, nct6775)` at CRITICAL severity — these two drivers overlap
-  on chip ID `0xd450` (NCT6797D's legitimate ID) and concurrent loading
-  can corrupt non-volatile fan registers on common AM4/AM5 MSI boards
-  (NCT6797D ships on the B450M MORTAR per its upstream lm-sensors
-  config). The GUI renders this as a CRITICAL banner above the existing
-  module-conflict label, suppresses the GUI-only `CONFLICTING_MODULE_SETS`
-  banner for the same pair (avoids two warnings for one problem), and
-  refuses no writes but discourages PWM writes until the user resolves
-  the load ordering. All daemon-supplied strings in this field are
-  HTML-escaped before interpolating into the Qt RichText label.
+  `(nct6687, nct6775)` at CRITICAL severity. Older out-of-tree `nct6687`
+  builds declare chip ID `0xd450`, the legitimate ID of the NCT6797D, so
+  with both loaded the wrong driver can bind an **NCT679x** chip and
+  corrupt its non-volatile fan registers. That chip is on MSI AM4 boards
+  (e.g. B450M MORTAR, MAG X570 TOMAHAWK WIFI) and the original 2019 X570
+  boards. MSI B550 and newer carry a genuine NCT6687D, which the
+  collision does not threaten. [nct6687d PR #164](https://github.com/Fred78290/nct6687d/pull/164)
+  (merged 2026-05-19) removed the `0xd450` claim, so a current build no
+  longer claims the chip by default; already-loaded modules, older
+  packages and `force=1` still do.
+
+  **The daemon refuses no writes during a collision (DEC-433).** The
+  engine does not read `module_collisions`, so an active profile keeps
+  writing through it. The remediation therefore tells the user, first,
+  to **deactivate the active profile and run no fan tests** until they
+  have rebooted and the collision is no longer reported, and names the
+  routes: the tray's *Stop profile control*, or `POST /profile/deactivate`
+  on the socket (the reference GUI has no deactivate control; `DC-co`).
+  That stops the curve, **not every write**: with no profile active the
+  engine still restores each header's original mode once (DEC-382 — a
+  header found in manual mode gets its old duty back, and one whose
+  restore cannot be confirmed goes to 100 %, retried every tick if even
+  that fails), and a thermal emergency still drives writable headers to
+  100 %. Only removing the wrong driver — blacklist it, then reboot —
+  stops writes to the chip. Daemons before DEC-433 said "Do NOT write
+  PWM" instead, which a user of this daemon never does.
+
+  The reference GUI renders the entry as a critical *Driver module
+  collision* condition on System State, with the remediation in the
+  card's detail. It suppresses its own `CONFLICTING_MODULE_SETS`
+  fallback for the same pair, so one problem does not raise two
+  conditions. All daemon-supplied strings in this field are HTML-escaped
+  before they reach the Qt RichText label.
 
   **DEC-106 refinement:** the daemon suppresses the `(nct6687, nct6775)`
   entry when `hwmon.chips_detected` shows two or more distinct `nct6`-
@@ -2032,7 +2055,7 @@ bytes), not a passive read.
 
 **It reads before it writes (daemon ≥ 2.38.0, DEC-332).** The DEVID read happens
 with **no unlock at all**, and an unlock is written only when that read returns
-`0xffff`. A chip already in configuration mode at power-on (`FEAT_NOCONF`:
+`0xffff` or `0x0000` (nothing answered). A chip already in configuration mode at power-on (`FEAT_NOCONF`:
 it8790/it8792/it87952) is therefore identified without a single unlock byte
 reaching its port. This is not a micro-optimisation: an unconditional unlock was
 measured to latch an ITE eSPI→LPC bridge into configuration mode, hiding the
@@ -2056,12 +2079,47 @@ base are otherwise indistinguishable, and the difference is the one the user
 needs. This is content, not shape — `notes[]` has always been a free-text array,
 so no client change is required and older daemons simply never emit the entry.
 
-**Off by default.** It runs only when the operator has BOTH set
-`[detection] allow_port_probe = true` and installed the `CAP_SYS_RAWIO` systemd
-drop-in. When it cannot run it returns the normal report with
+**What it writes.** Selecting a register writes its index to the base port, as
+every Super-I/O read does. Beyond that, at a base where the unlocked DEVID read
+finds nothing, it writes the ITE enter sequence (`0x87 0x01 0x55 0x55`, or
+`… 0xaa` at 0x4E) and the ITE exit; if nothing answers that either, it writes the
+Nuvoton/Winbond `0x87,0x87` unlock and its exit, unless the leg is withheld as
+above. It never writes a configuration value, `force_id` or the hardware-monitor
+block. So it is not a read-only action, and a client must not describe it as one
+at its consent point (DEC-433, `DC-w`).
+
+**Off by default.** It runs only when the operator has done all three of these on
+the daemon host:
+
+1. set `allow_port_probe = true` under `[detection]` in
+   `/etc/control-ofc/daemon.toml`;
+2. installed the drop-in:
+   `sudo install -Dm644 /usr/share/doc/control-ofc-daemon/superio-port-probe.conf.example /etc/systemd/system/control-ofc-daemon.service.d/superio-port-probe.conf`
+   (it grants `CAP_SYS_RAWIO` and `/dev/port`);
+3. run `sudo systemctl daemon-reload` and `sudo systemctl restart control-ofc-daemon`.
+
+When it cannot run it returns the normal report with
 `port_probe_available: false` and a `notes[]` entry explaining why — it never
-errors for being disabled. It refuses to touch a port owned by a bound driver or
-reserved by ACPI, and never writes a configuration value or `force_id`.
+errors for being disabled.
+
+**When it refuses (DEC-433 — intended, `DC-w`).** A probe that can run still
+returns the passive report with a `notes[]` entry, and probes nothing, when:
+
+- **any recognised Super-I/O driver is bound** — any hwmon chip, a header's or a
+  sensor's, whose name maps to a known Super-I/O driver. This refuses the
+  **whole** probe, both bases, not only the port that driver owns: probing would
+  race it (DEC-203), and an unrecognised chip is caught only if it reserves its
+  port. On a dual-chip Gigabyte board with `it87` bound this is always the case,
+  so the `0x8883` bridge diagnosis below cannot run there while `it87` is loaded. The note
+  reads "a Super-I/O driver is already bound — refusing to probe its config
+  port", which names one port while both are skipped;
+- **`/proc/ioports` cannot be read** — it refuses rather than probe without the
+  port-claim check;
+- **a run finished less than 10 s ago** — a single-flight cooldown; the note asks
+  the user to try again in a few seconds.
+
+Otherwise it skips a base that `/proc/ioports` shows reserved (by a driver or an
+ACPI OperationRegion) and probes the rest; with both reserved, a note says so.
 
 **Response:** the same `SuperIoResponse` shape as the `GET`, with any
 probe-identified chips appended to `chips[]` (each carries `evidence: ["port_probe"]`
@@ -2093,8 +2151,10 @@ the wire carries (`P8-y`).
 
 **GUI usage:** gate an advanced "Probe ports" button on `port_probe_available`;
 disable it with `port_probe_reason` as the tooltip when false. Because the probe
-touches raw I/O ports, present a confirmation before POSTing. **Detection is
-still not control.**
+touches raw I/O ports, present a confirmation before POSTing, and say in it that
+the probe may write an unlock sequence and is refused while a Super-I/O driver is
+bound (see *What it writes* and *When it refuses* above). **Detection is still not
+control.**
 
 
 ### Session response — AIO Phase 8 Batch 3a additions (daemon >= 2.41.0, DEC-335)

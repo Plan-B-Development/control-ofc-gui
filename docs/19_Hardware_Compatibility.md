@@ -84,8 +84,15 @@ ships the Terra `nct6687d` kmod, which autoloads `nct6687` and blacklists
 current `nct6687d` no longer claims `0xd450`. See
 `21_AMD_Motherboard_Fan_Control_Guide.md` § AM4 400-series specifics for the
 full remediation. The daemon detects the collision in `/diagnostics/hardware`
-→ `module_collisions` and the GUI renders a CRITICAL banner discouraging PWM
-writes until resolved.
+→ `module_collisions`, and the System State page shows it as a critical
+*Driver module collision* condition. **The daemon does not stop writing
+while it is reported** (DEC-433). First, until you have rebooted and it is
+no longer reported, deactivate the active profile (the tray's *Stop profile
+control*; the GUI has no deactivate button) and run no fan tests. That
+stops the curve, not every write: the daemon restores each header's
+original mode once (100 % if it cannot confirm it), and a thermal
+emergency still drives writable headers to 100 %. Only removing the wrong
+driver — blacklist it, then reboot — stops writes to the chip.
 
 ### ITE
 

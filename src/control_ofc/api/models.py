@@ -1363,8 +1363,9 @@ class ModuleCollisionInfo:
     Distinct from `AcpiConflictInfo` (about I/O port ranges) and the
     GUI-side `CONFLICTING_MODULE_SETS` (a static name-pair fallback used
     when the daemon doesn't report this field). When the daemon reports a
-    collision the GUI must render a CRITICAL banner and discourage PWM
-    writes until the user resolves the load ordering.
+    collision the GUI renders a critical condition whose remediation tells the
+    user to deactivate the active profile until the load ordering is resolved
+    — the daemon refuses no writes (DEC-433).
     """
 
     module_a: str = ""
@@ -1563,8 +1564,8 @@ class HardwareDiagnosticsResult:
     kernel_detected_chips: list[str] = field(default_factory=list)
     # DEC-105: simultaneous-load collisions detected by the daemon. Empty
     # when the daemon predates DEC-105 (skip_serializing_if = "Vec::is_empty"
-    # on the wire). When present, the GUI renders a CRITICAL banner and
-    # discourages PWM writes until the user resolves the load ordering.
+    # on the wire). When present, the GUI renders a critical condition telling
+    # the user to deactivate the active profile until it is resolved (DEC-433).
     module_collisions: list[ModuleCollisionInfo] = field(default_factory=list)
     # DEC-110: CPU vendor string from `/proc/cpuinfo` vendor_id, normalised
     # by the daemon to ``"Intel"`` / ``"AMD"`` / ``""`` (empty when unknown

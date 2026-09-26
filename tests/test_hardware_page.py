@@ -240,6 +240,28 @@ def test_probe_confirm_emits_only_on_yes(qtbot, monkeypatch):
     assert fired == []
 
 
+def test_probe_consent_names_the_writes_and_the_refusal(qtbot, monkeypatch):
+    """DC-w (DEC-433): the dialog is a consent point, and the daemon's probe
+    writes a vendor unlock and exit where nothing answers — it must not be
+    described as read-only, and it must say the probe is refused while a
+    Super-I/O driver it recognises is bound."""
+    page, _ = _page(qtbot, client=object())
+    asked: list[str] = []
+
+    def question(_parent, _title, text, *a, **k):
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", question)
+    page._confirm_probe()
+    assert len(asked) == 1
+    text = asked[0]
+    assert "not read-only" in text
+    assert "unlock" in text
+    assert "is read-only" not in text
+    assert "refuses" in text and "recognises is bound" in text
+
+
 def test_showevent_lazy_fetch_once(qtbot):
     page, _ = _page(qtbot)
     calls: list[int] = []
