@@ -86,6 +86,14 @@ class TestNct6683:
         assert c.source_class == "thermal_diode"
         assert c.confidence == "medium"
 
+    @pytest.mark.parametrize("chip", ["nct6683", "nct6686", "nct6687"])
+    def test_a_peci_dimm_is_memory_not_the_cpu(self, chip):
+        """`DC-f`: the kernel reports `PECI DIMM n` with temp_type 6, the PECI code."""
+        c = classify_sensor(chip, "PECI DIMM 0", temp_type=6)
+        assert c.source_class == "memory_dimm"
+        # Presence: the CPU's own PECI channel, same type code, is still the CPU.
+        assert classify_sensor(chip, "PECI 0.0", temp_type=6).source_class == "cpu_peci"
+
     def test_nct6683_virtual_is_low_confidence(self):
         c = classify_sensor("nct6683", "Virtual Temp 1")
         assert c.source_class == "virtual"

@@ -17,6 +17,11 @@ called a `CPUTIN` reading a CPU input while the Overview table flagged it as unr
 tooltip and the Sensor Detail window also ignored "Treat as coolant". The Overview summary's
 low-confidence count now honours "Treat as coolant" too.
 
+**Memory temperatures on nct6683-family chips are no longer shown as the CPU** (DEC-429). The
+`PECI DIMM 0` to `PECI DIMM 3` sensors are memory temperatures that carry the same type code as the
+CPU's PECI channels. The GUI now shows them as memory. The daemon release paired with this one
+also stops counting them as CPU readings for thermal safety.
+
 **The Tdie tooltip no longer tells you to prefer it over Tctl** (DEC-428). The preferred-CPU sensor
 the daemon recommends is Tctl, so the note now just says Tctl may run a fixed offset above Tdie on
 some CPUs.
@@ -31,6 +36,8 @@ some CPUs.
   `default_cpu`, which ranks Tctl first. The AIO setup takes the first package, Tctl or Tdie sensor
   in the daemon's list order.
 - The ASUS EC water labels are listed with their real spelling.
+- The nct6683 section lists every temperature label the kernel publishes, including the `PCH`
+  and `Diode (curr/volt)` labels, and says `PECI DIMM` carries the PECI type code (DEC-429).
 
 ## [2.83.3] — 2026-09-25
 

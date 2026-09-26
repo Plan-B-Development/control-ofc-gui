@@ -145,22 +145,39 @@ signal beyond the label alone.
 | 3 | `thermal_diode` | medium |
 | 6 | `cpu_peci` | medium_high |
 
-Label-based rules (applied when temp_type is absent or unknown):
+**A `DIMM` label is checked before any type code** (`DC-f`). The kernel reads
+memory temperatures over PECI too: `PECI DIMM 0`–`3` carry `temp_type` 6, the
+same code as the CPU's own `PECI 0.0`–`3.1`, so the type-code rule alone would
+call a DIMM the CPU. Both the GUI (`memory_dimm`) and the daemon (`kind: mb_temp`)
+exclude them; the daemon's exclusion is what keeps a memory reading out of the
+thermal ladder's CPU input.
+
+Label-based rules (a `DIMM` label first; the rest apply when temp_type is absent
+or unknown):
 
 | Label pattern | source_class | Confidence |
 |---|---|---|
-| Contains `DIMM` | `memory_dimm` | medium |
+| Contains `DIMM` (any type code) | `memory_dimm` | medium |
 | Contains `SMBus` | `smbus_device` | medium |
 | Contains `Virtual` | `virtual` | low |
 | `Local` | `chip_local` | medium |
 
-Full source label enumeration from the kernel source (`nct6683.c`):
-`Local`, `Diode 0-2`, `Thermistor 0-13`, `AMD TSI Addr 90h-9dh`,
-`PECI 0.0-3.1`, `PECI DIMM 0-3`, `SMBus 0-5`, `DIMM 0-3`, `Virtual 0-7`.
+Full temperature source label enumeration from the kernel source
+(`nct6683_mon_label[]` in `nct6683.c`): `Local`, `Diode 0-2 (curr)`,
+`Diode 0-2 (volt)`, `Thermistor 0-16`, `PECI 0.0-3.1`, `PECI DIMM 0-3`,
+`PCH CPU`, `PCH CHIP`, `PCH CHIP CPU MAX`, `PCH MCH`, `PCH DIMM 0-3`,
+`SMBus 0-5`, `DIMM 0-3`, `AMD TSI Addr 90h`-`9dh`, `Virtual 0-7`.
+The GUI's `DIMM` rule catches `PCH DIMM 0-3` (`memory_dimm`); it has no rule for the
+other `PCH` labels, so they fall to `super_io_channel`.
+The daemon promotes `PCH CPU` and `PCH CHIP CPU MAX` to `cpu` because the label
+names the CPU. That is deliberate (DEC-429): each reads at least the CPU's own
+temperature, so neither can hide a hot CPU from the ladder.
 
 The temp_type codes are mapped from source ranges in the kernel:
 0x02-0x07 -> type 3 (diode), 0x08-0x18 -> type 4 (thermistor),
-0x42-0x49 -> type 5 (AMD TSI), 0x20-0x2b -> type 6 (Intel PECI).
+0x42-0x49 -> type 5 (AMD TSI), 0x20-0x2b -> type 6 (Intel PECI; this range
+includes `PECI DIMM 0-3` at 0x28-0x2b). Every other source — `Local`, `PCH *`,
+`SMBus`, `DIMM`, `Virtual` — returns 0, so no `tempN_type` is published.
 Reference: `drivers/hwmon/nct6683.c`, `get_temp_type()` function.
 
 ### it87 family (ITE Super I/O)
@@ -405,7 +422,10 @@ classifies the same chip+vendor+label as `mb`, so the channel never reaches the
 ladder. The same change also promotes the sources the kernel docs tell you to
 prefer. On every chip in `NUVOTON_PECI_TSI_CHIPS` (`hwmon/discovery.rs:201`), a
 label containing `AMD TSI`, `TSI`, `PECI` or `CPU` classifies as `cpu`
-(`discovery.rs:263`). That list is the eleven nct6775-family chips plus
+(`discovery.rs:263`), **unless it also contains `DIMM`**: nct6683's `PECI DIMM
+0`–`3` are memory temperatures, and as `cpu` they entered the ladder's
+hottest-CPU reduce and, on a board with no k10temp/coretemp, stood in for a
+missing CPU and kept the no-sensor floor off (`DC-f`, DEC-429). That list is the eleven nct6775-family chips plus
 `nct6683`, `nct6686` and `nct6687`. Before DEC-294, these labels fell through to a
 generic fallback that recognised neither `PECI` nor `TSI`. Until DEC-397 (`DOC-w`),
 the promotion named only five chips. On the other nine nct6775-family chips, an ASUS

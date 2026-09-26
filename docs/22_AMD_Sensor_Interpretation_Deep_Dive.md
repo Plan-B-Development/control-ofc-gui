@@ -222,14 +222,23 @@ temperature source labels:
 | Source type | Labels | temp_type |
 |---|---|---|
 | Chip-local | `Local` | — |
-| Thermal diode | `Diode 0`, `Diode 1`, `Diode 2` | 3 |
-| Thermistor | `Thermistor 0` through `Thermistor 13` | 4 |
+| Thermal diode | `Diode 0 (curr)` through `Diode 2 (curr)`, `Diode 0 (volt)` through `Diode 2 (volt)` | 3 |
+| Thermistor | `Thermistor 0` through `Thermistor 16` | 4 |
 | AMD TSI | `AMD TSI Addr 90h` through `AMD TSI Addr 9dh` | 5 |
 | Intel PECI | `PECI 0.0` through `PECI 3.1` | 6 |
-| PECI DIMM | `PECI DIMM 0` through `PECI DIMM 3` | — |
+| PECI DIMM (memory, read over PECI) | `PECI DIMM 0` through `PECI DIMM 3` | 6 |
+| PCH | `PCH CPU`, `PCH CHIP`, `PCH CHIP CPU MAX`, `PCH MCH`, `PCH DIMM 0` through `PCH DIMM 3` | — |
 | SMBus | `SMBus 0` through `SMBus 5` | — |
 | DIMM | `DIMM 0` through `DIMM 3` | — |
 | Virtual | `Virtual 0` through `Virtual 7` | — |
+
+**`PECI DIMM` carries the PECI type code, and it is not the CPU** (`DC-f`). Its
+source falls in the kernel's PECI range, so `temp_type` 6 cannot tell a DIMM from
+the CPU. The GUI classifies any `DIMM` label as `memory_dimm` before it looks at
+the type code, and the daemon reports it as `mb_temp`, which keeps it out of the
+thermal ladder's CPU input. Until DEC-429 both called it the CPU. The daemon does
+report `PCH CPU` and `PCH CHIP CPU MAX` as `cpu`, deliberately: each reads at
+least the CPU's own temperature.
 
 #### temp_type classification codes
 

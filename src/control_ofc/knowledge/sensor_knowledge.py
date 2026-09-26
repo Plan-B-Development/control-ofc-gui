@@ -675,17 +675,20 @@ def _classify_nct6683(
             display_description=f"Thermal diode channel ({label})",
             confidence="medium",
         )
-    if temp_type == 6 or "peci" in lower_label:
-        return SensorClassification(
-            source_class="cpu_peci",
-            display_description=f"CPU temperature via Intel PECI ({label})",
-            confidence="medium_high",
-        )
+    # `DC-f`: `PECI DIMM 0`..`3` are memory temperatures read over PECI, so they
+    # carry `temp_type` 6 and "peci" like the CPU channels. The DIMM test runs
+    # first, as the daemon's exclusion does, or they read as the CPU.
     if "dimm" in lower_label:
         return SensorClassification(
             source_class="memory_dimm",
             display_description=f"DIMM / memory temperature ({label})",
             confidence="medium",
+        )
+    if temp_type == 6 or "peci" in lower_label:
+        return SensorClassification(
+            source_class="cpu_peci",
+            display_description=f"CPU temperature via Intel PECI ({label})",
+            confidence="medium_high",
         )
     if "smbus" in lower_label:
         return SensorClassification(
