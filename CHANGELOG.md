@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.83.3] — 2026-09-26
+
 ### Fixed
 
 **ASUS water-temperature channels are recognised as inlet and outlet** (DEC-428). The ASUS EC
@@ -56,6 +58,13 @@ bundle, although the documentation says they never leave your machine.
 the daemon recommends is Tctl, so the note now just says Tctl may run a fixed offset above Tdie on
 some CPUs.
 
+**The Fan Wizard spin-down timer goes up to 12 seconds on every machine** (DEC-426). On a machine
+with an OpenFan controller, Settings capped the timer at the daemon's advertised stop timeout
+(8 seconds) and said in a tooltip that the daemon restarts a stopped OpenFan fan after that. It does
+not. A fan stopped by the wizard stays stopped until the wizard restores it, or until the daemon's
+own identify timeout ends the stop. The cap and the tooltip are gone, and a timer you set above 8
+seconds is no longer lowered.
+
 ### Documentation
 
 **The sensor guides (`docs/20`, `docs/22`) now describe what the GUI actually does** (DEC-428):
@@ -68,19 +77,6 @@ some CPUs.
 - The ASUS EC water labels are listed with their real spelling.
 - The nct6683 section lists every temperature label the kernel publishes, including the `PCH`
   and `Diode (curr/volt)` labels, and says `PECI DIMM` carries the PECI type code (DEC-429).
-
-## [2.83.3] — 2026-09-25
-
-### Fixed
-
-**The Fan Wizard spin-down timer goes up to 12 seconds on every machine** (DEC-426). On a machine
-with an OpenFan controller, Settings capped the timer at the daemon's advertised stop timeout
-(8 seconds) and said in a tooltip that the daemon restarts a stopped OpenFan fan after that. It does
-not. A fan stopped by the wizard stays stopped until the wizard restores it, or until the daemon's
-own identify timeout ends the stop. The cap and the tooltip are gone, and a timer you set above 8
-seconds is no longer lowered.
-
-### Documentation
 
 **The API contract (`docs/08`) is corrected in five places** (DEC-426):
 
