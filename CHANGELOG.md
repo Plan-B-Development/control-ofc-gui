@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.83.4] — 2026-09-27
+
 ### Fixed
 
 **The GPU kernel advisory no longer re-opens every five minutes** (DEC-432). Pressing **OK** on
