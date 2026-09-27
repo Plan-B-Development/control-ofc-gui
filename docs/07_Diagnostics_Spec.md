@@ -744,7 +744,7 @@ top-to-bottom:
   variability and an out-of-learned-range response are all observations, and the last is
   worded with the benign explanations listed beside it.
 
-  Since **DEC-405** (daemon ≥ 2.52.0) the figures behind those rows are honest about a
+  Since **DEC-405** (daemon ≥ 2.53.0 — merged as 2.52.0, which was never published) the figures behind those rows are honest about a
   slow tach: settling is judged on register *updates* and never before the first one, RPM
   stability is computed over the **settled tail** only, "measurement resolution" is the
   register's own cadence rather than the 500 ms sampler, and monotonicity is judged per leg.
@@ -827,7 +827,7 @@ section historically supported a **persistent area** (`add_persistent_widget`,
 DEC-115) — widgets between the header and the content that stayed visible
 regardless of collapse state. DEC-124 retired the readiness card's use of it (the
 verdict + alerts are now always-visible siblings), and with no remaining caller the
-add-persistent API was removed in v2.8.0. Because Qt's `QWidget.isHidden()`
+add-persistent API was removed in v2.8.3 (merged as v2.8.0, which was never published). Because Qt's `QWidget.isHidden()`
 reflects a widget's
 *own* show/hide flag rather than an ancestor's collapsed state, the
 visibility-gated labels keep working unchanged inside the sections.
@@ -1107,7 +1107,7 @@ recording is still saved, and auto-records are retained separately so they canno
 sessions made by hand.
 
 
-## PWM Test Report (DEC-404, DEC-408 — GUI 2.81.0; DEC-409 — GUI 2.82.0)
+## PWM Test Report (DEC-404, DEC-408, DEC-409 — GUI 2.82.0; DEC-408 was merged as 2.81.0, which was never published)
 
 A whole-machine assessment the user starts from **Hardware ▸ PWM Test Report…**, in its own
 non-modal, single-instance window. It answers "what can Control-OFC actually observe and verify
@@ -1135,7 +1135,7 @@ run outlives its window.
    pairing** on writable headers whose fan reads RPM > 0. Never pre-selected: the **full sweep**
    and the **stall probe**. A test that cannot be offered is disabled with its reason as the
    tooltip — read-only header, OpenFan/GPU (reported read-only), a daemon without the capability
-   (`daemon_supports(...) is True`), a daemon below **2.52.0** for the sweep and pairing (their
+   (`daemon_supports(...) is True`), a daemon below **2.52.0** — in effect below 2.53.0, since no 2.52.x was published — for the sweep and pairing (their
    settling and noise figures were wrong before DEC-405), and the probe's envelope: never a
    pump-protected header, never `cpu_fan`, only `chassis_fan`/`radiator_fan`, and only with a tach.
 2. **Your setup** (optional). The cooler's model and pump-switch position, and per header what is

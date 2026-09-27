@@ -19,10 +19,25 @@
   paired daemon, the Hardware page's readiness items stop sending you to "Diagnostics ▸ Sensors" and
   "Diagnostics ▸ Super-I/O", a page Control-OFC no longer has. They name the Overview page's Sensors table
   and the Hardware page's Super-I/O Architecture section instead. An older daemon still sends the old
-  wording; the button beside each item already goes to the right place.
+  wording; the button beside each item already goes to the right place. Needs a daemon release after
+  2.56.3.
 
 ### Documentation
 
+- **The API contract matches the daemon it describes, and every version it names can be installed**
+  (DEC-439). `docs/08` now documents what the daemon returns and refuses in places it had left out or
+  misstated. That covers the `/poll` and `/sensors/history` shapes, validation session states, events,
+  finding ids and retention, the fourteen readiness codes and their `503`, the calibrate body and response,
+  the cooling-device id rules, profile activation errors, and the rejections the web framework returns
+  before any handler runs. It adds that the daemon does not reject a profile naming a read-only header.
+  It also adds that when a daemon learns a new liquid cooler, a profile saved earlier with that cooler's fan
+  below 30 % is refused, and that only a GUI from 2.83.2 raises it on load. A version
+  floor now names the first release that was published, and says where the work was merged when that
+  version was never released. That applies across the contract, the manual and the hardware guides. For
+  example, the PWM Test Report needs GUI 2.82.0 (built as 2.81.0) and daemon 2.53.0 (merged as 2.52.0),
+  and the Gigabyte guard and the ARCTIC behaviour need daemon 2.56.1. Behaviour that only an unreleased
+  daemon has is marked as needing a daemon release after 2.56.3. The changelog entries for 1.40.0, 2.8.3
+  and 2.74.0 now say which unreleased versions they carry.
 - **The operations guide and the manual say what `runtime.toml` holds, and what makes a `daemon.toml`
   edit safe** (DEC-438, with the paired daemon docs). `runtime.toml` holds the fan header roles you
   assign — on a board with no fan labels, a `pump` assignment there is what gives that header its 30 %
@@ -47,24 +62,26 @@
   options.
 
 - **The OpenFan manual says what a reconnect opens, and no longer suggests a udev symlink the daemon
-  refuses** (DEC-436, daemon change). While a dropped controller is away, the daemon now tries only the
+  refuses** (DEC-436, daemon change). With a daemon release after 2.56.3, while a dropped controller
+  is away, the daemon tries only the
   configured port, the controller's own device and newly attached serial devices, so other USB-serial
   hardware is not reset. The manual, the operations guide and the OpenFan architecture notes say so. The
   manual points at the `/dev/serial/by-id/` link for a fixed path, where it used to suggest
   `/dev/control-ofc-controller`, which the daemon does not accept.
 
 - **The manual says which GPUs the daemon resets when it stops** (DEC-435, daemon change). The
-  setup checklist and the System State notes now say that a GPU Control-OFC has never driven is left
+  setup checklist and the System State notes now say that, from the first daemon release after
+  2.56.3, a GPU Control-OFC has never driven is left
   to LACT or CoreCtrl across daemon stops and restarts. They also say that **Restore GPU Fan to
   Automatic** keeps the daemon off that GPU until a profile is next activated or the daemon restarts. The operations guide
-  gives the daemon's startup profile order.
+  gives the daemon's startup profile order, as a daemon release after 2.56.3 applies it.
 
 ### Changed
 
 - **The hardware reference names every Gigabyte board the daemon expects two sensor chips on**
   (DEC-434). The Hardware Compatibility guide now has rows for the X399, TRX40 and Z390 / Z490 AORUS
   boards the daemon already knew. The guide, the Intel motherboard guide and the Gigabyte Z890 advice in
-  the app now list the eight LGA1851 boards the daemon has just added (Z890 AORUS XTREME AI TOP, PRO ICE,
+  the app now list the eight LGA1851 boards that a daemon release after 2.56.3 adds (Z890 AORUS XTREME AI TOP, PRO ICE,
   ELITE X ICE, TACHYON ICE, TACHYON DUO X ICE, Z890 AI TOP, Z890 AERO D, W880 AI TOP). They say those
   entries rest on the it87 sensor catalogue alone. The in-app advice no longer says other Z890 boards
   will be added only once a board-specific report exists.
@@ -217,14 +234,15 @@ the hardware first appeared in daemon 2.55.0.
 
 ### Fixed
 
-**The hardware guide explains what the daemon now does on an ARCTIC Fan Controller** (DEC-425). Before
-writing one channel, the daemon sets any channel still at the driver's starting 0% to full speed. A
+**The hardware guide explains what the daemon now does on an ARCTIC Fan Controller** (DEC-425). With
+daemon 2.56.1 or later, before writing one channel, the daemon sets any channel still at the driver's starting 0% to full speed. A
 profile that controls only some channels therefore leaves the rest running at 100% instead of stopping
 them.
 
 **The recovery advice says the guard covers every Gigabyte board, and how to turn it off** (DEC-424). The
 missing-headers alert, the 0x8883 chip note and the manual now say the daemon package suppresses `nct6775`
-and `w83627ehf` on every Gigabyte board, not only on the boards it lists. The manual shows the new journal
+and `w83627ehf` on every Gigabyte board, not only on the boards it lists — with daemon 2.56.1 or later;
+older daemon packages cover only the listed boards. The manual shows the new journal
 line and gives the one way to turn the guard off: an empty `/etc/modprobe.d/control-ofc-superio.conf`, which
 masks the package's copy. One guide still said the daemon's 1 Hz polling is "within safe limits" on ASUS WMI
 boards. The kernel names no safe rate, and the guide now says what the kernel does say.
@@ -1263,6 +1281,14 @@ The two serial rows in Settings ▸ Daemon Configuration are deliberately
 attached but not being detected, which is precisely when someone needs them.
 
 ## [2.74.0] — 2026-09-12
+
+This release also carries **2.72.0** and **2.73.0**, neither of which was
+published on its own — their changes (acknowledged and dismissed warnings stay
+quiet, and every part of the System Health Overview can be quietened) are listed
+under
+[2.73.0](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.74.0/CHANGELOG.md#2730--2026-09-11) and
+[2.72.0](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.74.0/CHANGELOG.md#2720--2026-09-11)
+below.
 
 **Pairs with `control-ofc-daemon` >= v2.46.0 for the new field; the floor for
 everything else is unchanged at v2.11.0.** An older daemon simply omits it and
@@ -5684,6 +5710,14 @@ gracefully on older daemons (the base app still works with ≥ v2.4.0).
 
 ## [2.8.3] — 2026-07-04
 
+This release also carries **2.8.0**, **2.8.1** and **2.8.2**, none of which was
+published on its own — their changes (GUI consolidation, contract and docs truth,
+test hardening and an override fix) are listed under
+[2.8.2](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.8.3/CHANGELOG.md#282--2026-07-04),
+[2.8.1](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.8.3/CHANGELOG.md#281--2026-07-04) and
+[2.8.0](https://github.com/Plan-B-Development/control-ofc-gui/blob/v2.8.3/CHANGELOG.md#280--2026-07-04)
+below.
+
 Audit-2026-07-03 Cluster 6 Phase 2: GUI packaging + config-directory hardening.
 
 ### Security
@@ -6167,6 +6201,11 @@ Pairs with `control-ofc-daemon` ≥ v1.19.0.
   warning (keeping their own word).
 
 ## [1.40.0] — 2026-06-16
+
+This release also carries **1.39.0**, which was never published on its own —
+its changes (DEC-156: liquid-cooler support, Phase 1) are listed under
+[1.39.0](https://github.com/Plan-B-Development/control-ofc-gui/blob/v1.40.0/CHANGELOG.md#1390--2026-06-16)
+below.
 
 Guided **AIO setup UX — Phase 2** (GUI-only, builds on DEC-156). DEC-157.
 

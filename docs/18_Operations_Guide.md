@@ -207,10 +207,12 @@ After the window closes, use the GUI's **Rescan Hardware** action (or
 daemon. A controller that was adopted and then dropped off is recovered
 automatically by the poll loop's own reconnect, with no action needed: it keeps
 trying, about every 30 s at the default poll interval, for as long as the daemon
-runs. Each try opens only the configured port, the controller's own device node,
-and a serial device that has appeared since the controller dropped off (on every
-try for its first minute, then once every five minutes), so USB-serial hardware
-that was attached all along is not reset while the controller is away (DEC-436).
+runs. From the first daemon release after 2.56.3 (DEC-436), each try opens only the
+configured port, the controller's own device node, and a serial device that has appeared
+since the controller dropped off (on every try for its first minute, then once every five
+minutes), so USB-serial hardware that was attached all along is not reset while the
+controller is away. Daemon 2.56.3 and older open every `ttyACM`/`ttyUSB` device on each
+try.
 A controller that stops answering without leaving the USB bus is not recovered
 this way — restart the daemon.
 
@@ -266,8 +268,11 @@ The daemon runs as root, so no group membership gates its access to the serial d
 ## Profile activation and persistence
 
 ### Startup precedence
-The daemon uses the first of these that loads (DEC-435). A source that names no file, or a file
-that will not load, is logged and the next is tried:
+From the first daemon release after 2.56.3 (DEC-435), the daemon uses the first of these that
+loads. A source that names no file, or a file that will not load, is logged and the next is tried.
+Daemon 2.56.3 and older stop at a CLI or environment profile that will not load, with no profile
+active, and save a CLI or environment choice to `daemon_state.json` as though it had been
+activated:
 1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json` — whichever comes first. `quiet`
    is the **file stem** (`quiet.json`) in a search path, not the profile's display name.
 2. Environment: `OPENFAN_PROFILE=quiet` (also a file stem)

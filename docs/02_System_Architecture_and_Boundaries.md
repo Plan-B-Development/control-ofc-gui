@@ -232,7 +232,7 @@ control_ofc/
       export_csv.py            #   sweep / probe / trace CSV tables
       svg_chart.py             #   inline SVG charts for the HTML export
       setup_facts.py           #   "Your setup" vocabulary + settings coercion
-  knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.0)
+  knowledge/                   # pure (stdlib-only) hardware-knowledge modules — no Qt/services deps (moved out of ui/ in v2.8.3, merged as the unpublished v2.8.0)
     sensor_knowledge.py        # sensor classification + board-override database
     hwmon_label_resolver.py    # libsensors / hwmon fan-header label resolution
   # Persistence (JSON repos, XDG paths) lives inside services/ and the

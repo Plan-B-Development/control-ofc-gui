@@ -126,7 +126,7 @@ Two things worth knowing about how it words results:
 - **Timings are reported at the resolution they were measured at.** The daemon reads the
   tachometer twice a second, so it says "~1.5 s", never "1,483 ms". A more precise-looking
   number would be invented. Many motherboard chips update the reading only every couple of
-  seconds, and since daemon 2.52.0 the resolution shown is that update rate. Settling time
+  seconds, and since daemon 2.53.0 (built as 2.52.0, which was never released) the resolution shown is that update rate. Settling time
   and RPM stability are measured on those updates, after the fan has settled. A step that is
   still changing when its time runs out shows **Not settled**. That means there is no
   steady reading to report yet, not that something is wrong.
@@ -344,7 +344,7 @@ If you see an `(unverified)` suffix on a header label, treat the assignment as a
 Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or the **Overview** page shows nothing — or less than you expect — work down this list:
 
 - **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** (on the **System State** page) — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
-- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a dual-chip Gigabyte board, where `nct6775` and `w83627ehf` can hide the secondary chip until a full power cut (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). You do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on every Gigabyte board (Gigabyte boards use ITE chips, which those modules cannot drive) and leaves them alone everywhere else, so the entries above are safe as they stand. If you have a Gigabyte board that really does carry a Nuvoton chip, turn the guard off by creating an **empty** file of the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and rebooting. A same-named file in `/etc` masks the package's copy, and an empty one leaves no rule behind. A copy of the package's file would keep the guard, and a differently-named file does not reliably win. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
+- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a dual-chip Gigabyte board, where `nct6775` and `w83627ehf` can hide the secondary chip until a full power cut (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). With daemon 2.56.1 or later you do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on every Gigabyte board (Gigabyte boards use ITE chips, which those modules cannot drive) and leaves them alone everywhere else, so the entries above are safe as they stand. Daemon 2.56.0 and older ship a guard that covers only the Gigabyte boards it lists; on any other Gigabyte board, suppress the two modules yourself as step 2 of the recovery below describes. If you have a Gigabyte board that really does carry a Nuvoton chip, turn the guard off by creating an **empty** file of the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and rebooting. A same-named file in `/etc` masks the package's copy, and an empty one leaves no rule behind. A copy of the package's file would keep the guard, and a differently-named file does not reliably win. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
 - **No drive temperatures** — NVMe drives report temperatures through the kernel `nvme` driver automatically; SATA/SAS drives need `drivetemp` (already in the daemon's modules-load list above).
 - **`lm_sensors` is optional** — the daemon reads `/sys/class/hwmon` directly and does not use libsensors. Installing `lm_sensors` gives you the `sensors` CLI, which is handy for cross-checking what the kernel exposes.
 
@@ -435,9 +435,10 @@ If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are p
 
 #### Recovery, step by step
 
-1. **Check whether the package's guard covers your board.** Recent
-   `control-ofc-daemon` packages install a guard that suppresses the two modules
-   on every Gigabyte board, and logs each time it does:
+1. **Check whether the package's guard covers your board.** From 2.56.1, the
+   `control-ofc-daemon` package installs a guard that suppresses the two modules
+   on every Gigabyte board, and logs each time it does (2.56.0 and older cover only
+   the boards they list):
 
    ```
    sudo journalctl -b -t control-ofc-superio-guard

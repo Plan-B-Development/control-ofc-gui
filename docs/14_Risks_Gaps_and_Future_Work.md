@@ -62,7 +62,7 @@ profile-engine defer (DEC-070/DEC-071) so both writers didn't churn PMFW and stu
 The daemon's `FanController` is `Option<Arc<parking_lot::Mutex<FanController>>>` in `AppState`. This was previously listed as requiring an Arc refactor for clean API/profile-engine separation. R46 investigation confirmed the current design is correct: locks are held for ~1-2ms (serial I/O), never across `.await` points, contention is minimal (1Hz profile engine + user-driven API), and both paths use the same public `set_pwm()` methods. Per-channel locking would add complexity without benefit since serial I/O is inherently sequential. No refactor needed.
 
 ### 5. AIO cooler support — hwmon shipped (Phase 1), USB-only out of scope
-Phase 1 (DEC-156, GUI 1.39.0 / daemon 1.18.0) ships **hwmon** liquid-cooler support: coolant
+Phase 1 (DEC-156, GUI 1.40.0 — merged as 1.39.0, which was never published — / daemon 1.18.0) ships **hwmon** liquid-cooler support: coolant
 classification (`CoolantTemp`), an `is_aio` header flag, a dynamic `aio_hwmon` capability, and
 `AioPumpState` wired into the poll loop. Coolers ride the existing hwmon write/lease path — no new
 control plumbing and **no coolant safety rule** (CPU-only `safety.rs` is unchanged). **USB-only
@@ -76,7 +76,7 @@ Data model supports multiple GPUs. API reports primary only. No UI to select bet
 ### 7. Some GUI spec features not implemented
 - Background self-checks (deferred)
 - One-click diagnostics redaction (deferred — partial PII scrubbing gives false confidence)
-- ~~**SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it (formally deferred, DEC-164).**~~ RESOLVED (DEC-198, daemon v2.5.0): the unused `GET /events` endpoint was **removed** rather than consumed — no client ever used it (`httpx-sse` was dropped in v1.0.0). The GUI stays poll-only (1 Hz `GET /poll`, transitions by poll-diff), which is sufficient; sub-second UI updates, if ever wanted, would reintroduce a push channel from scratch.
+- ~~**SSE consumption (`GET /events`) — daemon exposes it, GUI does not consume it (formally deferred, DEC-164).**~~ RESOLVED (DEC-198, daemon v2.5.1 — merged as v2.5.0, which was never published): the unused `GET /events` endpoint was **removed** rather than consumed — no client ever used it (`httpx-sse` was dropped in v1.0.0). The GUI stays poll-only (1 Hz `GET /poll`, transitions by poll-diff), which is sufficient; sub-second UI updates, if ever wanted, would reintroduce a push channel from scratch.
 - ~~**Dashboard fan table — group-membership badges and per-fan state chips** (stale/fault/manual).~~ RESOLVED (DEC-176/179, GUI v2.2.0): the dashboard's primary fan view is now zone-grouped **fan cards** with a per-fan state chip (Normal / Low RPM / Stall / Stale / Offline / Override) and per-zone roll-ups (online/expected, avg RPM/PWM); the raw label/source/RPM/PWM table is preserved in a collapsed "Raw fan data" expander.
   **Superseded by DEC-222 (GUI v2.25.0):** the zone grid and the raw table were both retired;
   the fan view is now one card per logical control, each with a state chip and a member count.
@@ -340,7 +340,7 @@ padding tweak, and DEC-128/129 own that surface.
 | hwmon redundant sysfs writes in steady state | Per-header coalescing (pwm_enable + PWM value) | v0.5.4 (sanity check) |
 | OpenFan dual-writer when GUI + profile engine active | Profile engine defers to GUI (30s check) | v0.5.4 (sanity check) |
 | hwmon pwm_enable not restored on daemon shutdown | Shutdown handler writes pwm_enable=2 for all headers — **superseded by DEC-382**: `2` is automatic only on it87, so each header the daemon took now gets back exactly what it had | v0.5.4 (V4 audit P0) |
-| Thermal safety override errors silently dropped | Controls-page status chip surfaces "Override blocked — thermal emergency (fans held by safety)" when the daemon refuses a `thermal_abort` override (the earlier ERROR-log mitigation was retired) | GUI v2.8.2 (audit-2026-07-03) |
+| Thermal safety override errors silently dropped | Controls-page status chip surfaces "Override blocked — thermal emergency (fans held by safety)" when the daemon refuses a `thermal_abort` override (the earlier ERROR-log mitigation was retired) | GUI v2.8.3 — merged as v2.8.2, which was never published (audit-2026-07-03) |
 | GPU write endpoints missing from API docs | Added to CLAUDE.md, 08_API_Contract, 09_State_Model | v0.69.0 (V4 audit G2) |
 | Dead code: unused signals, client method, fixtures | Removed with full removal log | v0.69.0 (V4 audit G3) |
 | Journal unit name wrong (control-ofc-daemon.service → control-ofc-daemon) | Fixed in code and spec | v0.71.0 (R51) |

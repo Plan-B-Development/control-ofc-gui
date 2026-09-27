@@ -62,7 +62,7 @@ Below it, five banners appear only when they apply:
   role was lost. Every other setting that was only in the old file is gone from it — copy
   what you need back from the kept copy, then restart `control-ofc-daemon`. The daemon's
   verbatim error goes to the GUI log rather than into the banner, since a TOML parse
-  error can run to several lines. Daemons older than v2.34.0 do not report this, and
+  error can run to several lines. Daemons older than v2.35.0 (built as v2.34.0, which was never released) do not report this, and
   show no banner
 
 ## Fan Cards

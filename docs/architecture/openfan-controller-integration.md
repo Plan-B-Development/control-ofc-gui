@@ -90,7 +90,7 @@ to one attempt per 30 poll cycles and never gives up — `POST /fans/openfan/res
 refuses while a controller is installed, so this is the only route back for one
 that dropped off.
 
-**What an attempt opens (DEC-436, `DC-ae`).** Until DEC-436 this path re-ran
+**What an attempt opens (DEC-436, `DC-ae`; the first daemon release after 2.56.3).** Until DEC-436 this path re-ran
 `auto_detect_port()`, which opened every `ttyACM`/`ttyUSB` node to find one — the
 last caller of the opening detection DEC-291 moved boot and rescan off. The
 reasoning for leaving it ("a known device to re-find rather than a bus to

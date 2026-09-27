@@ -655,7 +655,8 @@ byte-identical unlock behaviour in the same function, not by measurement.
 1. Stop `nct6775` and `w83627ehf` loading, and do not run `sensors-detect`. The
    `control-ofc-daemon` package ships
    `/usr/lib/modprobe.d/control-ofc-superio.conf`, which suppresses both
-   automatically on every Gigabyte board (DEC-424). To do it by hand, use
+   automatically on every Gigabyte board from daemon 2.56.1 (DEC-424; 2.56.0 and
+   older cover only the boards they list). To do it by hand, use
    `install <mod> /bin/true` — **not** `blacklist`, which the explicit `modprobe`
    issued by systemd ignores.
 2. **Reboot** and rescan. Upstream's first step, and enough when nothing re-arms
