@@ -13,6 +13,8 @@ lives on the Hardware page and is covered by ``test_hardware_page`` / ``test_har
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from unittest.mock import MagicMock
 
 from control_ofc.api.models import (
@@ -105,6 +107,39 @@ def test_action_mapping_deep_links_and_in_surface_and_tab_switch():
     )
     assert action("superio_driver_unloaded").target == "superio"
     assert action("sensors_unavailable") == ActionSpec(ACTION_TAB_SWITCH, "View sensors", "sensors")
+    # DC-ag: a read-only header cannot be tested, so it does not share the
+    # unverified item's action — it opens System State's driver guidance.
+    assert action("pwm_read_only") == ActionSpec(
+        ACTION_TAB_SWITCH, "Open System State", "system_state"
+    )
+    assert action("pwm_read_only") != action("pwm_control_unverified")
+
+
+def _github_slug(heading: str) -> str:
+    """GitHub's heading anchor: lowercase, punctuation dropped, spaces → hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.strip().lower()).replace(" ", "-")
+
+
+def test_every_doc_link_anchor_is_a_heading_in_the_readiness_guide():
+    """DC-ag: `pwm_read_only` linked to a section about writable headers. Every
+    anchor must name a real docs/24 heading, and `pwm_read_only`'s must be the
+    section written for it, titled as that section is."""
+    guide = Path(__file__).resolve().parents[1] / "docs" / "24_Cooling_Hardware_Readiness_Guide.md"
+    headings = {
+        _github_slug(m): m.strip()
+        for m in re.findall(r"^## (.+)$", guide.read_text(encoding="utf-8"), re.M)
+    }
+    assert "read-only-pwm-headers" in headings  # presence: the slugging works
+    assert cr._DOC, "the doc-link map must not be empty"
+    for code, (url, _title) in cr._DOC.items():
+        base, _, anchor = url.partition("#")
+        assert base == cr._DOC_BASE, code
+        assert anchor in headings, f"{code} links to #{anchor}, which docs/24 has no heading for"
+    (item,) = cr.build_readiness_items(
+        _hw(items=[ReadinessItem(code="pwm_read_only", severity="warning")])
+    )
+    assert item.doc_url.endswith("#read-only-pwm-headers")
+    assert item.doc_title == headings["read-only-pwm-headers"]
 
 
 def test_doc_links_present_for_problems_absent_for_ok():

@@ -73,7 +73,7 @@ _DOC: dict[str, tuple[str, str]] = {
         "selecting-a-preferred-sensor", "Selecting a preferred sensor"
     ),
     "no_pwm_controls": _doc("loading-an-in-kernel-super-io-driver", "Loading a Super-I/O driver"),
-    "pwm_read_only": _doc("pwm-detected-but-not-verified", "PWM detected but not verified"),
+    "pwm_read_only": _doc("read-only-pwm-headers", "Read-only PWM headers"),
     "pwm_control_unverified": _doc("fan-control-verification", "Fan-control verification"),
     "superio_driver_unloaded": _doc(
         "loading-an-in-kernel-super-io-driver", "Loading a Super-I/O driver"
@@ -90,13 +90,20 @@ _DOC: dict[str, tuple[str, str]] = {
 #   "superio"                        → in-surface scroll to the Super-I/O section
 #   "pwm_verify"                     → switch to the existing PWM-verify workflow
 #   "sensors"                        → switch to the Overview page (sensor table)
+#   "system_state"                   → switch to the System State page (driver guidance)
 def _action_for(code: str) -> ActionSpec:
     if code in ("cpu_sensor_missing", "cpu_default_low_confidence", "selected_cpu_sensor_missing"):
         return ActionSpec(ACTION_DEEP_LINK, "Pick a CPU sensor", "preferred_cpu")
     if code == "selected_mb_sensor_missing":
         return ActionSpec(ACTION_DEEP_LINK, "Pick a motherboard sensor", "preferred_mb")
-    if code in ("pwm_control_unverified", "pwm_read_only"):
+    if code == "pwm_control_unverified":
         return ActionSpec(ACTION_TAB_SWITCH, "Test PWM control", "pwm_verify")
+    if code == "pwm_read_only":
+        # A read-only header cannot be tested, and the Super-I/O section names
+        # no fix for a chip whose driver is bound (DC-ag). The driver guidance
+        # for it — the chip table's known issues, the board's vendor notes —
+        # is on System State.
+        return ActionSpec(ACTION_TAB_SWITCH, "Open System State", "system_state")
     if code in ("no_pwm_controls", "superio_driver_unloaded", "superio_acpi_conflict"):
         return ActionSpec(ACTION_IN_SURFACE, "View Super-I/O details", "superio")
     if code in ("monitor_only_fans_present", "unknown_sensors_present", "sensors_unavailable"):

@@ -141,11 +141,13 @@ def test_recommended_action_targets():
             ReadinessItem(code="pwm_control_unverified", severity="warning"),
             ReadinessItem(code="no_pwm_controls", severity="warning"),
             ReadinessItem(code="sensors_unavailable", severity="warning"),
+            ReadinessItem(code="pwm_read_only", severity="warning"),
         ]
     )
     targets = {
         a.code: a.action_target for a in build_recommended_actions(build_readiness_items(hw))
     }
+    assert targets["pwm_read_only"] == "system_state"
     assert targets["cpu_sensor_missing"] == "preferred_cpu"
     assert targets["selected_mb_sensor_missing"] == "preferred_mb"
     assert targets["pwm_control_unverified"] == "pwm_verify"

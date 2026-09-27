@@ -49,6 +49,35 @@ advisory — it never silently replaces a working sensor, and a selection that l
 disappears (a chip that stopped being detected) is flagged as *stale* here so you can
 re-pick. This changes only the daemon's own configuration file; no hardware is touched.
 
+## Read-only PWM headers
+
+The daemon found PWM (`pwmN`) attributes that the kernel publishes read-only, so the
+fans on those headers can be watched but not controlled. Nothing can be written to
+them, so fan-control verification cannot help. The cause is almost always the
+driver, not the board:
+
+- **The bound driver is monitoring-only for the chip.** The usual case is the
+  in-kernel `nct6683`, which covers the NCT6683D, NCT6686D and NCT6687D on many MSI
+  and ASRock boards. It publishes `pwmN` read-only on every board except Mitac OEM
+  systems and has no `pwmN_enable` at all, so no BIOS setting unlocks it.
+  `ls -l /sys/class/hwmon/hwmon*/device/driver` shows which driver is bound; the
+  device name does not, because the out-of-tree drivers use the same names.
+  - **MSI (NCT6687D):** install `nct6687d-dkms-git` and blacklist `nct6683`, then
+    reboot. With both loaded they can bind the same chip and garble readings.
+  - **ASRock (NCT6686D / NCT6683D):** the fans on that chip need a board-specific
+    out-of-tree driver — for example `asrock-nct6683` for the boards it lists, or
+    `nct6687d` on some boards (its fan labels are MSI's, so check which header is
+    which).
+
+  Installing the wrong out-of-tree driver can do harm. Read the board's row in
+  *Driver Setup* (in the user manual) before changing anything.
+- **The channel is not controllable.** Some chips report a duty for a channel they
+  cannot drive. No driver change helps there.
+
+The **Open System State** action opens the System State page. There, hovering your
+chip's row in the **Hardware Registry** table shows its known issues, and the
+**Board notes** section lists any vendor quirk that matches your board.
+
 ## PWM detected but not verified
 
 The daemon found writable PWM (`pwmN`) attributes, but has not confirmed that writing

@@ -1017,9 +1017,11 @@ class DaemonClient:
 
         Idempotent: deactivating when no profile is active is a success
         no-op. Returns the previously-active profile id/name (both None
-        when there was nothing to deactivate). The daemon falls back to
-        imperative-only behaviour after this call until a new profile is
-        activated. See DEC-097.
+        when there was nothing to deactivate). Until a new profile is
+        activated the daemon evaluates no curve: it hands back the motherboard
+        headers it took (DEC-382), and its thermal emergency still acts on
+        its own.
+        See DEC-097.
         """
         return parse_profile_deactivate(self._post("/profile/deactivate", json={}))
 

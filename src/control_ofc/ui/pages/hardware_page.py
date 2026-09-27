@@ -1275,6 +1275,8 @@ class HardwarePage(QWidget):
             self._scroll.ensureWidgetVisible(self._diagnostics_card)
         elif target == "sensors":
             self.open_overview.emit()
+        elif target == "system_state":
+            self.open_system_state.emit()
 
     # ── Diagnostics glue (AIO-MB Phase 6) ────────────────────────────
     #

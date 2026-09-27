@@ -2,7 +2,29 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Read-only fan headers get their own help, and no longer offer a test that cannot run**
+  (DEC-437). On the Hardware page, the "Some PWM headers are read-only" item offered **Test PWM
+  control**, which cannot do anything on a header nothing can write to. Its **Learn how** link opened
+  a section about writable headers that have not been tested. The action is now **Open System State**,
+  where the Hardware Registry and Board notes carry the driver guidance for your chip. The link now opens
+  a new *Read-only PWM headers* section in the readiness guide. It explains the usual cause, the in-kernel
+  `nct6683` driver on MSI and ASRock boards, and what to install instead.
+- **Readiness advice from the daemon names pages that exist** (DEC-437, daemon change). With the
+  paired daemon, the Hardware page's readiness items stop sending you to "Diagnostics ▸ Sensors" and
+  "Diagnostics ▸ Super-I/O", a page Control-OFC no longer has. They name the Overview page's Sensors table
+  and the Hardware page's Super-I/O Architecture section instead. An older daemon still sends the old
+  wording; the button beside each item already goes to the right place.
+
 ### Documentation
+
+- **Corrected claims about deactivating a profile and reloading daemon settings** (DEC-437). The operations guide said deactivating
+  a profile returns the daemon to "imperative-only mode", which was retired at 2.0.0. It now says the
+  daemon evaluates no curve, hands back the motherboard headers it took, and keeps the thermal emergency. The API
+  contract now says a SIGHUP reload that cannot parse `runtime.toml` also resets an exit floor set there
+  to the `daemon.toml` value. The AMD motherboard guide no longer says the test host loads `it87` with no
+  options.
 
 - **The OpenFan manual says what a reconnect opens, and no longer suggests a udev symlink the daemon
   refuses** (DEC-436, daemon change). While a dropped controller is away, the daemon now tries only the

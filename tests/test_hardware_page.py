@@ -181,6 +181,22 @@ def test_sensors_action_emits_open_overview(qtbot):
         btn.click()
 
 
+def test_read_only_pwm_action_opens_system_state_not_the_pwm_test(qtbot):
+    """DC-ag: a read-only header cannot be tested. Its button must reach System
+    State (the driver guidance), and must not scroll to the PWM-test section."""
+    page, _ = _page(qtbot)
+    page._on_readiness_ok(
+        _hw(items=[ReadinessItem(code="pwm_read_only", severity="warning", summary="x")])
+    )
+    btn = page.findChild(QPushButton, "Hardware_Do_pwm_read_only")
+    assert btn is not None
+    scrolled: list = []
+    page._scroll.ensureWidgetVisible = lambda w, *a, **k: scrolled.append(w)  # type: ignore[method-assign]
+    with qtbot.waitSignal(page.open_system_state, timeout=1000):
+        btn.click()
+    assert scrolled == [], "the action must navigate away, not scroll within the page"
+
+
 def test_superio_action_scrolls_without_crash(qtbot):
     page, _ = _page(qtbot)
     page._on_readiness_ok(

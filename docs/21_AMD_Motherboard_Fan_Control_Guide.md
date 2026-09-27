@@ -672,7 +672,7 @@ Why the *old* advice still cannot work, measured rather than argued:
 
 | Old advice | Why it fails |
 | --- | --- |
-| "load with `mmio=on`" | `mmio` already defaults to `true` (`it87.c:314`). The test host passes the module no parameters at all, so this named a state already in effect. |
+| "load with `mmio=on`" | `mmio` already defaults to `true` (`it87.c:314`), and the test host does not set it (its only it87 option is `ignore_resource_conflict=1`), so this named a state already in effect. |
 | "update to a current build" | The failure reproduces at upstream HEAD. It is not a driver bug. (And a build from 2026-09-09 on renames the chips — doc 19.) |
 | "read the DEVID in `dmesg` and pick a fix" | The ID is printed only with dynamic debug on, `0xFFFF` never, and both readings are cleared by the same ladder. |
 | "per issue #81" | #81's *opening post* forced the ID and set `mmio=on` and still lost three fans and a pump. Its later comments record the reporter getting the second chip working — the opposite of what the opening post shows. |

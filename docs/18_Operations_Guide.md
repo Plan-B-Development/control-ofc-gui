@@ -232,7 +232,7 @@ When the user activates a profile in the GUI:
 ### Deactivating a profile
 Two ways to leave profile mode without restarting the daemon:
 - **Activate a different profile** — `POST /profile/activate` replaces the current one.
-- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile and returns the daemon to imperative-only mode. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the daemon's internal `profile-engine` hwmon lease (the GUI holds no lease — DEC-097/DEC-165). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
+- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile, after which the daemon evaluates no fan curve and hands back the motherboard headers it took (DEC-382); its thermal emergency still acts on its own. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the daemon's internal `profile-engine` hwmon lease (the GUI holds no lease — DEC-097/DEC-165). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
 
 Restarting the daemon without a profile also works, but is no longer required.
 

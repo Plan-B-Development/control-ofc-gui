@@ -1557,8 +1557,9 @@ class HardwareDiagnosticsResult:
     # a measurement rather than an inference.
     board_firmware_counts: BoardFirmwareCounts | None = None
     # DEC-101: best-effort kernel-level chip detection (parsed from
-    # /dev/kmsg by the daemon). Populated when the kernel ring buffer
-    # is readable; empty otherwise. Useful for surfacing the
+    # /dev/kmsg by the daemon). Empty in the shipped deployment (DEC-421):
+    # the packaged unit sets ProtectKernelLogs=true, which denies /dev/kmsg.
+    # Also empty when nothing matched. Useful for surfacing the
     # "kernel found chip but driver did not bind" diagnostic; not
     # authoritative for "what works".
     kernel_detected_chips: list[str] = field(default_factory=list)
