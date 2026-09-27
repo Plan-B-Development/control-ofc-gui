@@ -91,7 +91,7 @@ sudo systemctl disable --now fan2go.service          # fan2go
 
 Also worth knowing:
 
-- **LACT / CoreCtrl** (GPU tools): don't let them manage the fan of a GPU that Control-OFC controls — pick one owner per device. From the first daemon release after 2.56.3, a GPU Control-OFC has never driven is left alone when the daemon stops or restarts, so these tools can own it; daemon 2.56.3 and older put every AMD GPU back on its firmware curve whenever they stop. Once a profile has driven a GPU, stopping the daemon puts that GPU back on its firmware curve; **Restore GPU Fan to Automatic** hands it back straight away, and after that the daemon leaves it alone until a profile is next activated or the daemon restarts.
+- **LACT / CoreCtrl** (GPU tools): don't let them manage the fan of a GPU that Control-OFC controls — pick one owner per device. From daemon 2.56.4, a GPU Control-OFC has never driven is left alone when the daemon stops or restarts, so these tools can own it; daemon 2.56.3 and older put every AMD GPU back on its firmware curve whenever they stop. Once a profile has driven a GPU, stopping the daemon puts that GPU back on its firmware curve; **Restore GPU Fan to Automatic** hands it back straight away, and after that the daemon leaves it alone until a profile is next activated or the daemon restarts.
 - **`pwmconfig`** (lm_sensors' interactive prober) stops fans while it tests. Fine as a one-off diagnostic, but only run it while `control-ofc-daemon` is stopped.
 
 ## Step 6 — Verify control end-to-end

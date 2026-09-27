@@ -97,8 +97,8 @@ writes, PMFW handling, or GPU display naming.
   those (DEC-435).** A card whose PMFW curve the daemon wrote (a profile's curve or a hardware
   verify) is named in a write-ahead record before the first write and reset on every stop path,
   including SIGKILL via `ExecStopPost`; a card it never wrote, or handed back itself with
-  `POST /gpu/{id}/fan/reset`, is not touched, so LACT or CoreCtrl can own it. This holds from the
-  first daemon release after 2.56.3; daemon 2.56.3 and older reset every AMD card at every stop.
+  `POST /gpu/{id}/fan/reset`, is not touched, so LACT or CoreCtrl can own it. This holds from
+  daemon 2.56.4; daemon 2.56.3 and older reset every AMD card at every stop.
   *(Safety-critical;
   also stated in `CLAUDE.md`.)*
 

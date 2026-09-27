@@ -29,7 +29,7 @@
 >   it holds a latched emergency and can bring the 40 % no-sensor floor — docs/08's thermal
 >   ladder table has every case).
 > - **§6a GPU**: the PCI-ID table (since DEC-430 generated from libdrm) and the shutdown
->   reset (only the cards the daemon drove, from the first daemon release after 2.56.3).
+>   reset (only the cards the daemon drove, from daemon 2.56.4).
 > - **The "1 %" coalesce threshold** (§6a): OpenFan and hwmon writes coalesce only an
 >   exact repeat of the last duty; only the GPU uses a 5 % band.
 > - **§11 Documentation Gaps**: auto-lease, auto-reconnect and AIO support all shipped.

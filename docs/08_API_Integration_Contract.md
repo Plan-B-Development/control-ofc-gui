@@ -2747,7 +2747,7 @@ rather than an optional refinement.
     `POST /profile/activate` (any profile, including re-activating the same one). **Deactivating
     does not return it** to the engine. A daemon restart does: the hand-back is held in memory only,
     so the restarted engine drives every card its startup profile names.
-    From the first daemon release after 2.56.3 (DEC-435) the card also comes off the list every
+    From daemon 2.56.4 (DEC-435) the card also comes off the list every
     daemon stop resets, so a curve another tool (LACT, CoreCtrl) puts on it afterwards survives the
     next stop or restart; daemon 2.56.3 and older reset every AMD card at every stop. A failed reset
     changes neither.

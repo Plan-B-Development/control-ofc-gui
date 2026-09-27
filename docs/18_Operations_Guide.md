@@ -73,8 +73,7 @@ source for every value here; this is the summary an operator needs.
 - **Stop.** On `SIGTERM` the daemon stops its API, lets its tasks finish, and then
   restores the hardware: the exit floor for each OpenFan channel and each header with no
   mode to go back to, then a reset of the GPU fan curves, then each other motherboard
-  header handed back to what it was doing before the daemon took it. (From the first
-  daemon release after 2.56.3 only a GPU the daemon drove is reset; daemon 2.56.3 and
+  header handed back to what it was doing before the daemon took it. (From daemon 2.56.4 only a GPU the daemon drove is reset; daemon 2.56.3 and
   older reset every AMD card at every stop.)
   `TimeoutStopSec=40` is the outer bound. `ExecStopPost=/usr/bin/control-ofc-restore-auto`
   runs after **every** stop — a crash and `SIGKILL` included — and repeats the header
@@ -265,7 +264,7 @@ After the window closes, use the GUI's **Rescan Hardware** action (or
 daemon. A controller that was adopted and then dropped off is recovered
 automatically by the poll loop's own reconnect, with no action needed: it keeps
 trying, about every 30 s at the default poll interval, for as long as the daemon
-runs. From the first daemon release after 2.56.3 (DEC-436), each try opens only the
+runs. From daemon 2.56.4 (DEC-436), each try opens only the
 configured port, the controller's own device node, and a serial device that has appeared
 since the controller dropped off (on every try for its first minute, then once every five
 minutes), so USB-serial hardware that was attached all along is not reset while the
@@ -326,7 +325,7 @@ The daemon runs as root, so no group membership gates its access to the serial d
 ## Profile activation and persistence
 
 ### Startup precedence
-From the first daemon release after 2.56.3 (DEC-435), the daemon uses the first of these that
+From daemon 2.56.4 (DEC-435), the daemon uses the first of these that
 loads. A source that names no file, or a file that will not load, is logged and the next is tried.
 Daemon 2.56.3 and older stop at a CLI or environment profile that will not load, with no profile
 active, and save a CLI or environment choice to `daemon_state.json` as though it had been

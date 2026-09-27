@@ -287,7 +287,7 @@ generation). Requires `it87-dkms-git`.
 PR #2512), and per the it87 SIV catalogue alone on the Z890 AORUS XTREME AI TOP,
 PRO ICE, ELITE X ICE, TACHYON ICE and TACHYON DUO X ICE, the Z890 AI TOP, the
 Z890 AERO D and the W880 AI TOP (the it87 tracker has no report for those yet). The daemon's
-dual-chip table lists the MASTER and MASTER AI TOP, and from the first daemon release after 2.56.3
+dual-chip table lists the MASTER and MASTER AI TOP, and from daemon 2.56.4
 the other eight as well, so a missing secondary raises its warning on each board listed. The
 **Z890 AORUS ELITE WIFI7** (ICE / PLUS / DUO X) has the IT8696E only. Same
 remediation as Z690/Z790.

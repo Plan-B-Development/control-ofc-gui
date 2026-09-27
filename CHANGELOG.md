@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.83.5] — 2026-09-27
+
 ### Fixed
 
 - **Read-only fan headers get their own help, and no longer offer a test that cannot run**
@@ -19,8 +21,7 @@
   paired daemon, the Hardware page's readiness items stop sending you to "Diagnostics ▸ Sensors" and
   "Diagnostics ▸ Super-I/O", a page Control-OFC no longer has. They name the Overview page's Sensors table
   and the Hardware page's Super-I/O Architecture section instead. An older daemon still sends the old
-  wording; the button beside each item already goes to the right place. Needs a daemon release after
-  2.56.3.
+  wording; the button beside each item already goes to the right place. Needs daemon 2.56.4.
 
 ### Documentation
 
@@ -48,8 +49,8 @@
   floor now names the first release that was published, and says where the work was merged when that
   version was never released. That applies across the contract, the manual and the hardware guides. For
   example, the PWM Test Report needs GUI 2.82.0 (built as 2.81.0) and daemon 2.53.0 (merged as 2.52.0),
-  and the Gigabyte guard and the ARCTIC behaviour need daemon 2.56.1. Behaviour that only an unreleased
-  daemon has is marked as needing a daemon release after 2.56.3. The changelog entries for 1.40.0, 2.8.3
+  and the Gigabyte guard and the ARCTIC behaviour need daemon 2.56.1. Behaviour that only daemon 2.56.4 and
+  later have is marked as needing daemon 2.56.4. The changelog entries for 1.40.0, 2.8.3
   and 2.74.0 now say which unreleased versions they carry.
 - **The operations guide and the manual say what `runtime.toml` holds, and what makes a `daemon.toml`
   edit safe** (DEC-438, with the paired daemon docs). `runtime.toml` holds the fan header roles you
@@ -75,7 +76,7 @@
   options.
 
 - **The OpenFan manual says what a reconnect opens, and no longer suggests a udev symlink the daemon
-  refuses** (DEC-436, daemon change). With a daemon release after 2.56.3, while a dropped controller
+  refuses** (DEC-436, daemon change). With daemon 2.56.4, while a dropped controller
   is away, the daemon tries only the
   configured port, the controller's own device and newly attached serial devices, so other USB-serial
   hardware is not reset. The manual, the operations guide and the OpenFan architecture notes say so. The
@@ -83,18 +84,17 @@
   `/dev/control-ofc-controller`, which the daemon does not accept.
 
 - **The manual says which GPUs the daemon resets when it stops** (DEC-435, daemon change). The
-  setup checklist and the System State notes now say that, from the first daemon release after
-  2.56.3, a GPU Control-OFC has never driven is left
+  setup checklist and the System State notes now say that, from daemon 2.56.4, a GPU Control-OFC has never driven is left
   to LACT or CoreCtrl across daemon stops and restarts. They also say that **Restore GPU Fan to
   Automatic** keeps the daemon off that GPU until a profile is next activated or the daemon restarts. The operations guide
-  gives the daemon's startup profile order, as a daemon release after 2.56.3 applies it.
+  gives the daemon's startup profile order, as daemon 2.56.4 applies it.
 
 ### Changed
 
 - **The hardware reference names every Gigabyte board the daemon expects two sensor chips on**
   (DEC-434). The Hardware Compatibility guide now has rows for the X399, TRX40 and Z390 / Z490 AORUS
   boards the daemon already knew. The guide, the Intel motherboard guide and the Gigabyte Z890 advice in
-  the app now list the eight LGA1851 boards that a daemon release after 2.56.3 adds (Z890 AORUS XTREME AI TOP, PRO ICE,
+  the app now list the eight LGA1851 boards that daemon 2.56.4 adds (Z890 AORUS XTREME AI TOP, PRO ICE,
   ELITE X ICE, TACHYON ICE, TACHYON DUO X ICE, Z890 AI TOP, Z890 AERO D, W880 AI TOP). They say those
   entries rest on the it87 sensor catalogue alone. The in-app advice no longer says other Z890 boards
   will be added only once a board-specific report exists.
