@@ -2566,6 +2566,25 @@ rather than an optional refinement.
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — `gpu_id` is a bare PCI BDF; a BDF that resolves to an NVIDIA/Intel GPU (read-only fans) is not among the daemon's AMD GPUs, so it returns `404 validation_error` ("GPU not found").
   - GUI caller: the System State page's *Restore GPU Fan to Automatic* (DEC-147 — disabled
     while the **active profile** owns an `amd_gpu:` member, since the daemon is actively driving it).
+  - **`200`** body: `{"api_version": 1, "gpu_id": "<bdf>", "reset": true}` — the same shape from
+    the PMFW arm (RDNA3+: `fan_curve` `r`+`c`, then `fan_zero_rpm_enable` `1`+`c`) and the legacy
+    arm (pre-RDNA3: `pwm1_enable=2`).
+  - **`409 validation_error`** (`retryable: false`, message "a GPU fan verify is in progress —
+    retry once it completes") when the GPU write lock is still held after 750 ms
+    (`GPU_RESET_LOCK_WAIT`) — held that long only by a `fan/verify` running its window; an engine
+    write holds it for a tick. Retry after the verify.
+  - **`503 hardware_unavailable`** when the write fails. A fan this call took from the engine is
+    handed back to it; one an earlier successful reset took stays off the engine (DEC-255).
+    `400 feature_unavailable` for a card with no write path; `500 internal_error` if the write task
+    itself fails.
+  - **A successful reset is an explicit hand-back, and it lasts (DEC-435, `DC-aa`, Q28).** The
+    engine stops writing that fan — even while the active profile names it — until the next
+    `POST /profile/activate` (any profile, including re-activating the same one). **Deactivating
+    does not return it** to the engine. A daemon restart does: the hand-back is held in memory only,
+    so the restarted engine drives every card its startup profile names.
+    The card also comes off the list every daemon stop resets, so a curve another tool (LACT,
+    CoreCtrl) puts on it afterwards survives the next stop or restart. A failed reset changes
+    neither.
 
 The bare `POST /gpu/{gpu_id}/fan/pwm` static-speed write is **retired at 2.0.0** — GPU fans are driven
 by the daemon engine, with live manual control via the override API (DEC-163) and identification via

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Documentation
+
+- **The manual says which GPUs the daemon resets when it stops** (DEC-435, daemon change). The
+  setup checklist and the System State notes now say that a GPU Control-OFC has never driven is left
+  to LACT or CoreCtrl across daemon stops and restarts. They also say that **Restore GPU Fan to
+  Automatic** keeps the daemon off that GPU until a profile is next activated or the daemon restarts. The operations guide
+  gives the daemon's startup profile order.
+
 ### Changed
 
 - **The hardware reference names every Gigabyte board the daemon expects two sensor chips on**

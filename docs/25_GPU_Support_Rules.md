@@ -93,7 +93,11 @@ writes, PMFW handling, or GPU display naming.
   re-enables it on reset (DEC-053).
 - `fan_zero_rpm_enable` sysfs returns multi-line formatted output — parse header+value,
   do not just `trim()`.
-- **The daemon must reset GPU fan curves to automatic on shutdown.** *(Safety-critical;
+- **The daemon must reset the GPU fan curves it drove to automatic on shutdown — and only
+  those (DEC-435).** A card whose PMFW curve the daemon wrote (a profile's curve or a hardware
+  verify) is named in a write-ahead record before the first write and reset on every stop path,
+  including SIGKILL via `ExecStopPost`; a card it never wrote, or handed back itself with
+  `POST /gpu/{id}/fan/reset`, is not touched, so LACT or CoreCtrl can own it. *(Safety-critical;
   also stated in `CLAUDE.md`.)*
 
 ## Truthfulness

@@ -159,7 +159,7 @@ automatically by the poll loop's own reconnect, with no action needed.
 | Argument | Description |
 |----------|-------------|
 | `--config <path>` | Path to `daemon.toml`. Takes precedence over `$CONTROL_OFC_CONFIG` and the default location |
-| `--profile <name>` | Load a named profile from search paths on startup |
+| `--profile <name>` | Load a named profile (a file stem) from search paths on startup — see [Startup precedence](#startup-precedence). Under systemd, pass it in a drop-in (`systemctl edit control-ofc-daemon`: `ExecStart=` on its own line, then the full command) |
 | `--profile-file <path>` | Load a profile from an absolute file path |
 | `--allow-non-root` | Permit startup as a non-root user. Hardware writes that need root will fail — for development and inspection, not normal operation |
 
@@ -177,7 +177,7 @@ When using `--profile <name>`, the daemon searches (highest priority first):
 |----------|-------------|---------|
 | `RUST_LOG` | Logging level (`error`, `warn`, `info`, `debug`, `trace`) | `info` (set in systemd service) |
 | `CONTROL_OFC_CONFIG` | Path to `daemon.toml`. Overridden by `--config` | `/etc/control-ofc/daemon.toml` |
-| `OPENFAN_PROFILE` | Profile name to load at startup (fallback if no `--profile` CLI arg) | none |
+| `OPENFAN_PROFILE` | Profile file stem to load at startup; tried after `--profile`/`--profile-file` and before the saved profile. Under systemd, `Environment=OPENFAN_PROFILE=<name>` in a drop-in | none |
 | `HOME` | Used to derive the home-relative profile search dir when `XDG_CONFIG_HOME` is unset | unset under systemd → `/root` |
 | `XDG_CONFIG_HOME` | Override config directory for profile search | `~/.config` |
 
@@ -204,9 +204,15 @@ ls -la /dev/ttyACM0
 ## Profile activation and persistence
 
 ### Startup precedence
-1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json`
-2. Environment: `OPENFAN_PROFILE=quiet`
-3. Persisted state: `/var/lib/control-ofc/daemon_state.json` (from previous API activation)
+The daemon uses the first of these that loads (DEC-435). A source that names no file, or a file
+that will not load, is logged and the next is tried:
+1. CLI: `--profile quiet` or `--profile-file /path/to/profile.json` — whichever comes first. `quiet`
+   is the **file stem** (`quiet.json`) in a search path, not the profile's display name.
+2. Environment: `OPENFAN_PROFILE=quiet` (also a file stem)
+3. Persisted state: `/var/lib/control-ofc/daemon_state.json` — written **only** by
+   `POST /profile/activate` and `/deactivate` (the GUI, the tray). `--profile` and
+   `OPENFAN_PROFILE` are never saved there: while one is set it wins on every start, and removing it
+   brings back the last profile activated from the GUI.
 4. None → no curve is evaluated until a profile is activated, but the daemon's thermal safety still acts on its own: an emergency takes every writable fan to 100 % and gives each one back when it ends (DEC-382). The 40 % no-sensor floor, by contrast, needs a profile's fans to act on. The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
 
 ### GUI activation flow
