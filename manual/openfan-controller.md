@@ -45,13 +45,13 @@ port = "/dev/serial/by-id/usb-Karanovic_Research_OpenFan_...-if00"
 
 ## Serial / USB access (permissions)
 
-The daemon needs read/write access to the serial port. On the supported Arch / CachyOS packages this is already handled: the systemd service ships with the right device permissions (the `uucp` serial group plus a device allow-list) and ensures the USB serial kernel module (`cdc_acm`) is loaded. **No udev rule is required** for normal use.
+The daemon needs read/write access to the serial port, and the package already handles it on every distribution: the daemon runs as root, so no serial group is involved, and its systemd service allows it the `/dev/ttyACM*` and `/dev/ttyUSB*` devices and loads the USB serial kernel module (`cdc_acm`). **No udev rule and no group setup is required** for normal use.
 
 > Granting a service access to a device is a system change. The packaged defaults are scoped to serial devices only; if you adjust them, make sure you understand what you are allowing. This guidance is provided **as-is**; the project accepts **no liability** for changes made to your system (MIT License).
 
 Two cases need a manual step:
 
-- **Debian / Ubuntu** (where the serial group is `dialout`, not `uucp`): add a systemd drop-in — `sudo systemctl edit control-ofc-daemon` and set `SupplementaryGroups=uucp dialout`.
+- **Your controller appears as something other than `/dev/ttyACM*` or `/dev/ttyUSB*`** (a `/dev/serial/by-id/` link to one of those is fine): the service is not allowed to open it. Add a systemd drop-in — `sudo systemctl edit control-ofc-daemon` — with a `DeviceAllow=` line for that device class, for example `DeviceAllow=char-ttyS rw`.
 - **You want a specific group or mode on the device node**: the daemon repo ships an optional udev rules example (`99-control-ofc.rules`) you can copy and fill in with your device's USB vendor / product id. This is optional convenience, not a requirement. For a fixed path, use the `/dev/serial/by-id/` link above rather than a custom udev symlink: the daemon refuses a name such as `/dev/control-ofc-controller`.
 
 ## Identifying which fan is which

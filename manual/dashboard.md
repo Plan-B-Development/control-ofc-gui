@@ -54,8 +54,13 @@ Below it, five banners appear only when they apply:
   floor, its stop exemption and its pump-safe identify — which matters most on a board
   whose chip publishes no header labels, because there your assignment was the only
   evidence a header drives a pump. A failure during a *reload* leaves header roles
-  untouched. Fixing the file is not enough on its own: saving settings repairs the file
-  but not the running daemon, so restart `control-ofc-daemon` afterwards. The daemon's
+  untouched. Repairing the file is not enough on its own: the running daemon keeps its
+  defaults, so restart `control-ofc-daemon` afterwards. If the banner says a setting was
+  *saved* while the file could not be read, the daemon has already replaced the file: it
+  kept the unreadable one beside it as `runtime.toml.invalid-` plus a timestamp, and the
+  new file carries the header roles and cooling devices it was running with, so no pump
+  role was lost. Every other setting that was only in the old file is gone from it — copy
+  what you need back from the kept copy, then restart `control-ofc-daemon`. The daemon's
   verbatim error goes to the GUI log rather than into the banner, since a TOML parse
   error can run to several lines. Daemons older than v2.34.0 do not report this, and
   show no banner

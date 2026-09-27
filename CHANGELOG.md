@@ -11,6 +11,10 @@
   where the Hardware Registry and Board notes carry the driver guidance for your chip. The link now opens
   a new *Read-only PWM headers* section in the readiness guide. It explains the usual cause, the in-kernel
   `nct6683` driver on MSI and ASRock boards, and what to install instead.
+- **The Dashboard's no-hardware hint no longer sends Debian and Ubuntu users after a `dialout`
+  drop-in** (DEC-438). The daemon runs as root, so no serial group is needed on any distribution; the
+  hint now says so, and that the service can open `/dev/ttyACM*` and `/dev/ttyUSB*` devices, with a
+  drop-in needed only for a controller on another kind of port.
 - **Readiness advice from the daemon names pages that exist** (DEC-437, daemon change). With the
   paired daemon, the Hardware page's readiness items stop sending you to "Diagnostics ▸ Sensors" and
   "Diagnostics ▸ Super-I/O", a page Control-OFC no longer has. They name the Overview page's Sensors table
@@ -19,6 +23,22 @@
 
 ### Documentation
 
+- **The operations guide and the manual say what `runtime.toml` holds, and what makes a `daemon.toml`
+  edit safe** (DEC-438, with the paired daemon docs). `runtime.toml` holds the fan header roles you
+  assign — on a board with no fan labels, a `pump` assignment there is what gives that header its 30 %
+  floor — so the guide says not to delete or hand-edit it and to back it up with `daemon.toml`. The
+  Dashboard manual now describes the banner for a setting saved while the file was unreadable. For
+  `daemon.toml`, the guide says an unknown key or out-of-range value stops the daemon until it is fixed,
+  gives each key's range, adds `[shutdown] exit_floor_pct` and `[startup] record_startup` to the schema,
+  shows the serial port as auto-detected by default, names `systemctl reload`, and says a moved
+  `state_dir` or `socket_path` needs a `ReadWritePaths=` drop-in. It also corrects that `HOME` is set to
+  `/root` under the service and that a `profile_path` in the GUI's own profile folder is accepted.
+- **Install the daemon package; do not copy the binary in** (DEC-438). The operations guide's
+  build-from-source steps copied a binary from a directory a workspace build never creates and
+  installed neither the restore script nor the other packaged files. It now points at the package.
+- **No `dialout` drop-in is needed on Debian or Ubuntu** (DEC-438). The OpenFan manual and the
+  operations guide said there was; the daemon runs as root, and only the unit's `DeviceAllow=` list
+  limits which serial devices it can open.
 - **Corrected claims about deactivating a profile and reloading daemon settings** (DEC-437). The operations guide said deactivating
   a profile returns the daemon to "imperative-only mode", which was retired at 2.0.0. It now says the
   daemon evaluates no curve, hands back the motherboard headers it took, and keeps the thermal emergency. The API

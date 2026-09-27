@@ -9,18 +9,21 @@ This document covers daemon configuration, startup, permissions, CLI usage, envi
 
 ## Daemon installation
 
-### Build from source
+Install the `control-ofc-daemon` package — from the signed `[control-ofc]` pacman
+repository, or built yourself from the daemon repo's `packaging/PKGBUILD` with
+`makepkg -si` (both are in the daemon repo's `README.md` § Install). Then:
 ```bash
-cd daemon && cargo build --release
-sudo cp target/release/control-ofc-daemon /usr/local/bin/
-```
-
-### Systemd service
-```bash
-sudo cp packaging/control-ofc-daemon.service /etc/systemd/system/
-sudo systemctl daemon-reload
 sudo systemctl enable --now control-ofc-daemon
 ```
+
+Do not copy the binary and unit file in by hand. The unit runs
+`/usr/bin/control-ofc-daemon` and, after every stop, `/usr/bin/control-ofc-restore-auto`,
+which gives each fan header back to what it was doing before the daemon took it;
+the package also installs the sleep hook, the Super-I/O guard and
+`/etc/modules-load.d/control-ofc.conf`. A hand-copied binary under `/usr/local/bin`
+installs none of these, so the unit cannot start it or cannot hand the fans back.
+`makepkg` builds the tagged release, not a local checkout; the daemon repo's
+`docs/DEVELOPER_HANDOVER.md` says how to run your own build.
 
 The service runs as root (required for hwmon sysfs writes and serial device access). Security hardening is applied: `ProtectHome=read-only`, `ProtectSystem=strict`, `PrivateTmp=true`, `NoNewPrivileges=true`.
 
@@ -29,13 +32,36 @@ The service runs as root (required for hwmon sysfs writes and serial device acce
 ## Daemon configuration
 
 ### Config file location
-`/etc/control-ofc/daemon.toml` — loaded at startup. Create manually if needed.
+`/etc/control-ofc/daemon.toml` — loaded at startup. The package installs it with every
+key commented out, so the defaults apply until you uncomment one; pacman keeps your
+edits on upgrade (`backup=`). With no file at all the daemon also runs on defaults.
+
+### A bad edit stops the daemon — read this before editing
+The file is strict. **An unknown key, a misspelt section or an out-of-range value makes
+the daemon exit at startup**, and systemd restarts it on a back-off (3 s, then up to one
+start a minute) until the file is fixed. For all that time **nothing controls the fans
+and the thermal emergency cannot run**. `journalctl -u control-ofc-daemon` names the
+offending key. The ranges the file accepts:
+
+| Key | Accepted | Default |
+|---|---|---|
+| `polling.poll_interval_ms` | 100 or more; above 6000 it is clamped to 6000 with a warning (see the table below) | 1000 |
+| `serial.timeout_ms` | 50 or more | 500 |
+| `startup.delay_secs` | 0–30 | 0 |
+| `shutdown.exit_floor_pct` | 0–100 | 50 |
+
+After an edit, `sudo systemctl reload control-ofc-daemon` applies the profile search
+directories and the exit floor at once; every other key needs
+`sudo systemctl restart control-ofc-daemon`. A reload that finds the file invalid logs
+the error and keeps the running values.
 
 ### Config schema
+Every key is optional; the values shown are the defaults unless a comment says otherwise.
 ```toml
 [serial]
-port = "/dev/serial/by-id/usb-Karanovic_Research_OpenFan_...-if00"  # stable path
-# port = "/dev/ttyACM0"  # unstable, may change after reboot
+# port = "/dev/serial/by-id/usb-Karanovic_Research_OpenFan_...-if00"
+#   No default: when unset the daemon auto-detects the controller. If you set it,
+#   use the stable /dev/serial/by-id/ path, not /dev/ttyACM0.
 timeout_ms = 500
 
 [polling]
@@ -49,12 +75,21 @@ state_dir = "/var/lib/control-ofc"  # persistent state directory
 
 [startup]
 delay_secs = 0  # seconds to wait before device detection after boot (0-30)
+record_startup = false  # record a short validation session at every start (DEC-335).
+                        # daemon.toml only: runtime.toml's [startup] rejects it
+
+[shutdown]
+exit_floor_pct = 50  # the lowest speed a clean stop leaves a fan it cannot give
+                     # back to firmware at — an OpenFan channel, or a header with
+                     # no mode switch (DEC-388). 0 turns it off
 
 [profiles]
-# Two defaults: the system dir plus a home-relative dir derived from
-# XDG_CONFIG_HOME (or $HOME/.config, or /root/.config when HOME is unset for a
-# systemd service). The daemon also *prepends* its own store dir
-# (/var/lib/control-ofc/profiles/) at startup. Add more via the API.
+# Default: /etc/control-ofc/profiles plus a home-relative dir —
+# $XDG_CONFIG_HOME/control-ofc/profiles if that is set, else
+# $HOME/.config/control-ofc/profiles. The unit sets HOME=/root, so under
+# systemd that is /root/.config/control-ofc/profiles. The daemon always
+# *prepends* its own store dir ({state_dir}/profiles) at startup, and the GUI
+# adds its own profile folder through the API on every connect.
 search_dirs = ["/etc/control-ofc/profiles", "/root/.config/control-ofc/profiles"]
 
 [detection]
@@ -70,6 +105,13 @@ enable_nvidia_telemetry = false # read-only NVML telemetry (DEC-204);
 
 All fields are optional — defaults are shown above.
 
+**Moving `state_dir` or `socket_path` needs a systemd drop-in as well.** The unit runs
+with `ProtectSystem=strict`, so outside its private `/tmp` the daemon can write files
+only under `/run/control-ofc` and `/var/lib/control-ofc` (its `RuntimeDirectory=` and
+`StateDirectory=`) and `/sys/devices`. A new location must be added with `ReadWritePaths=` in
+`sudo systemctl edit control-ofc-daemon`, or the daemon cannot create its socket or
+save state there.
+
 ### Two config files — `daemon.toml` vs `runtime.toml` (ADR-002)
 
 `/etc/control-ofc/daemon.toml` is **admin-owned**; the daemon never writes it, so
@@ -77,6 +119,23 @@ your comments and edits survive. `{state_dir}/runtime.toml` (default
 `/var/lib/control-ofc/runtime.toml`) is **daemon-owned**, written only by
 `POST /config/*`, and **overlays** the admin file — runtime wins for any key
 present in both. This mirrors NetworkManager's admin-conf + intern-conf split.
+
+**`runtime.toml` holds the fan header roles you assign** (`[hardware] header_roles`,
+set by the GUI's header-role picker and Configure AIO, or `POST /config/header-role`),
+as well as the cooling devices (`[[cooling_devices]]`), the preferred sensors, the exit
+floor and every key in the table below that was changed through the API. On a board
+whose chip publishes no fan labels, a `pump` assignment there is the only evidence a
+header drives a pump, so it is what gives that header its 30 % floor and keeps fan
+identify from stopping it. **Do not delete the file or edit it by hand, and back it up
+with `daemon.toml`.**
+
+If the daemon cannot read it, it still starts — on defaults, **with no header roles** —
+and reports `runtime_config_degraded` on `GET /status`; the Dashboard shows a banner
+(see the manual's Dashboard page). If a setting is then saved, the daemon keeps the
+unreadable file as `runtime.toml.invalid-<unix-time>` and writes a new one carrying the
+header roles and cooling devices it is running with; anything else must be copied back
+from the kept copy, followed by a restart. The daemon's `docs/USER_GUIDE.md`
+§ When `runtime.toml` cannot be read has the per-phase detail.
 
 If a runtime value is shadowing a `daemon.toml` edit you made, the daemon says so
 once at startup in an `info` log, and `GET /config` reports `source: "runtime"`
@@ -185,7 +244,7 @@ When using `--profile <name>`, the daemon searches (highest priority first):
 | `RUST_LOG` | Logging level (`error`, `warn`, `info`, `debug`, `trace`) | `info` (set in systemd service) |
 | `CONTROL_OFC_CONFIG` | Path to `daemon.toml`. Overridden by `--config` | `/etc/control-ofc/daemon.toml` |
 | `OPENFAN_PROFILE` | Profile file stem to load at startup; tried after `--profile`/`--profile-file` and before the saved profile. Under systemd, `Environment=OPENFAN_PROFILE=<name>` in a drop-in | none |
-| `HOME` | Used to derive the home-relative profile search dir when `XDG_CONFIG_HOME` is unset | unset under systemd → `/root` |
+| `HOME` | Used to derive the home-relative profile search dir when `XDG_CONFIG_HOME` is unset | `/root` — the unit sets `Environment=HOME=/root` |
 | `XDG_CONFIG_HOME` | Override config directory for profile search | `~/.config` |
 
 ---
@@ -196,15 +255,11 @@ When using `--profile <name>`, the daemon searches (highest priority first):
 The daemon reads from and writes to the motherboard PWM nodes (`/sys/class/hwmon/hwmonN/pwmN`, which are symlinks resolving to `/sys/devices/...`). Running as root (via systemd) provides the necessary permissions, **and** the packaged unit's sandbox must expose the device tree for writing — `ReadWritePaths=/sys/devices` (daemon ≥ v2.5.2; see "Motherboard/GPU fans discovered but not responding" under Troubleshooting, DEC-199).
 
 ### Serial device access
-The systemd service includes `SupplementaryGroups=uucp` for `/dev/ttyACM*` access. Ensure the `uucp` group has access to your serial device:
-```bash
-ls -la /dev/ttyACM0
-# Should show: crw-rw---- 1 root uucp ... /dev/ttyACM0
-```
+The daemon runs as root, so no group membership gates its access to the serial device on any distribution — the unit's `SupplementaryGroups=uucp` does nothing for a root service, and Debian/Ubuntu need no `dialout` drop-in. What does limit it is the unit's `DeviceAllow=char-ttyACM rw` and `DeviceAllow=char-ttyUSB rw`: the service can open only `/dev/ttyACM*` and `/dev/ttyUSB*` nodes (a `/dev/serial/by-id/` link to one is fine). A controller on another kind of node needs a drop-in adding its device class, for example `DeviceAllow=char-ttyS rw`.
 
 ### Runtime directories
 - `/run/control-ofc/` — created by systemd (`RuntimeDirectory=control-ofc`)
-- `/var/lib/control-ofc/` — daemon state persistence (created by systemd via `StateDirectory=control-ofc`, configurable via `[state] state_dir` in daemon.toml)
+- `/var/lib/control-ofc/` — daemon state persistence (created by systemd via `StateDirectory=control-ofc`, configurable via `[state] state_dir` in daemon.toml — a different directory also needs a `ReadWritePaths=` drop-in, see Config schema above)
 
 ---
 
@@ -225,7 +280,7 @@ that will not load, is logged and the next is tried:
 ### GUI activation flow
 When the user activates a profile in the GUI:
 1. GUI saves the profile to its local draft cache (`~/.config/control-ofc/profiles/<id>.json`) **and** uploads it to the daemon — the **store of record** (DEC-160) — via `PUT /profiles/<id>` (or `POST /profiles` to create it). The daemon writes it into its own store dir (`/var/lib/control-ofc/profiles/`).
-2. GUI calls `POST /profile/activate {"profile_id": "<id>"}` — the daemon resolves the id from its own store/search dirs. (Activation also accepts a `profile_path`, but it must lie **within a daemon search dir**; the GUI user's `~/.config/...` path is *not* one of the root daemon's search dirs, so a user-HOME `profile_path` would be rejected. Activate by `profile_id`.)
+2. GUI calls `POST /profile/activate {"profile_id": "<id>"}` — the daemon resolves the id from its own store/search dirs. (Activation also accepts a `profile_path`, but it must lie **within a daemon search dir**. The GUI registers its own profile folder, `~/.config/control-ofc/profiles`, as a search dir on every connect, so a path there is accepted while that registration stands; the GUI still activates by `profile_id`.)
 3. Daemon validates, applies, and persists the active selection to `/var/lib/control-ofc/daemon_state.json`
 4. Profile survives daemon restart, reboot, and GUI close; the daemon can re-hydrate the full profile document from its own store via `GET /profiles/<id>` (DEC-175)
 

@@ -134,18 +134,21 @@ class TestEnableCommandCopy:
 
 
 class TestDashboardCopyText:
-    def test_no_hardware_state_keeps_uucp_and_dialout_groups(self, qtbot, app_state):
-        # Regression: dashboard previously told Arch users to join the
-        # 'dialout' group, which doesn't exist on Arch (correct group is
-        # 'uucp'). Both names must stay visible, now framed as a fact about
-        # the daemon service (DEC-145): the daemon unit ships
-        # SupplementaryGroups=uucp; Debian-family installs may need a
-        # 'dialout' drop-in.
+    def test_no_hardware_state_says_no_serial_group_is_needed(self, qtbot, app_state):
+        # DEC-438 (DC-bt(k), superseding DEC-145's group wording): the daemon
+        # runs as root, so no serial group gates it on any distribution — the
+        # unit's DeviceAllow= list (ttyACM/ttyUSB) is the only limit. The hint
+        # used to send Debian/Ubuntu users after a 'dialout' drop-in that did
+        # nothing, pointing at daemon docs that now say so.
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         text = _all_label_text(page)
-        assert "uucp" in text
-        assert "dialout" in text
+        # Presence first: the OpenFan item is on the page at all.
+        assert "OpenFan controller" in text
+        assert "as root" in text
+        assert "/dev/ttyACM*" in text and "/dev/ttyUSB*" in text
+        assert "dialout" not in text
+        assert "uucp" not in text
 
     def test_no_hardware_state_routes_to_readiness_report(self, qtbot, app_state):
         # DEC-145: the most common cause of "no hardware" is a missing

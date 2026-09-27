@@ -411,9 +411,10 @@ class DashboardPage(QWidget):
             "readiness report names the exact kernel module or AUR package your "
             "board needs (the manual's Setup Checklist page has the full ordered "
             "walkthrough)\n"
-            "3. Using an OpenFan controller? The daemon service accesses serial ports "
-            "itself — it ships with the 'uucp' group on Arch / CachyOS; Debian / "
-            "Ubuntu installs may need a 'dialout' drop-in (see the daemon docs)"
+            "3. Using an OpenFan controller? The daemon service opens the serial port "
+            "itself, as root, so no serial group is needed on any distribution. It "
+            "can open /dev/ttyACM* and /dev/ttyUSB* devices; a controller on any "
+            "other port needs a systemd drop-in (see the daemon's user guide)"
         )
         next_msg.setWordWrap(True)
         next_msg.setProperty("class", "PageSubtitle")
