@@ -24,6 +24,19 @@
 
 ### Documentation
 
+- **The Settings guide gives every daemon setting's default, and the support bundle's contents are
+  described as they are** (DEC-440). The manual's Settings page now lists the default for each Daemon
+  Configuration setting and names the two optional daemon drop-ins, where the package installs them and
+  how to enable them. Its list of what a settings export leaves out now matches what the export actually
+  leaves out. The manual's System Health page lists what **Export Support Bundle** saves: the daemon's
+  journal, your kernel details, your settings and profile names. It also says the bundle keeps
+  sensor classifications and folder overrides, so you know what you are sharing.
+- **The developer specs describe the app as it ships** (DEC-440). The System Health, Dashboard,
+  Controls, Settings, demo mode, persistence and architecture documents were rewritten against the current
+  pages. Pages, buttons and settings that no longer exist were removed, and older designs are marked as
+  history. The operations guide gains a service-lifecycle section: readiness, the watchdog, restart
+  back-off, the stop order and reload. The OpenFan controller document now lists only the commands the
+  daemon sends. The older daemon walkthrough is marked as a frozen snapshot.
 - **The API contract matches the daemon it describes, and every version it names can be installed**
   (DEC-439). `docs/08` now documents what the daemon returns and refuses in places it had left out or
   misstated. That covers the `/poll` and `/sensors/history` shapes, validation session states, events,

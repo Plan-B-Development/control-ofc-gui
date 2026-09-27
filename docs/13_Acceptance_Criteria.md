@@ -70,7 +70,7 @@
 - [ ] The system-health pages show sensor health
 - [ ] The system-health pages show controller/device discovery
 - [ ] The system-health pages show connection health, subsystem freshness, and daemon thermal state with user-facing explanation
-- [ ] The system-health pages offer hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copy last errors
+- [ ] The system-health pages offer hardware-diagnostics refresh, PWM/GPU write tests, export support bundle, and copying log entries
 - [ ] Export support bundle produces a structured output
 - [ ] Subsystem age_ms values include reason text and explanatory note (R34)
 - [ ] Daemon uptime displayed when available (R34)

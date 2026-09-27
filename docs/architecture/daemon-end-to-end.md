@@ -1,32 +1,43 @@
 # Control-OFC Daemon — End-to-End Technical Documentation
 
-> **Snapshot, not source of truth.** This document was generated from a code
-> inspection on 2026-03-25 against daemon v0.2.0. The daemon has since
-> evolved through dozens of releases — specific claims about endpoints, error
-> codes, or module shape may be stale.
+> **FROZEN HISTORICAL SNAPSHOT — do not read this as a description of the current daemon.**
+> It records a code inspection on 2026-03-25 against daemon v0.2.0. The daemon has changed
+> through dozens of releases since, including the 2.0.0 cutover that made its profile engine
+> the sole writer of every fan (DEC-159/DEC-165). **The current description is the daemon
+> repo's [`daemon.md`](https://github.com/Plan-B-Development/control-ofc-daemon/blob/main/daemon.md)**
+> (architecture, module map, startup and shutdown, safety model, endpoints); the API
+> contract is [`docs/08`](../08_API_Integration_Contract.md) and the operator view is
+> [`docs/18`](../18_Operations_Guide.md).
 >
-> **⚠️ Superseded by the 2.0.0 daemon-control cutover (DEC-159/DEC-165).** Several
-> architectural claims below describe a model that no longer exists:
-> - The **dual-control model** (§1, §2) is gone — the daemon profile engine is now
->   the **sole PWM writer**; the GUI never writes PWM (poll-only, 1 Hz `GET /poll`).
-> - The **GUI-held hwmon lease** and the **30 s `gui_active` deferral** (§9, §10) were
->   **deleted** at the cutover — the daemon self-leases internally, and headless
->   profile/thermal writes to every backend (OpenFan, hwmon, GPU) are fully shipped.
-> - **AIO support** is no longer a placeholder — hwmon-attached liquid cooling shipped
->   (DEC-156).
-> - Live manual override and fan identify are now **daemon APIs** (DEC-163/DEC-166),
->   not GUI-side writes.
-> - **"Imperative" mode is not "nothing autonomous" (`TS-k`).** With no profile active
->   the daemon evaluates no curves, but its thermal ladder still acts: the 100 %
->   emergency reaches every writable header, and DEC-382 gives each back afterwards.
+> **This file is no longer maintained (DEC-440).** Earlier releases corrected some rows in
+> place, so the body mixes 2026-03 text with later notes; those notes are kept as they
+> stand, and nothing is corrected here any more. Rows known to be wrong if read as current:
 >
-> The GPU PCI-ID table in §8 has been corrected inline (it was a factual error, not
-> merely stale). For current authoritative documentation:
-> - Architecture / sole-writer model: `CLAUDE.md` (this repo)
-> - API contract: `docs/08_API_Integration_Contract.md` (in this repo)
-> - Module layout: `daemon.md` (in the daemon repo)
-> - Endpoint reference: `daemon.md` § API Endpoints
-> - Recent changes: daemon `CHANGELOG.md`
+> - **The whole control model** (§1, §2, §9, §10): dual control, the GUI-held hwmon lease,
+>   the 30 s `gui_active` deferral and the "future work" auto-lease are gone. The GUI never
+>   writes PWM; live override and fan identify are daemon APIs (DEC-163/DEC-166).
+> - **§2 Controller Ownership**: the OpenFan controller now sits in a slot a rescan can fill
+>   (`Arc<RwLock<Option<Arc<Mutex<FanController>>>>>`), not a plain `Option`.
+> - **§3 Shutdown**: the real order is `STOPPING=1` → the API server stops → the watchdog
+>   disarm is re-sent → tasks drain → the exit floor → the GPU fan-curve reset → the hwmon
+>   hand-back. After a crash, `ExecStopPost` replays the daemon's hand-back records.
+> - **§4 API surface**: the `target_rpm` "Correction" note is itself wrong — it *was* an HTTP
+>   route until 2.0.0; docs/08 has the history.
+> - **§5 Thermal safety** and **§7 matrix**: the "lower rungs" (there is no recovery rung
+>   since DEC-386); the **0 % stop row** (a held 0 % is not time-limited and nothing restarts
+>   the fan, DEC-426); the **stale-sensor row** (a stale CPU reading is not only a warning:
+>   it holds a latched emergency and can bring the 40 % no-sensor floor — docs/08's thermal
+>   ladder table has every case).
+> - **§6a GPU**: the PCI-ID table (since DEC-430 generated from libdrm) and the shutdown
+>   reset (only the cards the daemon drove, from the first daemon release after 2.56.3).
+> - **The "1 %" coalesce threshold** (§6a): OpenFan and hwmon writes coalesce only an
+>   exact repeat of the last duty; only the GPU uses a 5 % band.
+> - **§11 Documentation Gaps**: auto-lease, auto-reconnect and AIO support all shipped.
+> - **§12 Configuration Keys and Runtime Paths**: `exit_floor_pct`, `delay_secs`,
+>   `search_dirs`, the `[detection]` keys, `runtime.toml`, `{state_dir}/profiles` and
+>   `/run/control-ofc/hwmon-handback` are missing, and a poll interval under 100 ms stops
+>   the daemon at startup rather than being clamped. The **Lease** glossary entry
+>   describes the retired client lease.
 
 **Snapshot taken at:** daemon v0.2.0 (2026-03-25)
 **Evidence level:** All claims marked as Implemented, Inferred, or Uncertain

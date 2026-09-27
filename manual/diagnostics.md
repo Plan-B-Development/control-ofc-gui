@@ -362,15 +362,17 @@ available from every page.
 
 ### Export Support Bundle
 
-The **Export Support Bundle** button creates a JSON file containing:
+The footer's **Export Support Bundle** button saves one JSON file (`control_ofc_support_bundle.json` by default) containing:
 
-- System configuration
-- Daemon status and version
-- Sensor and fan states
-- Event log entries
-- Active profile information
+- the GUI version, your kernel release and boot parameters, and the loaded kernel modules
+- the app's event log
+- the daemon's version, capabilities and subsystem status, and each fan's RPM and last reported duty (sensor readings are counted, not listed)
+- your GUI settings, apart from window and chart layout, the export folder, and anything you typed as free text (your hardware and cooler notes, the Logs search box) — it **keeps** machine-specific settings such as sensor classifications and the profile and theme folder overrides, because those are often the cause of a problem
+- the active profile's name, your profiles' names and ids (not their curves), and your theme names
+- your board, BIOS version and detected fan-control chips, once the app has read them from the daemon
+- the last 100 lines of the daemon's journal, and any `amdgpu` kernel messages from this boot
 
-This file is useful for reporting issues. Review it before sharing — it may contain system-specific details. The same bundle is also reachable from the global footer's **Export Bundle** button.
+Review it before sharing — it names your hardware and may name your folders.
 
 ---
 

@@ -164,7 +164,7 @@ and owns its own schema-version handling. There is no separate
    separate process in the daemon repo (DEC-352), so no tray work landed in this
    module structure. The GUI's only related change is the single-instance guard in
    `services/single_instance.py`, which exists because the tray opens the GUI.)*
-7. Defer full theme editor. *(Superseded — it shipped later: Settings → Themes per-token editor with contrast checking.)*
+7. Defer full theme editor. *(Superseded — it shipped later: the Theme page's per-token editor with contrast checking.)*
 8. Prefer a stable, boring architecture over cleverness.
 
 ## Charting recommendation

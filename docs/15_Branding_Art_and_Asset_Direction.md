@@ -50,18 +50,20 @@ icon must:
 - No decorative or script faces in operational UI
 
 ## Palette direction
-- background: near-black charcoal
-- panel surface: deep grey-blue
-- primary accent: vivid mid-blue
-- secondary accent: lighter icy blue
-- text primary: cool off-white
-- text secondary: muted grey-blue
-- warning: amber
+The built-in `Default Dark` palette is green and teal (DEC-208):
+- background: near-black green
+- panel surfaces: deep forest greens
+- primary accent: teal (also the success colour — the two are one token in this palette)
+- secondary accent: a brighter teal, used for primary-button hover
+- text primary: pale grey-green
+- text secondary: muted sage
+- warning: amber-orange; the medium advisory tier a gold between warning and info
 - critical: red
-- success: restrained green
+- info: blue
 
-The default theme (`Default Dark`) is the canonical reference; custom themes
-can override individual tokens via the Theme page editor.
+The earlier blue palette ships as the **Classic Blue** preset. `ThemeTokens` in
+`src/control_ofc/ui/theme.py` holds the exact values and is the canonical reference;
+custom themes can override individual tokens via the Theme page editor.
 
 ## Avoid
 - decorative banners or images embedded in operational pages

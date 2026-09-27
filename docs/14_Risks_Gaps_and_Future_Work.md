@@ -28,7 +28,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 | GUI rescan button | **IMPLEMENTED (DEC-147)** | The global footer's "Rescan Hardware" action (moved there by DEC-208; DEC-147 introduced it on the System State page) — restores the `DaemonClient.hwmon_rescan` wrapper, pushes fresh headers through `AppState`, chains a diagnostics refetch. New *motherboard* fan-control hardware still requires a daemon restart (daemon-side limit); an OpenFan controller does not, since DEC-265 gave the same button a `POST /fans/openfan/rescan` leg. |
 | udev stable symlink | TEMPLATE ONLY | `packaging/99-control-ofc.rules` — requires user VID/PID |
 | udev hotplug trigger | ABSENT | No automatic device-event service start |
-| Runtime hwmon hotplug | ABSENT | Devices added after startup are invisible |
+| Runtime hwmon hotplug | PARTIAL | A sensor chip added after startup appears after a rescan; new PWM headers and GPUs need a daemon restart (see §1 below) |
 
 ### Service / Autostart
 
@@ -47,7 +47,7 @@ column therefore reads N/A throughout. Live manual override and fan identify are
 Sensor descriptors are discovered at startup and cached (DEC-133); `POST /hwmon/rescan` now also refreshes the cached sensor set (labels, types, thresholds), and the loop self-refreshes on read-failure streaks or while no CpuTemp sensor is cached. PWM-control headers and GPU detection are still captured only at daemon startup — a device plugged in later needs a daemon restart for *control* (its sensors appear after a rescan).
 
 ### 2. No GPU-specific thermal safety rule
-The thermal safety rule monitors CPU Tctl only (trigger >=105C, per-machine since DEC-308). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
+The thermal safety rule watches the hottest CPU temperature sensor only; its trip point is per-machine, 105 °C or higher (DEC-308). GPU temperatures rely on PMFW firmware protection. If a daemon-level GPU thermal rule is needed, it would require reading GPU junction temp from the cache and adding a separate threshold.
 
 ### 3. GUI/daemon simultaneous control conflict (RESOLVED — 2.0.0 single-writer, DEC-159/DEC-165)
 The dual-writer hazard is eliminated at 2.0.0: the daemon's engine is the **sole** writer of every
@@ -177,7 +177,7 @@ cleanup surface for no significant gain over the bundle.
 **When to build:** unlikely. If we ever want a forensic trail
 across restarts, the daemon journal is the right place.
 
-### 11. GUI surface for `reset_gpu_fan` (RESOLVED — DEC-147)
+### 11b. GUI surface for `reset_gpu_fan` (RESOLVED — DEC-147)
 
 The System State page's "Restore GPU Fan to Automatic" wires
 `DaemonClient.reset_gpu_fan` to a user-facing action beside the GPU verify
@@ -189,7 +189,7 @@ would silently re-assert its curve), and re-checked at click time.
 **Post-2.0.0 note:** the GUI no longer writes GPU PWM at all — the daemon engine
 is the sole writer (DEC-165) — so the original close-time auto-reset (M9) is gone,
 along with the `gui_wrote_gpu_fan` session flag it depended on (deleted in v2.6.1).
-The Diagnostics action itself remains useful for handing a GPU left in a
+The System State action itself remains useful for handing a GPU left in a
 static/manual state back to PMFW automatic without restarting the daemon.
 
 **Remaining (optional) surface:** a secondary "Restore to automatic" action in
@@ -315,9 +315,9 @@ padding tweak, and DEC-128/129 own that surface.
 
 | Gap | Resolution | Version |
 |-----|-----------|---------|
-| hwmon fans displayed `pwm1`, not `CPU_FAN` (§16, opened 2026-07-23) | **Two independent blockers** (§16's "likely fix" covered only the first): (a) the daemon *synthesises* `pwmN` when the chip publishes no label file, so "non-empty label" was wrongly read as "authoritative" — an exact-match `is_placeholder_hwmon_label` now skips it and the resolver owns tiers 2-5; (b) `AppState.board_info`, which keys the DMI fallback table, had had **no production writer** since `090370e`/v2.22.0 dropped it from the retired `DiagnosticsPage` — `DiagnosticsService.set_hw_diagnostics` is now its single writer and polling prefetches `/diagnostics/hardware` once at startup. Also fixes the DEC-095/162 30% CPU/pump floor on these boards (DEC-229) | GUI v2.30.0 |
+| hwmon fans displayed `pwm1`, not `CPU_FAN` (a former Known Limitation, opened 2026-07-23; its number is now §16's) | **Two independent blockers** (the entry's "likely fix" covered only the first): (a) the daemon *synthesises* `pwmN` when the chip publishes no label file, so "non-empty label" was wrongly read as "authoritative" — an exact-match `is_placeholder_hwmon_label` now skips it and the resolver owns tiers 2-5; (b) `AppState.board_info`, which keys the DMI fallback table, had had **no production writer** since `090370e`/v2.22.0 dropped it from the retired `DiagnosticsPage` — `DiagnosticsService.set_hw_diagnostics` is now its single writer and polling prefetches `/diagnostics/hardware` once at startup. Also fixes the DEC-095/162 30% CPU/pump floor on these boards (DEC-229) | GUI v2.30.0 |
 | GUI rescan button (endpoint existed, never wired) | Diagnostics ▸ Troubleshooting "Rescan Hardware" + restored `hwmon_rescan` wrapper + chained diagnostics refetch (DEC-147) | GUI v1.35.0 |
-| GUI surface for `reset_gpu_fan` (§11) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the active profile owning an `amd_gpu:` member (DEC-147; re-keyed off the loop at 2.0.0, DEC-165) | GUI v1.35.0 |
+| GUI surface for `reset_gpu_fan` (§11b) | Diagnostics ▸ Troubleshooting "Restore GPU Fan to Automatic", gated against the active profile owning an `amd_gpu:` member (DEC-147; re-keyed off the loop at 2.0.0, DEC-165) | GUI v1.35.0 |
 | Emergency ↔ GUI lease ping-pong (alternating curve/forced PWM during thermal emergencies) | `thermal_state` in GET /status + GUI control-loop/lease stand-down (DEC-132) | GUI v1.30.0 / daemon v1.13.0 |
 | Per-tick sensor re-discovery (~340 sysfs ops/s; asus_wmi_sensors polling risk) | Descriptor cache + triggered re-discovery (DEC-133) | daemon v1.13.0 |
 | GPU GUI-priority lapse on slow ramps (coalesced writes didn't count as liveness; engine used exact-match suppression) | record_gui_write on coalesced returns + shared 5% threshold (DEC-131) | daemon v1.13.0 |
@@ -371,12 +371,12 @@ padding tweak, and DEC-128/129 own that surface.
 | Profile activation fails (path validation mismatch) | Configurable `[profiles] search_dirs` in daemon.toml + CWE-22 canonicalization fix | v0.83.0 (R62) |
 | Profile selection has no visible effect | Fixed combo box snap-back bug in `_on_profile_selected()` | v0.83.0 (R62) |
 | Per-profile content not visible when switching | Data model was correct; UI bug prevented switching (fixed with combo) | v0.83.0 (R62) |
-| User data paths not configurable | Settings → Application directory pickers + `set_path_overrides()` | v0.83.0 (R62) |
+| User data paths not configurable | Settings → Application directory pickers (today the Settings page's Path Management card) + `set_path_overrides()` | v0.83.0 (R62) |
 | Daemon restart required after profile dir change | SIGHUP reload + `POST /config/profile-search-dirs` API endpoint | v0.84.0 (R64) |
 | daemon.toml write permissions / architecture boundary | GUI uses daemon API instead of direct file writes (DEC-087 supersedes DEC-084) | v0.84.0 (R64) |
 | Multi-user profile directory configuration | API endpoint supports additive dir registration from multiple users | v0.84.0 (R64) |
 | Fan table columns uneven | All 4 columns Stretch mode | v0.74.0 (R55) |
-| Copy last errors not implemented | Button added to diagnostics event log tab | v0.74.0 (R55) |
+| Copy last errors not implemented | Button added to diagnostics event log tab (retired with the Diagnostics page, DEC-216; the Logs page copies the visible rows, or one event with its context) | v0.74.0 (R55) |
 | Reconnect controller button | Deferred — daemon auto-reconnects with backoff | Intentionally deferred (R55) |
 | One-click diagnostics redaction | Deferred — partial PII scrubbing gives false confidence | Intentionally deferred (R55) |
 | Per-sensor freshness on dashboard | Summary cards show ⏱/⚠ indicators with age tooltips | V5 audit |

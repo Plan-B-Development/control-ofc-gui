@@ -97,7 +97,8 @@ A temporary operator-driven mode that overrides automatic curve application. It 
 - Demo mode
 - Theme import/export
 - GUI settings import/export
-- Local persistence of profiles, groups, aliases, and themes
+- Profiles stored by the daemon, the store of record (DEC-160), with a local draft copy
+- Local persistence of fan aliases, themes and GUI settings
 
 ## V1 data sources
 The GUI consumes daemon/API endpoints for:
@@ -114,7 +115,7 @@ As of 2.0.0 the daemon's profile engine is the **sole writer** of every backend;
 The GUI must treat these as first-class sensor categories:
 - CPU
 - Motherboard
-- GPU (AMD discrete; Intel Arc discrete GPUs are monitored read-only)
+- GPU (AMD discrete; Intel Arc discrete GPUs are monitored read-only, and NVIDIA GPUs too when the daemon's opt-in NVML telemetry is on — DEC-204)
 - Liquid
 - Ambient
 - Disk
@@ -127,7 +128,7 @@ The GUI must treat these as first-class sensor categories:
   - Quiet
   - Balanced
   - Performance
-- Curves use one sensor only in V1
+- Each curve reads one sensor; a Mix curve combines other curves, each at its own sensor (DEC-152)
 - No live simulation preview before apply
 
 ## Health and fault handling
@@ -156,7 +157,7 @@ Between them, the Overview, System State, Hardware and Logs pages must expose
 
 ## User actions expected in diagnostics
 - export support bundle
-- copy last errors
+- copy log entries (the Logs page copies the visible rows, or one event with its context)
 - refresh hardware diagnostics
 - test PWM / GPU fan write effectiveness
 

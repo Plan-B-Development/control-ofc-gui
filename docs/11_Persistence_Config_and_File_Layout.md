@@ -28,26 +28,34 @@ As of 2.0.0 the daemon is the **store of record for profiles** (DEC-160). The GU
 - hardware write execution truth
 
 ## Storage location strategy
-Use standard Linux user paths. All data directories are configurable from
-Settings → Application (stored in `app_settings.json` as `profiles_dir_override`,
-`themes_dir_override`, `export_default_dir`). Empty override = use XDG default.
+Use standard Linux user paths. Three directories are configurable from the Settings
+page's **Path Management** card (stored in `app_settings.json` as `profiles_dir_override`,
+`themes_dir_override`, `export_default_dir`); an empty override uses the XDG default. The
+reports directory (XDG data) and the cache directory are not configurable.
 
 Recommended approach:
 - config under XDG config location (default)
-- state/cache/history under XDG state/cache locations
+- regenerable files under the XDG cache location; saved PWM Test Reports under XDG data;
+  polling history in memory only
 - exports under user-chosen path
-- overrides applied at startup via `set_path_overrides()` before any file I/O
+- overrides applied at startup via `set_path_overrides()`, after `app_settings.json` is
+  loaded and before profiles and themes are read. `ensure_dirs()` runs **before** it, so it
+  creates only the default directories (config, profiles, themes, cache — each `0700`),
+  never an overridden one
 
 ## Suggested file layout
 
 ```text
 ~/.config/control-ofc/
   app_settings.json
+  app_settings.json.corrupt[.1-4]            # quarantined unparseable settings (see below)
   backups/
     settings_backup_<YYYYmmdd_HHMMSS>.json   # app_settings.json only, before each import
   themes/
-    default_dark.json
-    imported_theme_name.json
+    classic_blue.json                        # bundled presets, copied in at startup
+    noctua_dark.json                         #   whenever one is missing
+    solar_light.json
+    imported_theme_name.json                 # imported or saved themes
   profiles/
     quiet.json
     balanced.json
@@ -55,18 +63,24 @@ Recommended approach:
     custom_profile.json
 ```
 
+`Default Dark` is built into the code (`ThemeTokens`), not a file; saving it from the Theme
+page writes a copy into `themes/`. The three presets are copied in by
+`ensure_bundled_themes_installed()` on every start where they are absent, so a deleted preset
+comes back and an edited one is left alone.
+
 As of 2.0.0 the **daemon** is the profile store of record at `/var/lib/control-ofc/profiles/`
 (DEC-160). The GUI's `~/.config/control-ofc/profiles/` is now a **local draft cache**:
 `ProfileService` mirrors the daemon's profiles there on load, and writes drafts there when the
 daemon is offline. There is **no background auto-sync**: an offline draft is re-published only when
 the user saves it again (the next `save_profile` validate-then-upload), not automatically on
-reconnect. The GUI uploads and validates profiles through the daemon CRUD API rather than treating
-its local copy as authoritative.
+reconnect. The same holds for deletes: a profile deleted while the daemon is offline is removed
+only locally, and comes back from the daemon's store on the next online load. The GUI uploads and
+validates profiles through the daemon CRUD API rather than treating its local copy as authoritative.
 
 GUI runtime state currently lives almost entirely under `~/.config/control-ofc/`.
-The XDG state and cache directories are created by `ensure_dirs()`. The GUI does
-**not** write to the XDG **state** dir — no on-disk log, no `last_session.json`
-snapshot, no `support_bundle_work/` staging directory. It **does** write to the
+The GUI has **no** XDG **state** directory: `ensure_dirs()` does not create one, and
+nothing writes there — no on-disk log, no `last_session.json` snapshot, no
+`support_bundle_work/` staging directory. It **does** write to the
 XDG **cache** dir — the canonical `paths.cache_dir()` (`~/.cache/control-ofc/`):
 `ui/theme.py` writes a themed combo-box arrow SVG (`combo-arrow-<digest>.svg`)
 there for the active theme. Support bundles are
@@ -187,14 +201,12 @@ Store:
 
 ## History retention
 Only keep polling history for the last 2 hours.
-This should be stored as state/cache, not as permanent configuration.
+It is held in memory and never written to disk, so it starts empty at every launch (docs/09).
 
 ## Support bundle output
-Support bundles should be exported to a user-selected location, typically as a zip file containing:
-- config snapshots
-- recent logs
-- API snapshots
-- diagnostics metadata
+A support bundle is **one JSON file** (`control_ofc_support_bundle.json` by default), written
+to a user-selected location from the footer's **Export Support Bundle** — not a zip. Its
+contents are in [`docs/07`](07_Diagnostics_Spec.md).
 
 ## Data safety principles
 - write atomically where practical
@@ -226,8 +238,11 @@ separate guard in `ProfileService` (`persist=False`, DEC-431): demo reads the re
 folder and never writes or removes a file in it.
 
 `load()` also distinguishes **unparseable** from **unreadable**. A file that fails to
-parse is renamed to `app_settings.json.corrupt` and normal saving resumes — the first
-quarantine is kept and never overwritten, because after one the app writes a clean file
-and a later `.corrupt` would be that generated file rather than the user's data. An
+parse is moved to the first free of **five** numbered quarantine slots —
+`app_settings.json.corrupt`, then `.corrupt.1` … `.corrupt.4` — and normal saving resumes.
+No quarantine is ever overwritten, because which copy is worth keeping cannot be known. If
+all five are taken, or the rename fails, the bad file stays in place and the service does
+not arm: **settings are not saved that session**, and the log says to remove the `.corrupt`
+files to re-enable saving. An
 `OSError` is treated as "we could not read it", not "it is bad": the service stays
 unloaded and persists nothing, so a transient I/O failure cannot cost a healthy config.

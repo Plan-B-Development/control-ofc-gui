@@ -12,14 +12,18 @@ Demo mode allows the GUI to be:
 Demo mode is a product feature, not just a developer hack.
 
 ## Entry points
-Users should be able to enter demo mode:
-- from an explicit startup option
-- from a disconnected empty state
-- from Settings if desired
+Demo mode is chosen at launch and lasts the whole session (there is no demo → live switch):
+- **`control-ofc-gui --demo`**, or
+- the Settings toggle **Start in demo mode — When the daemon is unavailable**
+  (`demo_on_disconnect`, DEC-139): at the next launch the GUI probes the daemon once and starts in
+  demo if it cannot reach it.
+
+There is no in-app button. The disconnected Dashboard names `--demo` in its hint text.
 
 ## Visual rules
 When demo mode is active:
-- show a clear Demo badge in the header
+- the status strip under the ribbon shows a **DEMO** badge, and the footer's mode chip reads
+  *Demo mode* in the same badge style, on every page
 - explain that data is simulated
 - prevent confusion with real hardware control
 
@@ -34,9 +38,11 @@ When demo mode is active:
 ## Demo data model
 Provide a believable synthetic environment. As shipped, demo mode includes:
 - OpenFan present, with 8 named channels in use
-- two writable hwmon headers (ITE chip: CPU Fan, CPU OPT / Pump)
+- three writable hwmon headers: two on an ITE chip (CPU Fan, CPU OPT / Pump) and an NZXT Kraken
+  pump (`is_aio`, DEC-156)
 - an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
-- CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors
+- CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, and the Kraken's coolant
+  sensor (classified as Liquid)
 - built-in profiles
 - realistic RPM and temperature motion over time
 
@@ -45,7 +51,8 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
 - Rear Exhaust, Top Exhaust 1 / Top Exhaust 2 (OpenFan)
 - GPU Adjacent Intake (OpenFan)
 - Radiator Push 1 / Radiator Push 2 (OpenFan)
-- CPU Fan, CPU OPT / Pump (hwmon)
+- CPU Fan, CPU OPT / Pump (hwmon, ITE)
+- Pump (hwmon, NZXT Kraken)
 - RX 7900 XTX Fan (AMD GPU)
 - Arc B580 Fan (Intel GPU, read-only)
 - RTX 4080 Fan (NVIDIA GPU, read-only)
@@ -79,6 +86,17 @@ Allow optional toggles or scripted events for:
 - unsupported device category
 
 These are useful for development and screenshot/testing work.
+
+## How demo data reaches the UI
+Demo mode creates no `PollingService` and no daemon client. `MainWindow` runs its own 1 Hz timer
+(`_demo_tick`) that copies `DemoService`'s sensors and fans into `AppState`, and `DemoController`
+evaluates the active profile against them on its own 1 Hz timer (`docs/09`).
+
+## What demo mode does not run
+- **The PWM Test Report** opens — on its Reports page, so saved reports can be read and compared —
+  but will not start a run: its refusal list says a report about synthetic hardware would mean
+  nothing (DEC-404's D-a).
+- Settings ▸ Import Config is disabled (it writes profile files directly — see below).
 
 ## Demo mode restrictions
 Demo mode must never:

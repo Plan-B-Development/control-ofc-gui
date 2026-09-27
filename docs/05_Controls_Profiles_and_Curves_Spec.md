@@ -23,26 +23,16 @@ This page contains more than saved profile selection. It includes:
 
 Therefore `Controls` is the top-level navigation label, with profile management inside it.
 
-## V1 page zones
+## Page layout
+The current layout (DEC-214/233) is described under
+[Implementation: Controls Page Layout](#implementation-controls-page-layout-dec-214233) below.
 
-### Left column / upper-left area
-- Active profile selection/activation — **moved to the sidebar Active-Profile selector (DEC-214)**; no longer on the Controls page
-- Profile list
-- New / Duplicate / Rename / Delete profile actions
-- Profile status indicators
-- Active vs edited profile indicators
-
-### Center main area
-- Curve editor graph
-- Sensor selector
-- Target selector context (fan / group / profile target scope)
-- Numeric point table
-
-### Right column / lower section
-- Fan groups editor
-- Group membership editor
-- Manual override controls
-- Apply / Save / Reset / Revert actions
+> **V1 plan — history, superseded by DEC-214.** The V1 spec planned three zones: a left
+> column with the profile list, New/Duplicate/Rename/Delete and active-vs-edited indicators;
+> a centre with the curve graph, sensor selector, target scope and point table; and a right
+> column with the fan-group editor, membership editor, manual-override controls and
+> Apply/Save/Reset/Revert. Selecting and activating a profile moved to the sidebar, and the
+> page became the three panes below.
 
 ## Profile behaviour rules
 - Only one profile is active at a time
@@ -104,7 +94,8 @@ Curve rules:
 - 5 points by default (point-based curves)
 - temperature on X-axis
 - fan output percentage on Y-axis
-- no live simulation required before apply
+- no simulation before apply; **Test Curve** shows the curve's output at the sensor's
+  current temperature in the editor
 
 ### Curve types
 The curve library supports seven shapes, each serialised with a `type` field:
@@ -146,18 +137,22 @@ and writes it as a flat PMFW curve, so the GPU never depends on the curve
 (subject to the firmware's own 5%/OD-RANGE clamp).
 
 ### Curve editor behaviour
-- points are draggable
-- points are editable numerically
-- X values must remain ordered
-- values must remain clamped to safe ranges
-- edits update the numeric table and graph together
-- reset returns to last saved profile state, not necessarily to factory preset
+- points are draggable, editable in the table, and nudged from the keyboard
+- **+ Add Point** adds one at the midpoint of the curve; **Remove Point** (or Delete /
+  Backspace) removes the selected one
+- **Undo / Redo** (Ctrl+Z / Ctrl+Shift+Z), 50 steps
+- a **Preset** menu loads Linear, Quiet or Aggressive into a graph or stepped curve
+- X values stay ordered and outputs clamped: the lower bound is the strictest floor of
+  the fan roles using the curve (see Safety below)
+- edits update the table and graph together
+- **Revert** in the page header returns the whole profile to its last saved state; it is
+  not a factory reset
 
 ### Point rules
-- default new curve has exactly 5 points
-- point count can remain fixed in V1 unless additional complexity is easy
-- prevent impossible point ordering
-- prevent values outside valid output range
+- a new curve has 5 points
+- a curve keeps at least **2** points; points stay at least 0.5 °C apart across 0–120 °C
+- a stored curve with more than 256 points is refused on load (`MAX_CURVE_POINTS`)
+- impossible point ordering and out-of-range outputs are prevented
 
 ## Sensor selector
 Each curve chooses exactly one sensor from the supported V1 categories:
@@ -190,35 +185,39 @@ However, within a profile, fan targets may still be organised by:
 
 This should be modelled carefully so V1 stays usable.
 
-## Recommended V1 simplification
-Use this model:
+## Profile model
+A profile holds a list of **fan roles** (`LogicalControl`, each with its members, a mode,
+a curve id and its tuning) and a library of **curves** (`CurveConfig`, each owning its
+sensor and points). A role references a curve by id; several roles may share one.
 
-### Profile contains control assignments
-For each controllable target, the profile stores:
-- target id
-- target type (fan/group)
-- selected sensor id
-- curve id or inline curve
-- enabled flag
-
-This keeps V1 flexible without implying complex daemon-native policy support.
+> **V1 plan — history.** V1 proposed storing, per target, a target id, a target type
+> (fan/group), a sensor id, a curve id or inline curve, and an enabled flag. The shipped
+> model moved the sensor into the curve and the targets into roles, as above.
 
 ## Manual override
 Manual override is temporary and high-visibility.
 
-### Manual override requirements
-- obvious enable action
-- obvious exit action — a single checkable **Manual** toggle per control card (`ControlCard_Btn_manual_*`): checking it enters manual override, unchecking it reverts that role to its curve
-- visible page-wide state when active
-- profile engine pauses or yields while manual override is active
-- override writes still go through daemon safety rules
-
-### Manual override UI
-Recommended:
-- a distinct banner or chip
-- per-target override sliders if implemented
-- global quick override only if it is clearly explained
-- manual override panel separated from profile editing to avoid confusion
+### Manual override lifecycle (DEC-163)
+- **Enter / exit**: a single checkable **Manual** toggle per role card
+  (`ControlCard_Btn_manual_*`). Checking it swaps the card's output line for an inline
+  slider and takes a daemon override (`POST /control/{id}/override`); unchecking it
+  releases the override (`DELETE`) and the role returns to its curve.
+- **Renewal**: the page renews every few seconds (the interval the daemon returns in
+  `renew_secs`). A renew the daemon refuses means the override has expired, and the card
+  reverts to its curve.
+- **What ends one without the user**: the daemon's deadman when renewals stop (a frozen or
+  closed GUI — the page does not release overrides on close), and activating or
+  deactivating a profile (DEC-189/DEC-218). While the daemon is unreachable a renew fails,
+  which the page treats as expiry, so the card reverts.
+- **Another client's override** shows on the card as an **External** chip (DEC-169); the
+  page clears those chips, and every **Not controlled** chip, on a disconnect, because
+  nothing would refresh them while polling is stopped.
+- **What the daemon does meanwhile**: it commands the slider's duty for that role only,
+  skipping curve evaluation for it (an overridden role is never listed as skipped); every
+  other role keeps running its curve, and the thermal ladder still floors the override
+  (DEC-307).
+- **Floors**: the daemon clamps the requested duty up to the role's floor. The slider's
+  own minimum is the label-derived floor (see Safety), not the live pump-role term.
 
 ## Safety behaviour
 
@@ -227,9 +226,14 @@ The GUI **bakes** a role-aware default minimum PWM into each control's
 `LogicalControl.minimum_pct` when members are assigned or edited; as of 2.0.0
 the daemon then **enforces and backstops** that floor (DEC-162 — validate-time
 reject + an independent eval-time clamp). The GUI-side defaults are:
-- **30%** for any control whose members include a CPU- or pump-labelled
-  hwmon header (label contains `CPU`, `PUMP`, or `AIO`), **or a header the user
-  has assigned the `pump` role to** (DEC-312). The assignment is unioned into the
+- **30%** for any control with a hwmon member that is any of:
+  - labelled CPU or pump — its `member_label` contains `CPU`, `PUMP` or `AIO`;
+  - labelled CPU or pump **by the daemon** — the label embedded in the member's stable id
+    (`hwmon:chip:device:pwmN:LABEL`), which catches a renamed `PUMP` header (DEC-257,
+    matching the daemon's DEC-252 union);
+  - on a **liquid-cooler chip** (NZXT Kraken, Aquacomputer — the chip in the id, from
+    the shared cooler list), so a pump labelled only `pwm1` is still covered (DEC-156);
+  - **assigned the `pump` role by the user** (DEC-312). The assignment is unioned into the
   persisted `member_label` at authoring time, because a persisted member carries
   no live header to consult later. Union only — a `chassis_fan` assignment on a
   `PUMP`-labelled header does not strip the floor the label already earned — and
@@ -381,22 +385,62 @@ Edit Fan Role dialog.
 
 ---
 
-## Implementation: Controls Page Layout (v0.27.0)
+## Implementation: Controls Page Layout (DEC-214/233)
 
 ### Page structure
 ```
 ControlsPage (QVBoxLayout)
-├── Profile bar (combo, activate, save, manage)
-├── QSplitter (Vertical) — user-draggable divider
-│   ├── Top pane: Fan Roles
-│   │   ├── Header + Fan Wizard + Add button
-│   │   └── QScrollArea → DraggableFlowContainer (fan role cards)
-│   └── Bottom pane: Curves
-│       ├── Header + Add button
-│       ├── QScrollArea → DraggableFlowContainer (curve cards)
-│       └── CurveEditor (expandable, hidden by default)
-└── No-controls hint (shown when no fan roles exist)
+├── Header: "Controls" │ the profile being edited · ⋮ (New / Rename / Duplicate / Delete)
+│           ……… Set up ▾ · Revert · Save · unsaved-changes chip
+├── Dell shared-switch banner (DEC-403; only when the profile breaks the rule)
+└── QSplitter (Horizontal, Controls_Splitter_sections) — width ratio 1 : 1 : 2
+    ├── 1  Assign Roles — "+" (single-output or group role) · role cards in a
+    │      DraggableFlowContainer · "Unassigned Fans (N)" pinned at the bottom
+    └── QSplitter (Horizontal, Controls_Splitter_curvesEditor)
+        ├── 2  Link Logic — "+" (new curve of any type) · curve cards
+        └── 3  Curve Editor — "Editing: <curve>" · Test Curve · Close (Esc);
+               always mounted, with a placeholder until a graph or stepped curve is
+               opened (composite and parameter curves edit in a dialog / panel)
 ```
+
+- **Profile selection and activation live in the sidebar** (DEC-208/214): its combo
+  chooses which profile this page edits, and its **Apply** activates it. The header
+  names the profile being edited so it is always clear what **Save** writes.
+- **Save** (Ctrl+S) validates and uploads the profile to the daemon's store; saving the
+  active profile re-applies it (DEC-188). **Revert** is enabled only while there are
+  unsaved edits.
+- **Set up ▾** holds the hardware-setup actions: **Auto-Connect Wizard…** (identify and
+  label fans, DEC-166), **Configure AIO…** (name the pump header — the path that assigns the
+  `pump` role — choose how the pump is driven, and group the radiator fans; shown when a
+  liquid cooler or pump header is detected) and **Dedicate GPU Fan…** (DEC-221; shown when
+  the GPU supports it).
+- **Unassigned Fans (N)** lists the fans no role controls. A writable one can be added to
+  an existing role from its submenu, or it says to create a role first; a read-only one is
+  listed as such. It reads "All fans assigned" when there are none (DEC-233).
+
+### Role cards
+A role card shows the role name and fan count, its members with live RPM, the assigned
+curve, a `Min: NN%` floor badge, the output (or the inline manual slider), and
+**Manual · Delete · Edit…**. Two chips can appear on it:
+- **Not controlled** (`Not controlled · 4m`) when the daemon lists the role in
+  `skipped_controls` (273-i, daemon ≥ 2.21.0). The tooltip gives the reason in words —
+  its curve is missing, its sensor is unavailable, none of a Mix's inputs could be read,
+  the role a Sync mirrors is not running, or (daemon 2.55.0+) none of its fans can be
+  controlled by the daemon — and says the fans hold their last speed, or, for the last
+  case, that their speed is up to the hardware. An unrecognised reason still shows the
+  chip. An overridden role is never listed.
+- the Dell shared-switch warning above, for the profile as a whole.
+
+### Member picker drops
+The Edit Fan Role dialog offers only fans a role can drive:
+- a hwmon header the daemon reports `is_writable: false` is **not listed** (DEC-102) — it
+  stays visible on the hardware surfaces;
+- Intel and NVIDIA GPU fans are not listed (no kernel write path, DEC-121/DEC-204);
+- an AMD GPU fan without a write path is listed as `(read-only)`, because that state is
+  fixable (`amdgpu.ppfeaturemask`);
+- a fan already in another role is shown disabled;
+- a sensor the daemon marks `control_eligible: false` is dropped from the curve's sensor
+  picker (DEC-193, above).
 
 ### Card container: DraggableFlowContainer
 Both Fan Roles and Curves sections use `DraggableFlowContainer`, which provides:
@@ -455,12 +499,13 @@ towers. With the owner-drawn widget the default card shows a modest
 sparkline, and extra height granted by a user resize grows the graph
 intentionally.
 
-### Section layout (Fan Roles / Curves)
-The two sections share a vertical `QSplitter` (`Controls_Splitter_sections`)
-configured with **equal stretch factors and equal seeded sizes**, so the split
-defaults to ~50/50 and stays proportional as the window resizes, while the
-divider remains user-draggable (DEC-128, D3). The inner curves/editor splitter
-(`Controls_Splitter_curvesEditor`) is unchanged.
+### Section layout (the three panes)
+The outer `Controls_Splitter_sections` holds Assign Roles and a second horizontal
+splitter, `Controls_Splitter_curvesEditor`, which holds Link Logic and the Curve Editor;
+the net width ratio is 1 : 1 : 2 and every divider is user-draggable. The two card panes'
+minimum width follows the card metric and is re-derived when the font or density changes
+(DEC-260). (Before DEC-214 this was a vertical split between a Fan Roles pane and a
+Curves pane.)
 
 ### Order model
 - **Source of truth**: `Profile.curves` and `Profile.controls` lists
@@ -476,15 +521,17 @@ divider remains user-draggable (DEC-128, D3). The inner curves/editor splitter
 `clear_cards()` blocks signals, removes event filters, orphans widgets, and calls `deleteLater()` for deterministic Qt-side cleanup. Python references are cleared separately via `_control_cards.clear()` / `_curve_cards.clear()`.
 
 ### Profile activation
-When the user clicks Activate, the GUI:
-1. Saves the profile to disk
-2. Calls `POST /profile/activate` on the daemon with the profile file path
-3. Only updates local state (AppState, combo) after daemon confirms success
-4. Shows error feedback on failure without falsely marking the profile active
+There is no Activate button on this page. The sidebar's **Apply** and the Dashboard's
+**Apply** both call `ProfileService.activate`, which:
+1. Saves the profile — validates it and uploads it to the daemon's store, as Save does
+2. Calls `POST /profile/activate` with the path of the profile's local copy
+3. Updates local state (AppState, the sidebar) only after the daemon confirms
+4. Otherwise reports the failure without marking the profile active
 
-Step 1 can refuse (DEC-403): a profile that breaks the Dell shared-switch rule above is
-not saved, the daemon is never asked, and the sidebar or the Dashboard shows the rule's
-message in the main window's banner.
+A failure is shown in the main window's banner as `Could not activate "<name>": <reason>`
+(DEC-416, `CTRL-k`); a later successful Apply takes it down. Step 1 can refuse (DEC-403): a
+profile that breaks the Dell shared-switch rule above is not saved, the daemon is never
+asked, and the banner shows the rule's own message, which names the fans to change.
 
 When a user tries to create an unsafe curve:
 - clamp or validate before save
@@ -500,11 +547,12 @@ The daemon owns the hwmon lease internally (the GUI holds no lease as of 2.0.0 �
 ## Suggested key workflows
 
 ### Workflow: switch profile
-1. User selects a different profile
+1. User selects a different profile in the sidebar (or on the Dashboard)
 2. App shows whether there are unsaved edits
-3. App activates the selected profile on the daemon (`POST /profile/activate`)
-4. The daemon begins evaluating that profile (the GUI does not write PWM)
-5. Dashboard and header update on the next poll
+3. User clicks **Apply**; the app saves it and activates it on the daemon (`POST /profile/activate`)
+4. The daemon begins evaluating that profile (the GUI does not write PWM), and clears any
+   standing manual overrides (DEC-189)
+5. Dashboard and status strip update on the next poll
 
 ### Workflow: edit curve
 1. User selects profile

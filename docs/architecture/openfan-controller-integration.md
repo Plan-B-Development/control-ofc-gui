@@ -3,9 +3,11 @@
 > **Part snapshot, part current — and the split is exact.** Everything here is
 > the v0.2.0 snapshot **except § 2 (Discovery and Connection), § 10 (Failure
 > Modes) and § 1's closing detection sentence**, which were re-verified against
-> daemon v2.48.0. The snapshot portion remains accurate because it is
-> firmware-side: wire format, baud rate, command ABI and calibration sweep
-> mechanics have not changed. The re-verified portion had to be rewritten because
+> daemon v2.48.0, and **§ 3's reply correlation, § 4, § 5's channel field, § 7's
+> command guards, § 8, § 9 and § 11**, re-verified against daemon 2.56.3's
+> `serial/protocol.rs`, `serial/transport.rs` and `constants.rs` (DEC-440). The
+> rest of the snapshot remains accurate because it is firmware-side: wire format,
+> baud rate and calibration sweep mechanics have not changed. The re-verified portion had to be rewritten because
 > DEC-291 and DEC-361 rebuilt detection and boot adoption, and **the 5-retry
 > 1–16 s ladder it used to describe no longer exists**. Other daemon-side details
 > (error codes, endpoint paths, lock granularity) have evolved through many
@@ -13,7 +15,7 @@
 > Sequence and the daemon `CHANGELOG.md`.
 
 **For:** OpenFan Controller firmware developers and hardware integrators
-**Snapshot taken at:** Daemon v0.2.0 (protocol) · daemon v2.48.0 (§ 1 tail, § 2, § 10)
+**Snapshot taken at:** Daemon v0.2.0 (protocol) · daemon v2.48.0 (§ 1 tail, § 2, § 10) · daemon 2.56.3 (§ 3 correlation, § 4, § 5 channel, § 7 guards, § 8, § 9, § 11)
 **Evidence level:** Protocol claims verified against the v0.2.0 Rust source; the
 re-verified sections against `main.rs`, `serial/adoption.rs`,
 `serial/real_transport.rs`, `api/handlers/openfan.rs` and `polling.rs` at
@@ -24,7 +26,7 @@ daemon v2.48.0
 ## 1. Physical Connection
 
 - **Interface:** USB CDC-ACM (appears as `/dev/ttyACMn` on Linux)
-- **Baud rate:** 115,200 bps
+- **Baud rate:** 115,200 bps (`SERIAL_BAUD_RATE`, a constant — not configurable)
 - **Data bits:** 8
 - **Parity:** None
 - **Stop bits:** 1
@@ -167,9 +169,29 @@ the device (DEC-383).
 ### Debug Output
 Any line not starting with `<` is treated as debug output and skipped. The daemon skips up to **50 debug lines** before timing out with an error.
 
+### Reply correlation (DEC-301, daemon 2.24.1)
+A reply is accepted only if it answers **the command just sent** (`Command::matches_reply`):
+- its command code must equal the command's opcode, and
+- for `ReadRpm` and `SetPwm`, it must also carry a reading **for the channel the command
+  addressed**. `ReadAllRpm` needs the opcode only.
+
+A well-formed frame that fails either test is treated as a stale reply left by an earlier
+exchange and discarded; the daemon drains up to **15** of them (`MAX_STALE_FRAMES` = 16,
+checked before each read) before failing the exchange with a protocol error. So a firmware
+whose `SetPwm` reply omitted the channel, or echoed a different one, would have **every**
+write fail — see § 9. Before DEC-301 the daemon took whatever frame arrived next, which
+put the link one frame behind and cached `SetPwm` acknowledgements as tachometer readings.
+
 ---
 
 ## 4. Command Reference
+
+The daemon sends **three** commands, and only these (`serial/protocol.rs::Command`):
+`ReadAllRpm`, `ReadRpm` and `SetPwm`. The firmware also implements `0x03` SetAllPwm
+(one duty on every channel) and `0x04` SetTargetRpm (closed-loop RPM through its EMC2305);
+the daemon has sent neither since `5d8847c` (first released in daemon 2.5.1), and a
+thermal emergency writes each channel with its own `SetPwm`. They are listed at the end of
+this section for firmware developers, not as daemon behaviour.
 
 ### 0x00: ReadAllRpm
 
@@ -208,25 +230,15 @@ percent_to_raw(pct) = (pct * 255 + 50) / 100
 100% → 0xFF
 ```
 
-### 0x03: SetAllPwm(pwm_raw)
+### Firmware commands the daemon does not send
 
-Set open-loop PWM on all 10 channels simultaneously.
+| Opcode | Command | Wire | Note |
+|---|---|---|---|
+| `0x03` | SetAllPwm(pwm_raw) | `>03{pwm:02X}\n` | one open-loop duty on all 10 channels |
+| `0x04` | SetTargetRpm(channel, rpm) | `>04{ch:02X}{rpm:04X}\n` | closed-loop RPM target through the EMC2305 |
 
-```
-Command:  >03{pwm:02X}\n
-Example:  >03FF\n     (all channels to 100%)
-Response: <03|00:HHHH;01:HHHH;...;09:HHHH;\r\n
-```
-
-### 0x04: SetTargetRpm(channel, rpm)
-
-Set closed-loop RPM target (uses EMC2305).
-
-```
-Command:  >04{ch:02X}{rpm:04X}\n
-Example:  >040503E8\n  (channel 5, target 1000 RPM)
-Response: <04|05:03E8;\r\n
-```
+The daemon's API has no route that reaches either: the `target_rpm` route was retired at
+2.0.0 and `SetAllPwm` was removed from the daemon with `5d8847c`.
 
 ---
 
@@ -238,7 +250,8 @@ Each response contains one or more channel:rpm pairs:
 NN:HHHH;NN:HHHH;...;
 ```
 
-- `NN` — channel number in **decimal** (00–09)
+- `NN` — channel number, two digits (00–09). The firmware emits it with `%02X` and the
+  daemon parses it as decimal; the two agree because every channel is a single digit
 - `:` — separator
 - `HHHH` — RPM value as **4-digit uppercase hex** (u16)
 - `;` — pair delimiter (trailing `;` expected)
@@ -307,9 +320,21 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 ### Command Safety Guards
 - **MAX_DEBUG_LINES = 50:** Aborts if firmware emits 50+ non-response lines
 - **Wall-clock deadline:** Total operation bounded by the timeout parameter
+- **MAX_STALE_FRAMES = 16:** At most 15 replies to another command or channel are drained per exchange (§ 3)
 - **Channel validation:** 0–9 only (10 channels)
 - **PWM range:** 0–100% (mapped to 0–255 raw)
-- **RPM range:** 0–5000 (soft cap in API validation)
+
+### Unknown duty after a reconnect or resume
+A serial reconnect or a host resume makes every channel's last duty **unknown** until the
+daemon next writes that channel (DEC-256; the accessor honours it since DEC-393, daemon
+2.51.1). Two safety paths read it:
+- **The no-sensor floor.** A control skipped under the 40% floor normally keeps its fans at
+  their last duty; a channel whose duty a reconnect or resume lost goes to **100%** instead
+  (DEC-401, daemon 2.51.3, `lost_to_reconnect`). A duty unknown for any other reason takes
+  the bare 40%.
+- **The emergency's give-back.** A channel whose duty was unknown when the emergency began
+  has nothing to be given back to, so a channel no control commands stays at 100% when the
+  emergency ends (DEC-393).
 
 ---
 
@@ -317,13 +342,13 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 
 1. **Line-based protocol** — one command per line, one response per line
 2. **Response starts with `<`** — anything else is debug output
-3. **Response echoes command code** — parsed and validated
+3. **Response echoes the command code, and for `ReadRpm`/`SetPwm` the channel** — both are
+   checked before a reply is accepted (§ 3, DEC-301)
 4. **Response includes RPM readings** — even after SetPwm commands
 5. **Real firmware omits closing `>`** — daemon accepts both formats
 6. **Channel numbers in response are decimal** (not hex) — `05:04B0` means channel 5
 7. **Firmware handles PWM 0–255 internally** — daemon converts percent→raw
-8. **EMC2305 chip available** for closed-loop RPM mode
-9. **Device is exclusively owned** — no other process should access the serial port
+8. **Device is exclusively owned** — no other process should access the serial port
 
 ---
 
@@ -342,11 +367,15 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - Adding binary frames → **breaks line-based reading**
 - Changing channel numbering from 0-based → **breaks channel mapping**
 - Removing RPM echo from SetPwm response → **daemon treats as protocol error (no readings)**
+- Omitting or changing the **channel** in a `ReadRpm`/`SetPwm` reply → **every such command
+  fails**: the reply no longer matches the command (§ 3), is drained as stale, and the
+  exchange ends in a protocol error or a timeout
+- Changing a reply's **command code** → the same: the reply is never matched
 
 ### Transport Parameters
 | Parameter | Value | Changeable? |
 |-----------|-------|-------------|
-| Baud rate | 115,200 | Only via config change |
+| Baud rate | 115,200 | Hardcoded constant (`SERIAL_BAUD_RATE`) |
 | Line terminator (command) | `\n` | Hardcoded |
 | Line terminator (response) | `\r\n` or `\n` | Both accepted |
 | Max response time | 500ms | Configurable |
@@ -364,6 +393,8 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 | Firmware enters debug loop | 50 debug lines exceeded | Command fails with Protocol error | Affected write skipped |
 | Response timeout | 500ms per read_line | SerialError::Timeout returned | Write skipped for this cycle |
 | Malformed response | Protocol parsing fails | SerialError::Protocol returned | Write skipped |
+| Reply for another command or channel (link out of step) | Reply fails correlation (§ 3) | Drained as stale — up to 15 per exchange — until the reply that matches; the link is usually back in step after one exchange | None if the matching reply arrives; otherwise a protocol error or timeout and that command is skipped |
+| Firmware whose reply omits the addressed channel | No `ReadRpm`/`SetPwm` reply ever matches | None — a firmware incompatibility | **Every** per-channel write fails; `ReadAllRpm` polling still works |
 | Wire-bound 0% against a stop timer ≥ 8 s old (no normal sequence reaches this; a held 0% coalesces) | Stop timeout check | That command rejected | None; the channel keeps whatever it last took |
 
 ---
@@ -378,8 +409,6 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 | ReadRpm(5) | ch=5 | `>0105\n` |
 | SetPwm(5, 128) | ch=5, raw=0x80 | `>020580\n` |
 | SetPwm(0, 255) | ch=0, raw=0xFF | `>0200FF\n` |
-| SetAllPwm(0) | raw=0x00 | `>0300\n` |
-| SetTargetRpm(5, 1000) | ch=5, rpm=0x03E8 | `>040503E8\n` |
 
 ### Response Decoding (Real Firmware)
 

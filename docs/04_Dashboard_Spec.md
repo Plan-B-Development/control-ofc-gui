@@ -25,13 +25,28 @@ The page title row carries a **profile selector + Apply**. The sidebar has one t
 this one is kept deliberately so the landing page can switch profiles without
 navigating away.
 
-Three banners sit below it, shown only when they apply: hwmon absent/read-only,
-daemon API-version skew, and thermal protection active.
+Five banners sit below it, each shown only while it applies:
+- **hwmon** absent or all read-only;
+- **API-version skew** between the daemon and this GUI;
+- **thermal protection active** (DEC-132, worded as a floor under the profile — DEC-307);
+- **engine liveness** (DEC-249/259): a slow engine is a warning that says the fans are still
+  driven and thermal protection is active; a stopped one is an error that says the daemon is
+  not driving the fans and **its thermal emergency protection is not running**, and to restart
+  `control-ofc-daemon`;
+- **runtime-config fallback** (DEC-321): the daemon could not read `runtime.toml` and is running
+  on defaults, which carry no user-assigned header roles.
 
-Connection state, uptime and the alerts indicator live on the global **ribbon**;
-operation mode, poll freshness, the clickable thermal-safety detail and the
-cooling-readiness chip live on the global **footer** (DEC-222 re-homed the last four
-from the retired Dashboard status strip, so every page now has them).
+A failed **Apply** — here or in the sidebar — is shown in the main window's banner as
+`Could not activate "<name>": <reason>`, or, for a Dell shared-switch refusal (DEC-403), as the
+refusal itself, which names the fans to change (DEC-416, `CTRL-k`). A later successful Apply
+takes that banner down, including a re-apply of the same profile.
+
+The global **ribbon** carries the connection state, uptime, a thermal pill and the alerts
+indicator; the thermal pill is hidden while the daemon is unreachable, since there is then no
+current thermal state (DEC-389, `TS-g`). The **status strip** under it shows the active profile
+and, in demo, a **DEMO** badge. The global **footer** carries operation mode, poll freshness, the
+clickable thermal-safety detail and the cooling-readiness chip (DEC-222 re-homed those from the
+retired Dashboard status strip, so every page has them).
 
 ### Telemetry graph (DEC-181, top)
 A wide temperature / fan-speed-over-time chart with:
@@ -48,6 +63,11 @@ A wide temperature / fan-speed-over-time chart with:
   override start/end, sensor-stale / fan-stall onset)
 - current-value emphasis via the crosshair readout
 
+The chart's choices are remembered across launches: the mode (`chart_mode`, also written by
+Reset, which returns to Combined and the curated subset), the hidden series
+(`hidden_chart_series`), per-series colours (`series_colors`) and the default time range
+(`chart_default_range_index`). The hidden series and colours are not saved in demo (docs/10).
+
 ### Fan cards (DEC-222, bottom-left)
 A responsive flow of compact cards, **one per logical control** — not per fan. That
 granularity is forced by the API: live intent is `POST /control/{id}/override`
@@ -61,7 +81,8 @@ Each card shows:
 - the control name, with **Edit** beside it (DEC-238) — a ghost button opening the
   Controls page focused on that control
 - a **read-only state chip** — Auto / Override active / Low RPM / Stale / Stall /
-  Offline (text always paired with colour, WCAG 1.4.1) — alongside how many fans the
+  Offline, and **Read-only** in place of Auto on a read-only fan's card, since nothing
+  drives it (text always paired with colour, WCAG 1.4.1) — alongside how many fans the
   control covers, so the blast radius of anything done to it is explicit
 - **RPM / SPEED / TEMP** — means across reporting members; `—` where unknown, never a
   fabricated 0. SPEED prefers the daemon-commanded PWM; where only a firmware-measured
@@ -207,23 +228,20 @@ If a fan or sensor is stale:
 - visually soften or mark stale values
 - do not silently continue to present the value as fully healthy
 
-If the daemon is disconnected:
-- keep last known values marked as stale
-- show clear disconnected state
-- stop implying active control
+If the daemon is disconnected, the page is replaced by the **Not Connected** state (below): the
+fan cards are cleared rather than kept as stale values, so nothing implies active control.
 
 ## Empty state rules
 ### No connection
-Show:
-- a disconnected illustration/state
-- explanation that daemon/API is unavailable
-- actions: Retry, Enter Demo Mode
+The **Not Connected** page says it is waiting for the daemon and to use `--demo` to run without
+hardware. There are no Retry or Demo buttons: the poll reconnects on its own, and demo mode is
+chosen at launch (docs/10). When the daemon service is installed but not enabled, a card shows
+the enable command with a **Copy command** button.
 
 ### No discovered fans
-Show:
-- a clean empty state
-- possible reasons
-- link/action to System State
+Connected, but no sensor or fan data yet: the **No Hardware Detected** page, with a Subsystem
+Status card (OpenFan, hwmon, controls) and a "What to do next" card — check the service, open
+the Hardware page for a missing driver, and what the OpenFan controller needs.
 
 ## Widgets in use
 - timeline chart (primary)

@@ -6,12 +6,19 @@
 Settings manages:
 - app-level preferences
 - safe daemon-exposed runtime settings
-- theme import/export
-- GUI config import/export
-- global safety preferences
-- demo mode defaults
+- the daemon's preferred CPU and motherboard sensors
+- GUI config import/export (themes have their own Theme page)
+- the demo-on-disconnect preference
 
-It should not become a dumping ground for operational controls that belong in Controls.
+It holds **no** safety settings: thermal safety and the pump/CPU floor are daemon-owned and
+not editable (§ C). It should not become a dumping ground for operational controls that
+belong in Controls.
+
+**Defaults, ranges and when each setting takes effect are in the user manual,
+[`manual/settings.md`](../manual/settings.md)** (D6) — this spec does not repeat them, so
+there is one copy to keep true. In short: the application's own preferences are batched and
+written by the page header's **Save Changes** to `~/.config/control-ofc/app_settings.json`;
+the Daemon Configuration and Preferred Sensors cards write to the daemon as you change them.
 
 ## Page sections
 
@@ -33,7 +40,8 @@ Implemented settings:
   back, unlike its GPU counterpart directly above.
 - Fan Wizard spin-down seconds
 - auto-hide iGPU sensors / auto-hide unused fan headers (applied live)
-- configurable data directories (profiles / themes / export)
+- the **Path Management** card: the profiles, themes and default-export directories (the
+  reports and cache directories are not configurable — docs/11)
 
 *Removed:* "remember last active profile" — the daemon owns active-profile
 persistence (`daemon_state.json`), so a GUI-side toggle controlled nothing (DEC-138).
@@ -98,16 +106,36 @@ that map plus the Theme page's fields plus an explicitly-justified implicit list
 accounts for *every* dataclass field, and that each named widget exists on a
 constructed page. A new preference fails the suite until it is given a home.
 
-*Persisted but deliberately not surfaced:* `fan_zones` (Dashboard fan-zone
-layout, DEC-176/187) is **dormant since DEC-222** — the Dashboard surfaces that
-wrote it were removed, and the key is retained unread so no settings-schema
-migration is needed and no saved zone assignments are lost. It must not gain a
-control. (Its companions `fan_zone_order`, `fan_zones_collapsed`,
-`card_sensor_bindings` and `show_hardware_guidance` were **fully dropped in
-DEC-224 (v3)** as written-never-read keys.) `version`, `window_geometry` and
-`last_page_index` are session/schema state with no meaningful control. All still
-round-trip through `AppSettings.from_dict`/`to_dict` and the import/export trust
+*Persisted but deliberately not surfaced* — the authoritative list, with each reason, is
+`IMPLICIT_FIELDS` in `tests/test_settings_coverage_dec237.py`:
+- `fan_zones` (Dashboard fan-zone layout, DEC-176/187) is **dormant since DEC-222** — the
+  Dashboard surfaces that wrote it were removed, and the key is retained unread so no
+  settings-schema migration is needed and no saved zone assignments are lost. It must not
+  gain a control. (Its companions `fan_zone_order`, `fan_zones_collapsed`,
+  `card_sensor_bindings` and `show_hardware_guidance` were **fully dropped in DEC-224 (v3)**
+  as written-never-read keys.)
+- `version`, `theme_name_scheme` (DEC-431's migration marker), `window_geometry` and
+  `last_page_index` are session or schema state with no meaningful control.
+- The DEC-245 view state — `chart_mode`, `splitter_sizes`, `logs_level_filters`,
+  `logs_search_text`, `logs_source_filter` — is set by using the app (the chart's mode
+  selector, a splitter handle, the Logs page's own controls); Card Layout's **Reset layout**
+  is the escape hatch for the splitters.
+- `hardware_notes` and `cooler_notes` are set in the PWM Test Report's "Your setup" step
+  (DEC-404).
+
+All still round-trip through `AppSettings.from_dict`/`to_dict` and the import/export trust
 boundary.
+
+### Preferred Sensors (DEC-200)
+Two drop-downs — **Preferred CPU sensor** and **Preferred motherboard sensor** — pin which
+sensor the daemon treats as the reference for each; the daemon's own recommendation is marked
+★ and **Automatic (recommended)** hands the choice back to it. The card reads
+`/inventory/hwmon` (`temp_sensors`, `default_cpu`, `preferences`) and writes through the
+daemon's config API; a choice applies at once, is stored by the daemon and is shared by every
+client, so it has no Save step. **Refresh from Daemon** re-reads it. It is advisory: thermal
+safety always uses the hottest CPU sensor. The Overview sensor table's right-click
+*Set as preferred…* reaches the same setting. On a daemon without it, the card says it is
+unavailable.
 
 ### B. Themes
 **Now its own page (DEC-215):** theming moved out of Settings into a top-level **Theme** sidebar page. The V1 requirements and preset notes below still hold — they now describe that Theme page, not a Settings sub-section.
@@ -122,7 +150,8 @@ V1 requirements:
 
 **Bundled presets (DEC-109):** the GUI ships three preset JSON files in
 `src/control_ofc/ui/presets/` — `classic_blue.json`, `noctua_dark.json`,
-`solar_light.json` — copied into `themes_dir()` on first run. (The built-in
+`solar_light.json` — copied into `themes_dir()` at startup whenever one is absent, so a
+deleted preset comes back. (The built-in
 **Default Dark** palette needs no JSON — it is defined in `ThemeTokens`
 defaults, tightened in 1.14.0 to pass WCAG AA on every contrast pair the
 checker evaluates.)
@@ -152,8 +181,9 @@ exactly what the user saw before. If the persisted name does
 not match any installed theme the GUI falls back to the built-in palette
 and logs the miss.
 
-### C. Safety display
-Safety is daemon-owned and **not editable by the GUI**. The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: at the trip point → drive every OpenFan channel and writable hwmon header the machine has to 100% PWM, hold until a fresh reading at or below 80°C — even while the CPU sensor is stale or gone — then resume active control at once (no recovery rung since DEC-386); 40% floor if no CPU reading is fresh for 5 cycles with nothing latched. **The trip point is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the CPU's own design ceiling — and `emergency_threshold_c` on `GET /diagnostics/hardware` reports the value in use. **Both duties are floors over the active profile's output, never replacements (DEC-307).** GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). **The GUI reads exactly one field from `GET /capabilities`'s `limits`:** `diagnostic_max_temp_c`, which the PWM Test Report's consent page interpolates. The daemon also sends `pwm_percent_min`, `pwm_percent_max` and `openfan_stop_timeout_s`; `api/models.py` models none of them. The stop timeout sized the Fan Wizard's spin-down until DEC-426, which removed that cap because the daemon does not restart a stopped OpenFan fan. Nothing else on this page comes from `limits` — the role-aware curve floors are **GUI-baked policy** (`profile_service.role_minimum_pct`, DEC-095), not a daemon-reported limit, and every thermal value above comes from `GET /diagnostics/hardware`, as stated earlier in this section.
+### C. Safety (not on this page)
+The Settings page has **no** safety section. Safety is daemon-owned and **not editable by the
+GUI**; the thresholds in force are shown on the System State page (Safety & GPU Limits). The daemon reports `min_pwm_percent: 0` for all hwmon headers (no per-header floors). Thermal safety is temperature-triggered: at the trip point → drive every OpenFan channel and writable hwmon header the machine has to 100% PWM, hold until a fresh reading at or below 80°C — even while the CPU sensor is stale or gone — then resume active control at once (no recovery rung since DEC-386); 40% floor if no CPU reading is fresh for 5 cycles with nothing latched. **The trip point is per-machine (DEC-308)** — at least 105°C, raised to `min(ceiling + 5 °C, 115 °C)` where the kernel publishes the CPU's own design ceiling — and `emergency_threshold_c` on `GET /diagnostics/hardware` reports the value in use. **Both duties are floors over the active profile's output, never replacements (DEC-307).** GPU fans are excluded — PMFW firmware owns GPU thermal protection (DEC-130). **The GUI reads exactly one field from `GET /capabilities`'s `limits`:** `diagnostic_max_temp_c`, which the PWM Test Report's consent page interpolates. The daemon also sends `pwm_percent_min`, `pwm_percent_max` and `openfan_stop_timeout_s`; `api/models.py` models none of them. The stop timeout sized the Fan Wizard's spin-down until DEC-426, which removed that cap because the daemon does not restart a stopped OpenFan fan. Nothing else on this page comes from `limits` — the role-aware curve floors are **GUI-baked policy** (`profile_service.role_minimum_pct`, DEC-095), not a daemon-reported limit, and every thermal value above comes from `GET /diagnostics/hardware`, as stated earlier in this section.
 
 Do not present these floors as editable settings.
 
@@ -205,7 +235,10 @@ wired. Two keys moved under that rule:
   card renders the daemon's `running_value` rather than its on-disk `value`.
 
 **Extended by DEC-388.** `shutdown.exit_floor_pct` — the **Exit minimum** row, a
-0-100 % spin box — is the second key that applies live. It is the only row on the
+0-100 % spin box, default 50 % — is the second key that applies live. It is the lowest speed
+a clean daemon stop leaves an OpenFan channel, or a header with no automatic mode to hand
+back to, at; a channel whose duty the daemon had lost track of goes to 100 %, and 0 turns it
+off. It is the only row on the
 card **gated on a capability** (`control.exit_floor`): the other rows treat a key the
 daemon does not report as "predates reporting it" and stay editable, but for this
 one absence means "this daemon cannot", so the row is disabled with the
@@ -230,9 +263,19 @@ Still **not** editable, and not merely for want of daemon support:
 
 The two `[detection]` opt-ins (`allow_port_probe`, `enable_nvidia_telemetry`)
 are editable **but explicitly incomplete**: each also needs a root-installed
-systemd drop-in that no API can install. The card must show the outstanding
-requirement and must never present the feature as enabled on the strength of the
+systemd drop-in that no API can install — the daemon package's
+`superio-port-probe.conf.example` and `nvidia-telemetry.conf.example`, under
+`/usr/share/doc/control-ofc-daemon/` (the manual gives the steps). The card must show the
+outstanding requirement and must never present the feature as enabled on the strength of the
 config flag alone.
+
+**The two OpenFan rows say when there is no controller (DEC-381, `OFN-e`).** The daemon
+publishes `serial.port` and `serial.timeout_ms` whether or not a controller is present. When
+the capabilities report none, the serial-port row reads *"No controller detected — set a path
+here to pin one the daemon is not finding."* and the timeout row *"No controller detected."*
+Neither row is hidden or disabled: naming the port is how a user rescues a controller that is
+plugged in but not adopted. With no capabilities yet, the rows read as normal — "the daemon
+has not said" is not "there is no controller".
 
 Safety floors remain non-editable and daemon-owned (see § C above) — DEC-243
 does not touch them.
@@ -291,16 +334,19 @@ These belong to the daemon runtime/config:
   `config/backups/` before an import is applied.
 - **Export is portable (DEC-140):** the Settings page's Sync & Backup Export file carries only
   shareable preferences plus all profiles/themes. Machine/session state and
-  hardware-id-keyed maps (`window_geometry`, `last_page_index`, data-dir
-  overrides, `series_colors`, `controls_card_sizes`,
+  hardware-id-keyed maps (`window_geometry`, `last_page_index`, the three directory
+  keys `profiles_dir_override`, `themes_dir_override` and `export_default_dir`,
+  `series_colors`, `controls_card_sizes`,
   `diagnostics_hidden_sensor_ids`, `sensor_class_overrides`,
   `acknowledged_kernel_warnings`, `dismissed_health_items` (DEC-359 — every
   silenced System State item; hardware-keyed, so meaningless on another machine
   and a shared export carrying it would quieten a warning on hardware that never
-  had it reviewed), `last_pwm_verify_effective`, `fan_aliases_seeded`,
-  `daemon_import_prompted`, and the
+  had it reviewed), the retired `acknowledged_board_notes` and `dismissed_board_notes`
+  (kept in the set so an import cannot fold them back in), `last_pwm_verify_effective`,
+  `fan_aliases_seeded`, `daemon_import_prompted`, the
   DEC-245 view-state keys `splitter_sizes`, `logs_level_filters`, `logs_search_text`
-  and `logs_source_filter`) are excluded — the
+  and `logs_source_filter`, and the PWM Test Report's `hardware_notes` and
+  `cooler_notes` (DEC-404)) are excluded — the
   authoritative set is `MACHINE_SPECIFIC_KEYS` in `app_settings_service.py`, which is
   what to read: this prose list has drifted from it once already (`UDOC-p`);
   `fan_aliases`, `fan_zones`, and `hidden_chart_series` are kept portable. The

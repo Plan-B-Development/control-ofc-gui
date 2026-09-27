@@ -4,6 +4,8 @@
 
 This pack is the **working source of truth** for building the Linux-first desktop GUI for **Control-OFC**, the GUI for controlling the **OpenFanController** system through the daemon/API.
 
+**Looking for how to use the app?** The end-user manual is [`manual/`](../manual/README.md); this pack is for developers.
+
 ## Read this pack in this order
 1. `01_Product_Overview.md`
 2. `02_System_Architecture_and_Boundaries.md`
@@ -45,7 +47,7 @@ This pack is the **working source of truth** for building the Linux-first deskto
 - Branding is restrained and professional; the working UI feels technically credible
 - One **profile** is active at a time
 - Each fan belongs to **at most one fan role** (the member picker disables fans already assigned elsewhere)
-- Fan curves use **one sensor** in V1
+- Each fan curve reads **one sensor**; a Mix curve combines other curves, each at its own sensor, and a Sync curve mirrors another fan role (DEC-152)
 - Simple hysteresis (deadband) is included in V1 control loop
 - There must be a **demo mode** for testing without hardware
 - Polling history is kept for the **last 2 hours**
@@ -63,7 +65,7 @@ With the GUI present:
 - live manual control is an **expiring daemon override** (DEC-163), not a GUI write; fan identification is a daemon **identify** call (DEC-166)
 - the GUI persists its own UI-owned state locally (fan aliases, themes, window layout)
 
-A new-GUI / old-daemon mix is **refused**, never run dual-writer: the GUI gates control on the daemon advertising `control.autonomous_control`, and the package pins `control-ofc-daemon>=2.0.0`. **Demo mode** is the one exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon (DEC-165).
+A new-GUI / old-daemon mix is **refused**, never run dual-writer: the GUI gates control on the daemon advertising `control.autonomous_control`, and the package pins `control-ofc-daemon>=2.11.0` (`packaging/PKGBUILD`). **Demo mode** is the one exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon (DEC-165).
 
 This daemon-owns-control model is the single most important build assumption in this pack. (Before 2.0.0 the GUI owned the control loop — DEC-010, now superseded.)
 
@@ -101,7 +103,8 @@ function lives.
   tree — the fastest route from "where does X live?" to a file path.
 - **`docs/architecture/`** holds the two deep dives that are not part of the numbered
   pack, and were previously indexed nowhere:
-  - `daemon-end-to-end.md` — the full request/'control path through the daemon
+  - `daemon-end-to-end.md` — the request and control path through the daemon, as a
+    **frozen 2026-03-25 snapshot**; the daemon repo's `daemon.md` is current
   - `openfan-controller-integration.md` — the OpenFan serial/USB integration
 
 ## Reference note

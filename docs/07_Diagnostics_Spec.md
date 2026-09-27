@@ -23,11 +23,15 @@ still exist — only their page homes changed:
   warnings, thermal safety & GPU, and the PWM/GPU verify + Open Full Report
   actions. *Rescan Hardware* is a **global-footer** action (DEC-208); this page
   renders its outcome line, not the button.
-- **Hardware** (`pages/hardware_page.py`) — the daemon's go/no-go readiness
-  checklist and Super-I/O chip detection (both from the combined
-  `GET /inventory/hardware-readiness`), plus the opt-in Probe ports action.
-- **Logs** (`pages/logs_page.py`) — the event-log stream + filters, diagnostic
-  snapshots, and Export Bundle.
+- **Hardware** (`pages/hardware_page.py`) — the daemon's hardware-readiness
+  checklist and recommended actions, the cooling devices and PWM header cards with
+  their per-header tests, the Hardware Diagnostics card (PWM Test Report, sessions),
+  Super-I/O chip detection with the opt-in Probe ports action, and voltages. The
+  checklist and chip detection come from the combined
+  `GET /inventory/hardware-readiness`.
+- **Logs** (`pages/logs_page.py`) — the event list, filters and activity strip,
+  and an inspector with the Details, Raw, Diagnostics and Journal tabs. *Export
+  Support Bundle* is a **global-footer** action (DEC-282).
 
 These pages must feel intentionally designed, not like a raw log dump.
 
@@ -46,33 +50,30 @@ to the current sizes, which is also what keeps a dragged — or DEC-245 restored
 ratio intact across a resize. A window too short for the content scrolls as a
 whole page rather than clipping either table.
 
-### Summary cards
-Summary cards for:
-- overall daemon status
-- OpenFan availability
-- hwmon availability
-- last error summary
+### Cards
+Two cards sit above the tables. There is no "last error" card and no IPC-transport line:
+the last errors are on the **Logs** page, and the transport is always the Unix socket.
 
-(The thermal-state chip moved to the **System State** page, alongside the rest
-of the thermal-safety report.)
+**Daemon health** (`Overview_Card_daemonHealth`):
+- daemon version and API version (`Daemon: vX (API vN)`)
+- overall status and uptime
+- each subsystem's status and age, with its health reason when the daemon gives one
+- the manual overrides in force
+- a note on what `age_ms` means (see Latency semantics below)
 
-### Connection and daemon health
-Show:
-- daemon version
-- API version
-- IPC transport
-- overall status
-- subsystem freshness/age
-- health reasons if provided
+**Device Discovery** (`Overview_Card_deviceDiscovery`):
+- OpenFan present / absent, with its channel count
+- hwmon present / absent, with its controllable headers
+- AMD, Intel and NVIDIA GPUs (Intel and NVIDIA are read-only)
+- liquid cooling detected, and the daemon's feature flags
 
-### Controller and device discovery
-Show:
-- OpenFan present / absent
-- channel count
-- write support
-- hwmon present / absent
-- discovered controllable headers
-- whether RPM support is available
+(The thermal-state chip is on the **System State** page, alongside the rest of the
+thermal-safety report.)
+
+### Fan-status table
+The live fan table — Name, Source, Control method, RPM, PWM (%), Freshness. **Right-click a fan → Rename fan…**
+sets its alias, and **Reset to default name** (shown when an alias exists) removes it; both
+go through `AppState.apply_fan_rename`, the same rule every rename surface uses (DEC-227).
 
 ### Sensor table
 A rich diagnostic table of every sensor the daemon reports, designed to
@@ -110,9 +111,9 @@ size (DEC-196):
 8. **Confidence** — classification confidence (`High` / `Medium-High` /
    `Medium` / `Low`).
 
-**The Sensor Detail dialog opens from the row's context menu**, not from a
-per-row Details button — the button column went with the page rebuild. Right-click
-any row → "Open detail…".
+**The Sensor Detail dialog opens on a row's double-click, on Enter or Return, or
+from its context menu** (right-click → "Open detail…") — there is no per-row Details
+button; the button column went with the page rebuild.
 
 *This section previously described a 10-column table with **Source**, **Session
 min/max** and **Details** columns. Those belonged to the retired Diagnostics page;
@@ -126,8 +127,8 @@ hover tooltip, and staleness in aggregate as the header summary's `K stale`
 count. The Overview page's fan-status table freshness column and its colouring
 are unchanged.
 
-**Sensor Detail dialog** (DEC-117) — opens on Details-button click, row
-double-click, or right-click → "Open detail…". A `QTextBrowser` that mirrors
+**Sensor Detail dialog** (DEC-117) — opens on a row double-click, Enter/Return, or
+right-click → "Open detail…". A `QTextBrowser` that mirrors
 the Hardware Readiness pop-out, surfacing:
 - Identity block (Sensor ID, Source, Chip, Kind, Driver type)
 - Current state (Value, Age, Freshness, Trend)
@@ -154,10 +155,13 @@ sensors). Subsequent Overview-side changes stay local until the user
 mirrors again.
 
 **Classification right-click** — the same context menu offers **Set as
-preferred CPU sensor** / **Set as preferred motherboard sensor** and **Treat as
-coolant** (`Overview_Action_treatAsCoolant`), which persist to the daemon's
-`POST /config/*` preferences. These replace what used to require a trip to
-Settings ▸ Preferred sensors.
+preferred CPU sensor** / **Set as preferred motherboard sensor**, which write the daemon's
+preferences (`POST /config/preferred-cpu-sensor` / `-mb-sensor`, the same setting as
+Settings ▸ Preferred Sensors), and **Treat as coolant** (`Overview_Action_treatAsCoolant`),
+which is a **GUI-local** override stored in `AppSettings.sensor_class_overrides` — it changes
+how this GUI groups the sensor, never what the daemon does. A sensor already treated as
+coolant offers **Reset classification to auto** (`Overview_Action_resetSensorClass`)
+instead.
 
 Tooltip behaviour on each cell is unchanged (still uses
 `format_sensor_tooltip` for hover context).
@@ -222,7 +226,8 @@ GPU constraint rows — carries the same Acknowledge/Dismiss
 lifecycle, through one layer (`services/health_ack.py`): a silence is an
 *occurrence* — `(key, fingerprint, level)` — where the fingerprint must match
 exactly and the level must not have escalated. Acknowledge is session-only,
-dismiss persists to `dismissed_health_items`. **Which of the two acts is what
+dismiss persists to `dismissed_health_items`, and **Settings ▸ Prompts & Dismissals ▸ Restore**
+brings every dismissed item back (the same section turns the two buttons off). **Which of the two acts is what
 decides whether an item leaves the screen: Dismiss removes a condition card,
 Acknowledge demotes it** (DEC-363) — the crit bracket goes neutral, the title
 greys and an *Acknowledged* pill appears, and the card keeps its place in the
@@ -356,49 +361,55 @@ It provides a readable log/event view for:
 - profile / daemon-control warnings
 - write denials/clamps surfaced by the daemon
 
-## Required user actions
-- Reload config
-- Reconnect controller
-- Export support bundle
-- Copy last errors
+## Actions
 
-## Action behaviour notes
+The system-health pages offer two support actions, both in the **global footer** so they
+are reachable from every page. There is no Reload-config action (the GUI re-reads its own
+settings only at startup, and the daemon reloads on `SIGHUP` — see
+[docs/18 § Service lifecycle](18_Operations_Guide.md#service-lifecycle)) and no
+Copy-last-errors action: the **Logs** page copies the visible rows, or one event with its
+context, from its inspector.
 
-### Reload config
-This should reload GUI-owned config first.
-If the daemon does not expose a runtime reload endpoint, do not fake a daemon config reload. Instead:
-- reload local config
-- optionally refresh/poll all known read endpoints
-- explain what was and was not reloaded
+### Rescan Hardware (reconnecting a controller)
+The footer's **Rescan Hardware** sends `POST /hwmon/rescan` (DEC-147) and, from daemon
+2.18.0 where `control.openfan_rescan` is advertised, `POST /fans/openfan/rescan`
+(DEC-265) for a controller that appears after the post-boot search window closes. The
+System State page renders the outcome line: the PWM header count, then either that an
+OpenFan controller was adopted on a named port or that new motherboard fan-control
+hardware still needs a daemon restart (DEC-266 — the restart advice is not shown after an
+adoption, which needed none). A rescan picks up new sensor chips, but new PWM headers and
+GPUs are enumerated only at daemon start.
 
-### Reconnect controller
-The daemon exposes `POST /hwmon/rescan` (surfaced as *Rescan Hardware* in the
-System State page since DEC-147) for hwmon re-enumeration; serial-controller
-reconnection remains daemon-automatic — a detached 60s / 180s post-boot search
-(DEC-361) plus the poll loop's runtime reconnect mode after 5 consecutive read
-errors — so no GUI reconnect button exists. (The startup "5× backoff" this line
-used to name was the ladder DEC-361 deleted; the *Rescan Hardware* action gained
-a `POST /fans/openfan/rescan` leg in DEC-265 for a controller that appears after
-the post-boot window closes.)
-- refresh status
-- explain that new fan-control hardware may require a daemon restart
-- the rescan result line carries that note verbatim
+Otherwise, serial-controller reconnection is daemon-automatic — a detached 60 s / 180 s
+post-boot search (DEC-361) plus the poll loop's runtime reconnect after 5 consecutive
+read errors — so there is no GUI reconnect button. (The startup "5× backoff" this section
+used to name was the ladder DEC-361 deleted.)
 
-### Export support bundle
-Create a structured bundle including:
-- GUI settings
-- active profile
-- profile set
-- theme info
-- current daemon status snapshots
-- capabilities snapshot
-- sensor snapshot
-- fan snapshot
-- recent GUI logs
-- system/environment summary useful for Linux debugging
+This is not the Hardware page's **Re-scan**, which only re-reads the daemon's readiness
+assessment (see [the Hardware page](#implementation-cooling-hardware-readiness--hardware-page-merged-readiness--super-io--dec-207)).
 
-### Copy last errors
-Should copy a concise but useful text summary, not an unreadable blob.
+### Export Support Bundle
+The footer's **Export Support Bundle** (primary since DEC-282, which removed the Logs
+toolbar's duplicate) writes **one JSON file**, `control_ofc_support_bundle.json` by
+default, through a save dialog (`DiagnosticsService.export_support_bundle`). It is not a
+zip. It contains:
+- `system` — GUI version, platform, Python, architecture, kernel release and boot
+  parameters, and the loaded kernel modules (DEC-098, DEC-404)
+- `events` — the GUI's in-memory event log
+- `state` — connection, mode, sensor and fan counts, warnings, the active profile
+- `capabilities`, `daemon_status` (overall + each subsystem's status and age) and
+  `fan_state`, when the daemon has answered
+- `app_settings` — every GUI setting except window/chart layout state, the export folder,
+  the import-prompt flag and free text the user typed (`_BUNDLE_EXCLUDED_SETTING_KEYS`); unlike a config export, it **keeps** the
+  machine-specific keys that reveal a misconfiguration, such as sensor-class overrides
+  and the directory overrides
+- `profiles` — each profile's id, name and control/curve counts (not the curves)
+- `themes` — the active theme and the custom theme names
+- `gpu` and `hardware_diagnostics` (board, hwmon chips and header counts, enable-revert
+  counts), when known
+- `journal` — the last 100 lines of `journalctl -u control-ofc-daemon`
+- `kernel_log_amdgpu` — up to 200 `amdgpu`/`smu` kernel log lines from this boot (DEC-098)
+- `missing_sections` — what could not be collected, and why
 
 ## System-health UX rules
 - use color for severity, but do not rely on it alone
@@ -606,131 +617,25 @@ All labels inside Card frames use `background: transparent` inline style. This p
 ### No inline font-size overrides
 All font sizing is inherited from the global theme stylesheet via CSS classes. Changing the theme text size changes the text on the Overview / System State / Hardware / Logs pages consistently.
 
-## Implementation: Hardware Readiness — System State page (v1.1.0; own tab in v1.26.0 — DEC-124; relocated to the System State page — DEC-211)
+## Implementation: Hardware Readiness — System State page (DEC-124; relocated to the System State page — DEC-211)
 
-### What it shows
-The **System State** page (`pages/system_state_page.py`) presents the "Hardware
-Readiness" health report. It fetches data from `GET /diagnostics/hardware`
-(daemon v1.2.0+) and presents a unified view of hardware compatibility and
-driver status. The live Fan Status table now lives on the **Overview** page.
-(Historically — DEC-124 — this report lived on a dedicated Diagnostics
-**Troubleshooting** tab inserted right after Fans; the redesign moved it to its
-own page.)
+The current page layout is [System State page — layout](#system-state-page--layout). This
+section holds its **Advanced actions**, a fenced record of the pre-redesign readiness card, and
+the implementation notes that still apply (the verdict and pop-out report, auto-fetch, the
+combo arrow, the chip knowledge base).
 
-### Card contents
-1. **Summary line** — total headers, writable count, warnings if all read-only
-   or no chips detected.
-2. **Chip table** (5 columns: Chip, Driver, Status, Mainline, Headers) — one
-   row per detected hwmon chip with driver load status from kernel modules.
-3. **Kernel modules table** (3 columns: Module, Loaded, Mainline) — all known
-   hwmon driver modules and their load state from `/proc/modules`.
-4. **ACPI conflicts** — shown only when the daemon detects ACPI OpRegion
-   claims overlapping known Super I/O I/O port ranges. Includes remediation
-   tip (kernel parameter or BIOS change).
-5. **Thermal safety** — current safety rule state, CPU sensor availability,
-   emergency/release thresholds.
-6. **GPU diagnostics** — shown only when an AMD dGPU is present. PCI BDF,
-   model, fan control method, overdrive status, ppfeaturemask value and bit 14
-   status, zero-RPM availability.
-7. **Chip guidance** — contextual BIOS tips, known issues, and driver
-   documentation links from the chip-family knowledge base
-   (`hwmon_guidance.py`). Shown per unique chip prefix.
+### Advanced actions (System State)
+`SystemState_Section_advanced`, a `CollapsibleSection` built collapsed, below the splitter:
 
-### Layout: cooling-readiness on the Hardware page (DEC-212 redesign)
-The redesign moved cooling-readiness off a Diagnostics tab onto its own
-**Hardware** page (DEC-212). It is now a **checklist of readiness checks** plus a
-list of **actionable steps** — live structure: a checklist `Card`
-(`Hardware_Card_checklist`) with a `Hardware_Pill_verdict` rollup and one
-`Hardware_Check_{code}` row per check, and an actions `Card`
-(`Hardware_Card_actions`) with one `Hardware_Action_{code}` card per step. The
-per-advisory rows and the liability disclaimer described below were folded into
-those action cards / retired.
-
-The pre-redesign **DEC-124** design (kept for provenance; superseded the
-DEC-115/DEC-116 cards): on its own System State page nothing competed with a fan
-table for vertical space, so the readiness content was a flat, always-readable
-health report inside one `Card` frame (then `Diagnostics_Frame_hwReadiness`),
-top-to-bottom:
-
-- **Header action row** — the "Hardware Readiness" title, *Open Full Report ↗*
-  (pop-out), *Rescan Hardware* (DEC-147: `POST /hwmon/rescan` — daemon-side
-  re-enumeration after loading a sensor kernel module; a result line under the
-  row reports the header count, notes that sensors refresh on the next poll
-  cycle, and repeats the daemon's caveat that new *motherboard* fan-control
-  hardware still requires a daemon restart — suppressed when an OpenFan
-  controller was adopted, since the same action also carries a
-  `POST /fans/openfan/rescan` leg that adopts one without a restart (DEC-265),
-  and the line then names the port instead; a successful rescan pushes the fresh header list
-  through `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
-  refetch). *Rescan Hardware* is now the application's global-footer action
-  (DEC-216, relocated from the retired Diagnostics page); the separate
-  *Refresh Hardware Diagnostics* GUI-side refetch button was removed in the
-  same redesign — the footer rescan's chained refetch supersedes it.
-- **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
-- **Blocking-alert stack** — module collisions, module conflicts, and the
-  BIOS-interference headline (those that mean "deactivate the profile, then
-  remove the wrong driver" — DEC-433 — or report active EC contention). Each is individually visibility-gated, so the
-  stack collapses to nothing on a healthy system, and is always on screen when
-  present — never behind a collapse.
-- **Issue checklist** (DEC-124) — one row per detected problem
-  (`detect_readiness_problems`): a severity badge, the problem label, its
-  one-line fix, and a clickable doc link. A healthy system shows a single
-  `✓ No issues detected` line. This promotes the former buried "To fix" block
-  into a first-class, always-visible checklist (per NN/g progressive disclosure
-  + PatternFly status-and-severity guidance). The badge is built from the shared
-  `severity_display` mapping (DEC-158), so it carries an icon **and** the word
-  **and** a colour (`CriticalChip` red / `WarningChip` orange) — colour is never
-  the only cue (WCAG 1.4.1).
-- **Advisories** (historical objectName `Diagnostics_Container_advisories`) — board/chip
-  vendor quirks, one collapsible row each, most-severe-first. Replaces the old
-  single flat `[SEVERITY] …` PlainText label: every advisory now shows a
-  per-severity badge (icon + word + colour + weight) and an always-visible
-  summary, with its detail in a `CollapsibleSection` that opens by default for
-  **CRITICAL/HIGH** and stays collapsed for **MEDIUM/INFO**. The four tiers map
-  CRITICAL→red, HIGH→orange, MEDIUM→amber (`status_caution`), INFO→blue
-  (`status_info`) — so **INFO no longer shares the warning tiers' orange**. Each
-  detail links to the Hardware Compatibility Guide's *Manufacturer Quirks*
-  section and reduces bullet overuse (`advisory_detail_html`: 1–2 items render as
-  prose, only 3+ short parallel items become a list). Only GUI-authored DB
-  strings are rendered (no daemon string is interpolated), so rich text is safe
-  (DEC-106). The **dual-chip** setup warning and **ACPI conflicts** sit alongside
-  it — advisory, shown only when present.
-
-  > **Updated, 2026-09-11 (DEC-357).** Two corrections in one, because the first
-  > was found while tracing the second.
-  >
-  > *Where they live.* This bullet used to say the advisories were "now folded
-  > into the `Hardware_Action_{code}` cards, DEC-158/DEC-212". They were not —
-  > `cooling_readiness` / `hardware_view` contain no advisory or quirk code at
-  > all. They went to the **System State** page at DEC-211.
-  >
-  > *What they are.* DEC-211 merged them into the health **issue** stack, and
-  > DEC-357 unpicked that: a vendor quirk is a **board note**, not a condition.
-  > `services/system_state_view.build_condition_cards` renders only conditions
-  > the daemon measured; `build_board_notes` renders the quirks in a collapsed
-  > *"Board notes for this hardware (N)"* section below them, via
-  > `widgets/system_state_cards._make_note_row`. A note carries an **evidence
-  > status** (`observed` / `not_observed` / `unverified` / `reference`) rather
-  > than being ranked into the alarm stack, and it can be acknowledged or
-  > dismissed per occurrence. `severity` still governs presentation exactly as
-  > described above; it no longer decides whether the page raises an alarm.
-  >
-  > The collapse rule and the four-hue map described above were **lost** in the
-  > DEC-211 move and are **restored** by DEC-357 on the note rows —
-  > `SeverityDisplay.default_expanded` has a production consumer again, and the
-  > caption takes the themed chip class directly, so MEDIUM/LOW paint
-  > `status_caution` and INFO `status_info`. Register rows `SSN-c` / `SSN-d`,
-  > both closed.
-
-- **Summary + board identity** — the readiness summary line and board identity.
-- **Five flat detail sub-sections** (`CollapsibleSection`, all collapsed by
-  default): *Detected hardware* (chip + kernel-module tables), *BIOS
-  interference detail* (per-header revert rows + footnote — **hidden entirely
-  unless a header reports a non-zero revert count**, DEC-116), *Thermal safety &
-  GPU*, *Guidance & documentation* (chip BIOS tips / known issues + doc link),
-  and *PWM control test* (verify combo, Test PWM Control, Verify All Writable,
-  **Characterise PWM Response** — DEC-313, the deeper PWM/RPM sweep, gated on
-  `control.pwm_characterization` and hidden entirely without it,
+- **Test PWM Control** — a header picker (`SystemState_Combo_verifyHeader`) and the quick
+  write-and-read-back verify (`POST /hwmon/{id}/verify`), with **Verify All Writable** beside
+  it, which verifies every writable header in turn and reports its progress. The board notes'
+  **Test fan control** button (`SystemState_Btn_verifyBoardNotes`, inside *Board notes for this
+  hardware*) runs the same Verify All sweep — one write path, not a second one.
+- **Characterise PWM Response** (DEC-313, `SystemState_Btn_characterize`) — the deeper PWM/RPM
+  sweep, a sibling of the quick verify, never a replacement. It is gated on
+  `control.pwm_characterization` and hidden entirely without it. It opens
+  `PwmCharacterizationDialog`, the same dialog as the Hardware page's **Characterise**.
 
   Since **DEC-334** (daemon ≥ 2.40.0, gated on `control.pwm_behaviour_characterization`)
   the dialog opens on the daemon's **safety preflight**, exactly as Control-Path Discovery
@@ -751,71 +656,185 @@ top-to-bottom:
   A point that never settled shows **"Not settled"** — an absence of steady-state evidence,
   neutral, never a warning. The default settle is 12 s, so a default sweep takes about
   twice as long as before; a validation session's per-diagnostic estimates say so.
-  progress + result, and — DEC-120 — **Test GPU Fan Control** with its own
-  result label, shown only when a writable AMD GPU is present and the daemon
-  supports the verify route, ≥ 1.11.0). Beside the GPU verify button sits
-  **Restore GPU Fan to Automatic** (DEC-147: `POST /gpu/{id}/fan/reset`) —
-  shown for any writable AMD GPU with **no** daemon version floor (the reset
-  route predates every supported daemon), and **disabled with an explanatory
-  tooltip while the active profile owns an `amd_gpu:` member** (the daemon
-  engine would silently re-assert its curve within seconds). The click
-  handler (`_run_gpu_restore`) re-checks that gate; the async result callbacks
-  (`_on_gpu_restore_ok` / `_on_gpu_restore_error`) then report the daemon's
-  result: a reset shows a success chip, a
-  daemon-reported no-op shows a warning chip, and an error shows a critical
-  chip — every outcome lands in the event log. There is **no** session flag and
-  **no** close-time auto-reset: the GUI never writes GPU PWM (DEC-165), so there
-  is nothing to undo on close.
-- **Discover Control Path** (DEC-333, AIO Phase 8 Batch 1) — a third button on
-  every **Hardware page** PWM header card, beside *Test Control* and
-  *Characterise*, gated on `control.control_path_discovery` and **disabled with
-  the reason in its tooltip** rather than hidden, so an older daemon explains
-  itself. It opens `ControlPathDiscoveryDialog`, whose **first state is the
-  safety preflight**: eleven rows from `GET /diagnostics/preflight`, each with a
-  state pill and the daemon's own wording, and a verdict chip. A `blocked`
-  verdict **disables Start and lists the blocking reasons**; the GUI reads the
-  daemon's `verdict` and `blocking[]` and never rolls the rows up itself
-  (`docs/08` states the rule). A preflight that could not be fetched is
-  *advisory-unavailable* and does **not** block — the daemon still runs its own
-  guards on the POST, and refusing on a missing advisory would make an older
-  daemon less usable than before the feature existed.
+- **Test GPU Fan Control** (DEC-120, `SystemState_Btn_verifyGpu`), with its own result label —
+  shown only when a writable AMD GPU is present and the daemon supports the verify route
+  (≥ 1.11.0). Beside it sits **Restore GPU Fan to Automatic** (DEC-147:
+  `POST /gpu/{id}/fan/reset`), shown for any writable AMD GPU with **no** daemon version floor
+  (the reset route predates every supported daemon), and **disabled with an explanatory
+  tooltip while the active profile owns an `amd_gpu:` member** (the daemon engine would
+  silently re-assert its curve within seconds). The click handler (`_run_gpu_restore`)
+  re-checks that gate; the async result callbacks (`_on_gpu_restore_ok` /
+  `_on_gpu_restore_error`) then report the daemon's result: a reset shows a success chip, a
+  daemon-reported no-op shows a warning chip, and an error shows a critical chip — every
+  outcome lands in the event log. There is **no** session flag and **no** close-time
+  auto-reset: the GUI never writes GPU PWM (DEC-165), so there is nothing to undo on close.
 
-  The result view lists every tach channel watched — responders first with
-  confidence, direction, before/after RPM and repeatability, then the quiet
-  channels with "no meaningful response", because an absent row is
-  indistinguishable from a channel nobody checked. A **failed or skipped restore
-  is surfaced as its own critical-toned line**, not folded into the notes. After
-  a successful run the relationship appears in the header card's *Details*
-  disclosure as "Control relationship … Confidence … Last validated …", read from
-  the daemon's persisted store so it survives a GUI restart.
+**One gating shape per button (DEC-377, DEC-415).** *Test PWM Control*, *Verify All Writable*
+and *Characterise* share the daemon's one diagnostic slot, so a verify or sweep started here
+greys all three (`_sync_verify_buttons` — `ACK-ab`, `ACK-ac`); *Characterise* stays visible,
+greyed, rather than vanishing mid-sweep. While a PWM Test Report runs they grey with the reason
+in their tooltip. The GPU buttons are untouched by both: the report never tests a GPU fan, and
+GPU verify does not share the hwmon slot.
 
-  A `no_tach_response` result is rendered informationally, never critically: a
-  header may legitimately drive no tach-reporting device, or drive one running
-  under its own internal control.
-- **Evidence & confidence** (DEC-333) — a collapsed disclosure in the validation
-  dialog explaining the six provenance classifications, and naming the nine
-  properties software cannot establish from motherboard sensors at all. Those are
-  listed explicitly rather than omitted, because an omitted row reads as a pass.
-  The same legend is embedded in the JSON export.
-- **Liability disclaimer** (historical objectName
-  `Diagnostics_Label_readinessDisclaimer`; retired in the DEC-212 Hardware
-  redesign, DEC-158) —
-  one calm, persistent note at the bottom of the card (`REMEDIATION_DISCLAIMER`,
-  `CardMeta` weight): the checklist fixes, advisory details, and chip guidance
-  all describe kernel/driver/firmware changes applied at the user's own risk.
-  Low-weight by design — heavy red styling is reserved for the real alerts above.
+**Two result tokens worth knowing.** A verify stopped because its header became
+pump-protected while it held it (`pump_protected_mid_run`, DEC-418, daemon ≥ 2.56.0) renders
+neutral as *stopped: pump* — nothing was measured, so it is not a finding about the board. A
+characterisation whose driver stopped answering ends with `restore_outcome:
+skipped_unresponsive` (DEC-420, daemon ≥ 2.56.0) and leaves the header at the last swept duty,
+never below `max(20, its floor)`. This GUI has no dedicated sentence for that token and renders
+the 273-i fallback — *"The original speed was not restored (Skipped unresponsive), so the header
+is still at the last tested duty"* — which is true, but does not say the driver stopped
+answering. `docs/08` has both tokens' contracts.
 
-The live *Fan Status* table lives on the **Overview** page.
+### The pre-redesign readiness card (history)
 
-Because the verdict, the blocking-alert stack, and the issue checklist are all
-**always visible** (no outer collapse), safety warnings can never be hidden
-behind a collapse — a strict strengthening of the DEC-116 rule. The five detail
-sub-sections still open on demand; the *BIOS interference detail* sub-section is
-**hidden whenever there is no interference to report** and is revealed +
-**auto-expanded** only on a non-zero revert count (DEC-116) — so it never
-presents an empty header to expand into nothing. The verify controls and their
-result labels share one sub-section, so reaching the buttons necessarily expands
-the section that shows the outcome.
+> **History — the pre-redesign readiness card (DEC-115/116, DEC-124; superseded by the
+> DEC-211/212 redesign).** Kept for provenance. Nothing in this block describes the current
+> page: the System State page is [System State page — layout](#system-state-page--layout)
+> and [Advanced actions](#advanced-actions-system-state) above, and cooling readiness is
+> the [Hardware page](#implementation-cooling-hardware-readiness--hardware-page-merged-readiness--super-io--dec-207).
+>
+> **What it shows.**
+> The **System State** page (`pages/system_state_page.py`) presents the "Hardware
+> Readiness" health report. It fetches data from `GET /diagnostics/hardware`
+> (daemon v1.2.0+) and presents a unified view of hardware compatibility and
+> driver status. The live Fan Status table now lives on the **Overview** page.
+> (Historically — DEC-124 — this report lived on a dedicated Diagnostics
+> **Troubleshooting** tab inserted right after Fans; the redesign moved it to its
+> own page.)
+>
+> **Card contents.**
+> 1. **Summary line** — total headers, writable count, warnings if all read-only
+>    or no chips detected.
+> 2. **Chip table** (5 columns: Chip, Driver, Status, Mainline, Headers) — one
+>    row per detected hwmon chip with driver load status from kernel modules.
+> 3. **Kernel modules table** (3 columns: Module, Loaded, Mainline) — all known
+>    hwmon driver modules and their load state from `/proc/modules`.
+> 4. **ACPI conflicts** — shown only when the daemon detects ACPI OpRegion
+>    claims overlapping known Super I/O I/O port ranges. Includes remediation
+>    tip (kernel parameter or BIOS change).
+> 5. **Thermal safety** — current safety rule state, CPU sensor availability,
+>    emergency/release thresholds.
+> 6. **GPU diagnostics** — shown only when an AMD dGPU is present. PCI BDF,
+>    model, fan control method, overdrive status, ppfeaturemask value and bit 14
+>    status, zero-RPM availability.
+> 7. **Chip guidance** — contextual BIOS tips, known issues, and driver
+>    documentation links from the chip-family knowledge base
+>    (`hwmon_guidance.py`). Shown per unique chip prefix.
+>
+> **Layout: cooling-readiness on the Hardware page (DEC-212 redesign).**
+> The redesign moved cooling-readiness off a Diagnostics tab onto its own
+> **Hardware** page (DEC-212). It is now a **checklist of readiness checks** plus a
+> list of **actionable steps** — live structure: a checklist `Card`
+> (`Hardware_Card_checklist`) with a `Hardware_Pill_verdict` rollup and one
+> `Hardware_Check_{code}` row per check, and an actions `Card`
+> (`Hardware_Card_actions`) with one `Hardware_Action_{code}` card per step. The
+> per-advisory rows and the liability disclaimer described below were folded into
+> those action cards / retired.
+>
+> The pre-redesign **DEC-124** design (kept for provenance; superseded the
+> DEC-115/DEC-116 cards): on its own System State page nothing competed with a fan
+> table for vertical space, so the readiness content was a flat, always-readable
+> health report inside one `Card` frame (then `Diagnostics_Frame_hwReadiness`),
+> top-to-bottom:
+>
+> - **Header action row** — the "Hardware Readiness" title, *Open Full Report ↗*
+>   (pop-out), *Rescan Hardware* (DEC-147: `POST /hwmon/rescan` — daemon-side
+>   re-enumeration after loading a sensor kernel module; a result line under the
+>   row reports the header count, notes that sensors refresh on the next poll
+>   cycle, and repeats the daemon's caveat that new *motherboard* fan-control
+>   hardware still requires a daemon restart — suppressed when an OpenFan
+>   controller was adopted, since the same action also carries a
+>   `POST /fans/openfan/rescan` leg that adopts one without a restart (DEC-265),
+>   and the line then names the port instead; a successful rescan pushes the fresh header list
+>   through `AppState.set_hwmon_headers` and chains a `/diagnostics/hardware`
+>   refetch). *Rescan Hardware* is now the application's global-footer action
+>   (DEC-216, relocated from the retired Diagnostics page); the separate
+>   *Refresh Hardware Diagnostics* GUI-side refetch button was removed in the
+>   same redesign — the footer rescan's chained refetch supersedes it.
+> - **Verdict banner** (DEC-113) — always visible, traffic-light coloured.
+> - **Blocking-alert stack** — module collisions, module conflicts, and the
+>   BIOS-interference headline (those that mean "deactivate the profile, then
+>   remove the wrong driver" — DEC-433 — or report active EC contention). Each is individually visibility-gated, so the
+>   stack collapses to nothing on a healthy system, and is always on screen when
+>   present — never behind a collapse.
+> - **Issue checklist** (DEC-124) — one row per detected problem
+>   (`detect_readiness_problems`): a severity badge, the problem label, its
+>   one-line fix, and a clickable doc link. A healthy system shows a single
+>   `✓ No issues detected` line. This promotes the former buried "To fix" block
+>   into a first-class, always-visible checklist (per NN/g progressive disclosure
+>   + PatternFly status-and-severity guidance). The badge is built from the shared
+>   `severity_display` mapping (DEC-158), so it carries an icon **and** the word
+>   **and** a colour (`CriticalChip` red / `WarningChip` orange) — colour is never
+>   the only cue (WCAG 1.4.1).
+> - **Advisories** (historical objectName `Diagnostics_Container_advisories`) — board/chip
+>   vendor quirks, one collapsible row each, most-severe-first. Replaces the old
+>   single flat `[SEVERITY] …` PlainText label: every advisory now shows a
+>   per-severity badge (icon + word + colour + weight) and an always-visible
+>   summary, with its detail in a `CollapsibleSection` that opens by default for
+>   **CRITICAL/HIGH** and stays collapsed for **MEDIUM/INFO**. The four tiers map
+>   CRITICAL→red, HIGH→orange, MEDIUM→amber (`status_caution`), INFO→blue
+>   (`status_info`) — so **INFO no longer shares the warning tiers' orange**. Each
+>   detail links to the Hardware Compatibility Guide's *Manufacturer Quirks*
+>   section and reduces bullet overuse (`advisory_detail_html`: 1–2 items render as
+>   prose, only 3+ short parallel items become a list). Only GUI-authored DB
+>   strings are rendered (no daemon string is interpolated), so rich text is safe
+>   (DEC-106). The **dual-chip** setup warning and **ACPI conflicts** sit alongside
+>   it — advisory, shown only when present.
+>
+>   > **Updated, 2026-09-11 (DEC-357).** Two corrections in one, because the first
+>   > was found while tracing the second.
+>   >
+>   > *Where they live.* This bullet used to say the advisories were "now folded
+>   > into the `Hardware_Action_{code}` cards, DEC-158/DEC-212". They were not —
+>   > `cooling_readiness` / `hardware_view` contain no advisory or quirk code at
+>   > all. They went to the **System State** page at DEC-211.
+>   >
+>   > *What they are.* DEC-211 merged them into the health **issue** stack, and
+>   > DEC-357 unpicked that: a vendor quirk is a **board note**, not a condition.
+>   > `services/system_state_view.build_condition_cards` renders only conditions
+>   > the daemon measured; `build_board_notes` renders the quirks in a collapsed
+>   > *"Board notes for this hardware (N)"* section below them, via
+>   > `widgets/system_state_cards._make_note_row`. A note carries an **evidence
+>   > status** (`observed` / `not_observed` / `unverified` / `reference`) rather
+>   > than being ranked into the alarm stack, and it can be acknowledged or
+>   > dismissed per occurrence. `severity` still governs presentation exactly as
+>   > described above; it no longer decides whether the page raises an alarm.
+>   >
+>   > The collapse rule and the four-hue map described above were **lost** in the
+>   > DEC-211 move and are **restored** by DEC-357 on the note rows —
+>   > `SeverityDisplay.default_expanded` has a production consumer again, and the
+>   > caption takes the themed chip class directly, so MEDIUM/LOW paint
+>   > `status_caution` and INFO `status_info`. Register rows `SSN-c` / `SSN-d`,
+>   > both closed.
+>
+> - **Summary + board identity** — the readiness summary line and board identity.
+> - **Five flat detail sub-sections** (`CollapsibleSection`, all collapsed by
+>   default): *Detected hardware* (chip + kernel-module tables), *BIOS
+>   interference detail* (per-header revert rows + footnote — **hidden entirely
+>   unless a header reports a non-zero revert count**, DEC-116), *Thermal safety &
+>   GPU*, *Guidance & documentation* (chip BIOS tips / known issues + doc link),
+>   and *PWM control test* (the verify, characterise and GPU controls — today under
+>   [Advanced actions](#advanced-actions-system-state)).
+> - **Liability disclaimer** (historical objectName
+>   `Diagnostics_Label_readinessDisclaimer`; retired in the DEC-212 Hardware
+>   redesign, DEC-158) —
+>   one calm, persistent note at the bottom of the card (`REMEDIATION_DISCLAIMER`,
+>   `CardMeta` weight): the checklist fixes, advisory details, and chip guidance
+>   all describe kernel/driver/firmware changes applied at the user's own risk.
+>   Low-weight by design — heavy red styling is reserved for the real alerts above.
+>
+> The live *Fan Status* table lives on the **Overview** page.
+>
+> Because the verdict, the blocking-alert stack, and the issue checklist are all
+> **always visible** (no outer collapse), safety warnings can never be hidden
+> behind a collapse — a strict strengthening of the DEC-116 rule. The five detail
+> sub-sections still open on demand; the *BIOS interference detail* sub-section is
+> **hidden whenever there is no interference to report** and is revealed +
+> **auto-expanded** only on a non-zero revert count (DEC-116) — so it never
+> presents an empty header to expand into nothing. The verify controls and their
+> result labels share one sub-section, so reaching the buttons necessarily expands
+> the section that shows the outcome.
 
 `CollapsibleSection` (`ui/widgets/collapsible_section.py`) is a first-party
 widget (DEC-112 D1): a flat `QPushButton` header (chevron rendered in the
@@ -866,8 +885,8 @@ visibility-gated labels keep working unchanged inside the sections.
   stay `pwmN` until the user happened to visit this page. Both paths land in
   `DiagnosticsService.set_hw_diagnostics`, the single writer of the shared cache
   **and** of `AppState.board_info`.
-- **Issue checklist (inline "To fix")** — the always-visible checklist (above)
-  renders one row per detected problem (ACPI, module collision, GPU
+- **Condition cards (inline "To fix")** — the System State page's condition cards
+  (`build_condition_cards`) render one card per detected problem (ACPI, module collision, GPU
   `ppfeaturemask`, dual-chip, all-read-only, …) with its one-line fix and a
   clickable doc link, from `detect_readiness_problems(diag)`. Both it and the
   pop-out's "To fix" block (`build_fix_guidance_html`, carrying the shared
@@ -879,7 +898,7 @@ visibility-gated labels keep working unchanged inside the sections.
   themed, resizable `QTextBrowser` window with the complete report (summary, an
   **Advisories** section, detected-hardware table, thermal/GPU, and the "To fix"
   block). The Advisories section (DEC-158) lists the same `advisory_rows(diag)`
-  the inline panel shows, in the same most-severe-first order and with the same
+  the page's board notes are built from (`board_notes` wraps it), in the same most-severe-first order and with the same
   `severity_display` colour + icon + word — `severity_hex` resolves the chip
   class to a hex colour since the HTML report has no QSS class cascade — so the
   report and the panel cannot drift (DEC-115). Daemon strings **are**
@@ -905,12 +924,18 @@ degrades gracefully (no rule) if the cache is not writable.
 - BIOS tips specific to manufacturer/chipset combinations
 - Known issues (ACPI conflicts, read-only headers, etc.)
 
-Supported chip families: Nuvoton NCT679x (incl. the NCT6701D, which mainline
-reports as `nct6799`), NCT677x, NCT6683, NCT6686, NCT6687; ITE IT8603E / IT8620E /
-IT8628E (mainline), IT8613E, IT8625E, IT8665E, IT8686E, IT8688E, IT8689E, IT8696E,
-IT8698E, IT87952E, IT87xx (generic); the IT8883 bridge (as an explanation, not a
-chip); ASUS sensor-only drivers (`asusec`, `asus_wmi_sensors`, `atk0110` — keyed on
-the hwmon names since DEC-421); Fintek F71882FG, F718xx; SMSC SCH5627, SCH5636.
+Supported chip families (the prefixes in `CHIP_GUIDANCE_DB`, longest prefix wins):
+- **Nuvoton** — NCT6799 (the whole class mainline reports as `nct6799`, including the
+  NCT6701D), NCT6798, NCT6796, NCT679x (generic), NCT677x; NCT6683 and NCT6686 (both on the
+  in-kernel `nct6683` driver); NCT6687 (out-of-tree `nct6687d`).
+- **ITE, mainline `it87`** — IT8603E / IT8623E (reported as `it8603`), IT8620E, IT8622E,
+  IT8628E, IT87952E, and IT87xx (generic fallback).
+- **ITE, out-of-tree `it87` only** — IT8606E, IT8607E, IT8613E, IT8625E, IT8655E, IT8665E,
+  IT8686E, IT8688E, IT8689E, IT8696E, IT8698E, IT8736F, IT8738E, IT8785E; and the IT8883
+  bridge (as an explanation, not a chip).
+- **ASUS sensor-only drivers** — `asusec` / `asus_ec_sensors`, `asus_wmi_sensors`,
+  `atk0110` / `asus_atk0110` (keyed on the hwmon names since DEC-421).
+- **Fintek** — F71882FG, F718xx. **SMSC** — SCH5627, SCH5636.
 
 ### Dashboard banner
 An `ErrorBanner` widget on the live dashboard content shows:
@@ -919,11 +944,14 @@ An `ErrorBanner` widget on the live dashboard content shows:
 - Hidden when writable headers are available
 
 ### Controls page read-only labels
-Non-writable hwmon headers show "(read-only)" suffix in the fan role member
-editor, matching the existing GPU read-only pattern.
+The fan-role member editor does **not** list a non-writable hwmon header (DEC-102; see
+[docs/05 § Member picker drops](05_Controls_Profiles_and_Curves_Spec.md#member-picker-drops)).
+Where one does appear is the Controls page's *Fans not controlled by any role* quick-assign
+menu, as a disabled `name  (read-only)` entry — as is a GPU fan, which cannot be quick-assigned.
 
 ### Settings
-- `show_hardware_guidance: bool = True` — persisted in `app_settings.json`
+None. The chip guidance is always shown. (A `show_hardware_guidance` toggle was persisted in
+`app_settings.json` until settings v3 dropped it, DEC-224.)
 
 ## Implementation: Cooling Hardware Readiness — Hardware page (merged Readiness + Super-I/O — DEC-207)
 
@@ -940,41 +968,108 @@ single shared, coalesced hardware-assessment scan (the older `/inventory/readine
 Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
 `404`s and the page shows an "unavailable" state.
 
-Five sections, most-actionable first (`Hardware_*` object names):
-1. **Overall readiness summary** — a `Hardware_Pill_verdict` rollup on the
-   *Hardware Readiness Checklist* section header. It is **not** a separate banner and
-   **not** a page-wide verdict: it is visibly scoped to that checklist, which is the
-   Hardware page answering its own narrower question (is the hardware/driver stack
-   set up for fan control?) rather than the machine's overall health — see `SSN-i`.
-   Beside it: the top next step (`rollup.top_summary`), last scan time (from
-   `scanned_age_ms`), one "Refresh hardware assessment" action (`refresh_requested`
-   → a forced daemon scan), and a read-only note. `hardware_view._VERDICT` has
-   **two** words, not three — `HARDWARE READY` (daemon `overall` of `ok`/`info`) and
-   `HARDWARE NEEDS ATTENTION` (`warning`/`critical`); "Not ready" is not a state this
-   page can render. Sections 1 and 3 are one `Hardware_Card_checklist` card, not two.
-   **Both the section title and the verdict word say "Hardware" on purpose**
-   (DEC-379): they used to read *System Readiness Checklist* and a bare `READY`,
-   against the System State page's `SYSTEM READY` — two different questions a glance
-   apart in near-identical words, which is what `SSN-i` was raised about. The two
-   surfaces' verdict vocabularies must stay disjoint; a test asserts it
-   (`tests/test_readiness_report_ssn_l_g48.py`).
-2. **Recommended actions** — the actionable findings (critical → warning → info),
-   each an actionable card with impact chips, a primary action button
-   (`action_requested`), and a "Learn how" doc link. Actions route (in
-   `hardware_page._route_action`) to a cross-page deep-link (`open_preferred_sensors`
-   → the Settings page's Preferred Sensors card), an in-surface scroll to the
-   Super-I/O section on this page, or a jump to the System State page (PWM verify,
-   `open_system_state`) or the Overview page (sensor table, `open_overview`).
-   The pure code→action / doc / group mapping lives in `ui/cooling_readiness.py`.
-3. **Hardware checks** — the complete checklist in compact grouped rows (Temperature
+**The page, top to bottom** (`hardware_page._build_ui`; `Hardware_*` object names):
+
+0. **Header** — the title, a subtitle, and **Re-scan** (`Hardware_Btn_refresh`), which asks
+   the daemon for a fresh hardware assessment (a forced `GET /inventory/hardware-readiness`)
+   and re-renders this page. It does **not** re-enumerate hardware: loading a kernel module
+   and seeing its sensors or headers is the **footer's Rescan Hardware** (`POST /hwmon/rescan`,
+   plus the OpenFan leg — DEC-147/265), which the System State page reports on. Use Rescan
+   Hardware after loading a driver, and Re-scan to re-read the assessment.
+1. **Hardware Readiness Checklist** (`Hardware_Card_checklist`) — the `Hardware_Pill_verdict`
+   rollup on its section header, the top next step (`rollup.top_summary`), the last scan
+   time (from `scanned_age_ms`), and the checks in compact grouped rows (Temperature
    monitoring / Fan monitoring and control / Super-I/O and kernel support / Sensor
-   configuration); passing checks stay one calm line.
-4. **Super-I/O details** — per-chip driver detection with copy-paste module-load
-   commands (mono label + "Copy command"; the page never runs it) and the measured
-   liability note.
-5. **Advanced detection** — a collapsed section hosting the opt-in active port probe,
-   behind an explicit confirmation (`probe_requested`); results update only this
-   section (`set_superio`).
+   configuration); passing checks stay one calm line. The verdict is **not** page-wide: it
+   answers this page's narrower question (is the hardware and driver stack set up for fan
+   control?), not the machine's health — see `SSN-i`. `hardware_view._VERDICT` has **two**
+   words: `HARDWARE READY` (daemon `overall` of `ok`/`info`) and `HARDWARE NEEDS ATTENTION`
+   (`warning`/`critical`). **Both the section title and the verdict word say "Hardware" on
+   purpose** (DEC-379), so they never read like the System State page's `SYSTEM READY`; a
+   test keeps the two vocabularies disjoint (`tests/test_readiness_report_ssn_l_g48.py`).
+2. **Recommended Actions** (`Hardware_Card_actions`), beside the checklist — the actionable
+   findings (critical → warning → info), each a card with impact chips, a primary action
+   button (`Hardware_Do_{code}`) and a "Learn how" doc link. `_route_action` sends
+   `preferred_cpu` / `preferred_mb` to Settings ▸ Preferred Sensors, `superio` to this page's
+   Super-I/O card, **`pwm_verify` to this page's own Hardware Diagnostics card** (Hardware is
+   the primary home of PWM testing since AIO-MB Phase 6), `sensors` to the Overview page and
+   `system_state` to the System State page. The code → action / doc / group mapping lives in
+   `ui/cooling_readiness.py`.
+3. **Cooling Hardware** (`Hardware_Card_cooling`) — the configured cooling devices, then one
+   card per PWM header (`pwm_header_card`, rendered from `header_inspector_view`) with its
+   **Test Control**, **Characterise** and **Discover Control Path** buttons and a *Details*
+   disclosure. See the per-header diagnostics below.
+4. **Hardware Diagnostics** (`Hardware_Card_diagnostics`) — **PWM Test Report…** (the
+   whole-machine assessment, DEC-404), **Startup / Lifecycle Recording**, **Thermal
+   Observation** (capability-gated, DEC-335), **AIO Validation**, and **Advanced (System
+   State)**, a shortcut to the System State page's verify controls.
+5. **Super-I/O Architecture** (`Hardware_Card_superio`) — per-chip driver detection with
+   copy-paste module-load commands (a mono label and **Copy command**; the page never runs
+   it) and the measured liability note, then **Advanced detection**, a collapsed section with
+   the opt-in **Probe ports (advanced)** button behind an explicit confirmation. Its
+   prerequisites are in [Session and probe prerequisites](#session-and-probe-prerequisites).
+6. **Voltages** (`Hardware_Card_voltages`, `WIRE-ag`) — display-only reference readings.
+
+### Per-header diagnostics (Hardware page)
+Each PWM header card (`pwm_header_card`) carries three buttons, all stood down with the reason
+in their tooltip while a PWM Test Report runs (`set_diagnostics_blocked`):
+
+- **Test Control** — the same quick verify as System State's *Test PWM Control*. The page
+  counts its own verifies in flight, so the PWM Test Report's Start refuses while one runs
+  rather than waiting for the poll to show it (DEC-415, `PTA-l`).
+- **Characterise** — opens the same `PwmCharacterizationDialog` as System State's
+  *Characterise PWM Response* ([Advanced actions](#advanced-actions-system-state)); a cooling
+  device's card offers **Characterise Pump**, which opens it on the pump's header.
+- **Discover Control Path** (DEC-333, AIO Phase 8 Batch 1) — gated on `control.control_path_discovery` and **disabled with
+  the reason in its tooltip** rather than hidden, so an older daemon explains
+  itself. It opens `ControlPathDiscoveryDialog`, whose **first state is the
+  safety preflight**: eleven rows from `GET /diagnostics/preflight`, each with a
+  state pill and the daemon's own wording, and a verdict chip. A `blocked`
+  verdict **disables Start and lists the blocking reasons**; the GUI reads the
+  daemon's `verdict` and `blocking[]` and never rolls the rows up itself
+  (`docs/08` states the rule). A preflight that could not be fetched is
+  *advisory-unavailable* and does **not** block — the daemon still runs its own
+  guards on the POST, and refusing on a missing advisory would make an older
+  daemon less usable than before the feature existed.
+
+  The result view lists every tach channel watched — responders first with
+  confidence, direction, before/after RPM and repeatability, then the quiet
+  channels with "no meaningful response", because an absent row is
+  indistinguishable from a channel nobody checked. A **failed or skipped restore
+  is surfaced as its own critical-toned line**, not folded into the notes. After
+  a successful run the relationship appears in the header card's *Details*
+  disclosure as "Control relationship … Confidence … Last validated …", read from
+  the daemon's persisted store so it survives a GUI restart.
+
+  A `no_tach_response` result is rendered informationally, never critically: a
+  header may legitimately drive no tach-reporting device, or drive one running
+  under its own internal control.
+- **Evidence & confidence** (DEC-333) — a collapsed disclosure in the validation
+  dialog explaining the six provenance classifications, and naming the nine
+  properties software cannot establish from motherboard sensors at all. Those are
+  listed explicitly rather than omitted, because an omitted row reads as a pass.
+  The same legend is embedded in the JSON export.
+
+**The live step line (DEC-411, daemon ≥ 2.55.0).** A characterisation sweep publishes a point
+only when its hold ends, and a discovery publishes a cycle only after both of its windows, so a
+healthy run could be silent for up to 26 s. Both dialogs now show what the daemon is holding
+right now, from the run's `current_step`: the step, the phase in words (for example *holding 60%
+a while longer to measure stability*) and how long it has been held of its bound (*4s of up to
+12s* — `run_step_view.step_timing`, clamped to the bound so an I/O overrun never reads as a
+stall). An unrecognised phase is rendered humanised (273-i). Against an older daemon, which
+omits the field, the dialogs keep DEC-337's worst-case wording.
+
+### Session and probe prerequisites
+Not restated here (D15) — the user-facing statement is canonical:
+- **Validation, lifecycle and thermal sessions** need the `control.validation_sessions`
+  capability and a configured cooling device (a session records one named assembly); Thermal
+  Observation also needs `control.thermal_observation`. Each button is disabled with the reason
+  in its tooltip. See [manual § Hardware Diagnostics](../manual/diagnostics.md#hardware-diagnostics).
+- **Probe ports (advanced)** needs the daemon operator's opt-in (`allow_port_probe` under
+  `[detection]`) and the drop-in that grants `CAP_SYS_RAWIO`. See
+  [manual § Probe ports (advanced)](../manual/diagnostics.md#probe-ports-advanced),
+  [docs/24 § Active port probing](24_Cooling_Hardware_Readiness_Guide.md#active-port-probing)
+  and `docs/08` for the refusal reasons.
 
 Security boundary preserved: daemon strings render `PlainText`; only GUI-authored doc
 links are `RichText`. Doc links use the existing `doc_url`/`doc_title` mechanism into
@@ -1058,6 +1153,15 @@ Three presentation rules the VM already encodes, which a Phase 6 renderer must n
    to a muted tone** (the 273-i rule). A newer daemon's token must not make evidence vanish,
    and must not paint a red row on a GUI that has not learned the word.
 
+**Findings are per member from daemon 2.55.0 (DEC-411, `PTR-n`).** Every run-derived finding
+is reported once per member rather than once for the first run found, and the daemon's
+`detail` does not name the member, so the findings table's Check column reads *finding —
+member* (`FindingRow.check_text`); a session-level finding carries no member and reads as
+before. The dialog passes its own member names as the view's `display_name`
+(`_member_name`), which the evidence table's Member column uses too, so both tables name a
+member the same way. A single-member session — every session the GUI starts — produces the
+same verdicts as before.
+
 ## Nice-to-have later
 - background self-checks
 - one-click diagnostics redaction
@@ -1125,13 +1229,18 @@ run outlives its window.
 ### Pages
 
 0. **Reports** (GUI 2.82.0, DEC-409) — where the window opens unless a run is in progress or has
-   just finished. Saved reports newest first (started, board, tests completed, state, where it
+   just finished. It opens in demo mode too (DEC-415): saved reports, import, compare and export
+   need no daemon, and Start is refused there, because a report about synthetic hardware would
+   mean nothing. Saved reports newest first (started, board, tests completed, state, where it
    came from), with **Open**, **Export**, **Delete…** (after a confirmation; D-b), **Compare**
    (exactly two), **Open a report file…** and **New report**. An unreadable file in the reports
    folder is listed as *Unreadable* (the reason in the tooltip) so it can be deleted. The report
    a run is writing is listed *In progress* and cannot be opened, exported, compared or deleted.
 1. **Scope.** One row per channel the daemon reports (hwmon headers, OpenFan channels, GPU fans)
-   in stable-id order, with a checkbox per test. Pre-selected: the **PWM control test** and **tach
+   in stable-id order. A header name that collides within the report reads with its chip,
+   `pwm2 (it8696)`, and its device id too if the chip alone does not separate it (DEC-415) — on
+   every page of the report; the name the rest of the GUI shows is unchanged. Each row has a
+   checkbox per test. Pre-selected: the **PWM control test** and **tach
    pairing** on writable headers whose fan reads RPM > 0. Never pre-selected: the **full sweep**
    and the **stall probe**. A test that cannot be offered is disabled with its reason as the
    tooltip — read-only header, OpenFan/GPU (reported read-only), a daemon without the capability
@@ -1142,12 +1251,16 @@ run outlives its window.
    connected, how many fans share it (> 1 = splitter or hub), the BIOS header mode and notes.
    Remembered per stable header id (`hardware_notes`, `cooler_notes`) as USER_METADATA; blank is
    recorded as *not supplied*.
-3. **Review & consent.** The plan in plain words per header and test, the safety paragraph, a
+3. **Review & consent.** The plan in plain words per header and test, the safety paragraph (its
+   stop temperature is the daemon's `limits.diagnostic_max_temp_c`, daemon ≥ 2.55.0 — DEC-411;
+   an older daemon publishes none, and the paragraph then names the rule without a figure rather
+   than guess one), a
    general consent checkbox when any selected test writes, and — for each selected probe — its
    own "I'll stay at the machine" confirmation. Start stays disabled until all are ticked and no
    start refusal applies (demo mode, disconnected, thermal protection active, another diagnostic
    running, a validation session recording, a PWM verify or *Verify All Writable* sweep started on
-   System State still running). The last one is the GUI's own record, not the poll's
+   System State still running, or a *Test* started on the Hardware page still running — DEC-415,
+   `PTA-l`). The last two are the GUI's own records, not the poll's
    `verify_active`: that reads false in the gap between two of a sweep's verifies, so the sweep's
    remaining headers would otherwise be written during the run (`PTA-d`, DEC-410). The refusals
    are re-read when Start is pressed, so one that arose since the last poll is shown then.
@@ -1213,7 +1326,8 @@ the active profile by id and content hash, the thermal state, and — on daemon 
 
 ### The report file
 
-`~/.local/share/control-ofc/reports/pwm-report-<UTC>-<id>.json` (`paths.reports_dir()`), compact
+`$XDG_DATA_HOME/control-ofc/reports/pwm-report-<UTC>-<id>.json` — by default under
+`~/.local/share` (`paths.reports_dir()`, not configurable) — compact
 JSON, schema version 1, saved after every step and never deleted automatically. Reopened with its
 **own 16 MiB limit** — the shared 4 MiB import cap cannot hold a three-hour trace (a measured
 4.1 MB on a 19-fan / 24-sensor machine). A file left `in_progress` by a crash is repaired to
@@ -1233,12 +1347,18 @@ exactly as long as its timestamps (which the recorder guarantees). An export's s
 proportional to the file, never to samples x series. A file nested too deeply to parse is refused
 like any malformed one, and a failure while rendering or exporting one is shown as a message. The
 Reports list parses each saved file once per session and reuses the result while its inode,
-modification time and size are unchanged.
+modification time and size are unchanged. **It parses only as far as the trace** (DEC-415): the
+top-level keys up to `trace`, checked by `document.validate_head`, falling back to the full read
+on any failure. The cost is that a file whose trace or findings are broken lists as readable
+until it is opened; the full read then fails, a warning shows, and the row is marked
+*Unreadable* from then on.
 
 ### Exports (DEC-409)
 
 All four are generated from the same view models the window renders (`view.build_report_view`,
-`compare.compare_reports`), so an export never says something the window does not.
+`compare.compare_reports`), so an export never says something the window does not. The save
+dialog, the CSV folder picker and **Open a report file…** all start in the export folder set in
+Settings (`export_default_dir`), else the home directory.
 
 - **JSON** — the document, byte-identical to the saved file.
 - **Markdown** (`export_markdown.py`) — summary, attention, observations, restoration, a channel

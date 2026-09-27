@@ -3,7 +3,7 @@
 **Status:** Living spec, revised as behaviour changes — [CHANGELOG.md](../CHANGELOG.md) is the authoritative release-by-release record and wins where this document disagrees with it.
 
 ## Purpose
-This document covers daemon configuration, startup, permissions, CLI usage, environment variables, profile management, syslog setup, and troubleshooting. It is the canonical operational reference for running Control-OFC in production.
+This document covers daemon configuration, startup, permissions, the service lifecycle, CLI usage, environment variables, profile management, logs, and troubleshooting. It is the canonical operational reference for running Control-OFC in production.
 
 ---
 
@@ -25,7 +25,64 @@ installs none of these, so the unit cannot start it or cannot hand the fans back
 `makepkg` builds the tagged release, not a local checkout; the daemon repo's
 `docs/DEVELOPER_HANDOVER.md` says how to run your own build.
 
+**`/etc/modules-load.d/control-ofc.conf`** loads the Super-I/O and drive-temperature
+drivers at boot (`nct6775`, `it87`, `w83627ehf`, `drivetemp`); the kernel cannot
+auto-load them because the chips sit on ISA ports. Rename or delete the file to stop it.
+**The Super-I/O guard** (`/usr/lib/modprobe.d/control-ofc-superio.conf`, which runs
+`/usr/lib/control-ofc/control-ofc-superio-guard`) stops `nct6775` and `w83627ehf` from
+probing on a Gigabyte board (every Gigabyte board from daemon 2.56.1; older daemons
+cover only the boards the guard lists): those drivers write to the Super-I/O ports before
+they check for their chip, and on a Gigabyte board with an ITE eSPI bridge that write can
+hide the second fan chip until the machine is powered off at the wall. On every other
+board the real `modprobe` runs unchanged. To turn the guard off, create an empty file
+with the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and reboot; a file
+with a different name does not reliably override it. Recovering a chip the probe has
+already hidden is in the manual's
+[Hardware Troubleshooting](../manual/hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
+
 The service runs as root (required for hwmon sysfs writes and serial device access). Security hardening is applied: `ProtectHome=read-only`, `ProtectSystem=strict`, `PrivateTmp=true`, `NoNewPrivileges=true`.
+
+---
+
+## Service lifecycle
+
+The unit's own comments (`/usr/lib/systemd/system/control-ofc-daemon.service`) are the
+source for every value here; this is the summary an operator needs.
+
+- **Start.** `Type=notify`: the daemon tells systemd it is ready only once the profile
+  engine is ticking, the API is serving and its signal handlers are in place, so
+  `systemctl start` returns when the fans are actually under control.
+  `TimeoutStartSec=120` is pinned because distributions change the default; the
+  boot-time serial probe extends it per device, so it never counts against the 120 s.
+- **Watchdog.** `WatchdogSec=15`. The daemon pings systemd from each completed engine
+  tick and from nowhere else, so a loop that stops ticking is noticed within 15 s even
+  though the process is still alive. On a timeout systemd sends `SIGTERM` — a graceful
+  stop, so the exit floor still runs — and kills the process 10 s later
+  (`TimeoutAbortSec=10`) if it has not exited.
+- **Sleep.** The package's sleep hook (`/usr/lib/systemd/system-sleep/control-ofc-daemon`)
+  tells the daemon before each suspend, and the daemon widens the watchdog to 120 s until
+  the resume call, or until 120 s pass without one. A machine whose suspend and resume
+  take longer can raise `WatchdogSec=` in a drop-in.
+- **Restart.** `Restart=on-failure` covers a crash, a non-zero exit and a watchdog
+  timeout. The delay backs off: 3 s, then about 5.5, 10, 18 and 33 s, then 60 s for
+  every later restart. There is **no start limit**, so the unit never ends up
+  permanently failed and waiting for `systemctl reset-failed`. After five minutes of
+  completed ticks the daemon resets the back-off, so a later, unrelated fault starts
+  again at 3 s (systemd 258 or later; older versions ignore that reset). The back-off
+  itself needs systemd 254 or later.
+- **Stop.** On `SIGTERM` the daemon stops its API, lets its tasks finish, and then
+  restores the hardware: the exit floor for each OpenFan channel and each header with no
+  mode to go back to, then a reset of the GPU fan curves, then each other motherboard
+  header handed back to what it was doing before the daemon took it. (From the first
+  daemon release after 2.56.3 only a GPU the daemon drove is reset; daemon 2.56.3 and
+  older reset every AMD card at every stop.)
+  `TimeoutStopSec=40` is the outer bound. `ExecStopPost=/usr/bin/control-ofc-restore-auto`
+  runs after **every** stop — a crash and `SIGKILL` included — and repeats the header
+  hand-back, from the daemon's record of what each header was doing, and the GPU reset.
+  It cannot reach an OpenFan channel, so after a crash those channels stay at their last
+  duty until the daemon starts again.
+- **Reload.** `systemctl reload` sends `SIGHUP`, which re-reads the profile search
+  directories and the exit floor; everything else needs a restart (see below).
 
 ---
 
@@ -39,9 +96,10 @@ edits on upgrade (`backup=`). With no file at all the daemon also runs on defaul
 ### A bad edit stops the daemon — read this before editing
 The file is strict. **An unknown key, a misspelt section or an out-of-range value makes
 the daemon exit at startup**, and systemd restarts it on a back-off (3 s, then up to one
-start a minute) until the file is fixed. For all that time **nothing controls the fans
-and the thermal emergency cannot run**. `journalctl -u control-ofc-daemon` names the
-offending key. The ranges the file accepts:
+start a minute — see [Service lifecycle](#service-lifecycle)) until the file is fixed.
+For all that time **nothing controls the fans and the thermal emergency cannot run**.
+The journal names the offending key (`sudo journalctl -u control-ofc-daemon`; reading the system journal
+needs root or the `systemd-journal` group). The ranges the file accepts:
 
 | Key | Accepted | Default |
 |---|---|---|
@@ -153,7 +211,7 @@ persisted change is not yet in effect (`restart_pending`). The GUI's
 | `profiles.search_dirs` | `POST /config/profile-search-dirs` | `add` and/or `remove` (`remove` is daemon ≥ 2.23.0, DEC-285); also re-applied on SIGHUP. `/etc/control-ofc/profiles` cannot be removed, and neither can the last remaining entry |
 | `startup.delay_secs` | `POST /config/startup-delay` | 0–30 |
 | `polling.poll_interval_ms` | `POST /config/poll-interval` | 250–2000 via the API (the API ceiling bounds thermal-safety reaction latency). The admin file allows 100–6000: past 6000 ms the thermal-emergency rule's staleness budget stops tracking the cadence (capped at 30 s), so its 5x headroom erodes towards 1x — and past 30 s the budget is shorter than one poll period and the ladder never fires at all. A slower value is clamped to 6000 with a warning rather than honoured (DEC-270) |
-| `serial.port` | `POST /config/serial-port` | Must match the serial allowlist (`/dev/tty{S,USB,ACM,AMA}*`, `/dev/serial/*`), ≤256 chars; `null` = auto-detect. A port that fails to open — or opens but does not answer the OpenFanController handshake — falls back to auto-detection (DEC-250), so a wrong-but-openable tty cannot be adopted as the fan controller |
+| `serial.port` | `POST /config/serial-port` | Must match the serial allowlist (`/dev/tty{S,USB,ACM,AMA}*`, `/dev/serial/*`), ≤256 chars; `null` = auto-detect. The allowlist is wider than the unit: the service can open only `ttyACM` and `ttyUSB` nodes, so a `ttyS` or `ttyAMA` port also needs a `DeviceAllow=` drop-in (see [Serial device access](#serial-device-access)). A port that fails to open — or opens but does not answer the OpenFanController handshake — falls back to auto-detection (DEC-250), so a wrong-but-openable tty cannot be adopted as the fan controller |
 | `serial.timeout_ms` | `POST /config/serial-timeout` | 50–1000 via the API (bounds emergency write latency) |
 | `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
 | `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
@@ -285,14 +343,14 @@ activated:
 ### GUI activation flow
 When the user activates a profile in the GUI:
 1. GUI saves the profile to its local draft cache (`~/.config/control-ofc/profiles/<id>.json`) **and** uploads it to the daemon — the **store of record** (DEC-160) — via `PUT /profiles/<id>` (or `POST /profiles` to create it). The daemon writes it into its own store dir (`/var/lib/control-ofc/profiles/`).
-2. GUI calls `POST /profile/activate {"profile_id": "<id>"}` — the daemon resolves the id from its own store/search dirs. (Activation also accepts a `profile_path`, but it must lie **within a daemon search dir**. The GUI registers its own profile folder, `~/.config/control-ofc/profiles`, as a search dir on every connect, so a path there is accepted while that registration stands; the GUI still activates by `profile_id`.)
+2. GUI calls `POST /profile/activate {"profile_path": "<path to its local copy>"}` — the path must lie **within a daemon search dir**, and the GUI registers its own profile folder, `~/.config/control-ofc/profiles`, as one on every connect, so the path is accepted while that registration stands. (Activation also accepts a `profile_id`, which the daemon resolves from its own store and search dirs; the PWM Test Report's **Re-apply profile** activates that way.)
 3. Daemon validates, applies, and persists the active selection to `/var/lib/control-ofc/daemon_state.json`
 4. Profile survives daemon restart, reboot, and GUI close; the daemon can re-hydrate the full profile document from its own store via `GET /profiles/<id>` (DEC-175)
 
 ### Deactivating a profile
 Two ways to leave profile mode without restarting the daemon:
 - **Activate a different profile** — `POST /profile/activate` replaces the current one.
-- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile, after which the daemon evaluates no fan curve and hands back the motherboard headers it took (DEC-382); its thermal emergency still acts on its own. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the daemon's internal `profile-engine` hwmon lease (the GUI holds no lease — DEC-097/DEC-165). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
+- **Deactivate entirely** — `POST /profile/deactivate` (body ignored) clears the active profile and every standing manual override (DEC-218), after which the daemon evaluates no fan curve and hands back the motherboard headers it took (DEC-382); its thermal emergency still acts on its own. It is idempotent (deactivating when none is active is a success no-op), persists the cleared state so a restart does not resurrect the profile, and releases the daemon's internal `profile-engine` hwmon lease (the GUI holds no lease — DEC-097/DEC-165). Response: `{"deactivated": true, "previous_profile_id": ..., "previous_profile_name": ...}`.
 
 Restarting the daemon without a profile also works, but is no longer required.
 
@@ -355,14 +413,20 @@ sudo journalctl -u control-ofc-daemon -f
   restart. See [How the OpenFanController is adopted at boot](#how-the-openfancontroller-is-adopted-at-boot-dec-291--dec-361)
 - After the window closes: use **Rescan Hardware** in the GUI footer, or
   `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/fans/openfan/rescan`
-- `journalctl -u control-ofc-daemon | grep -i openfan` — an adopted controller
+- `sudo journalctl -u control-ofc-daemon | grep -i openfan` — an adopted controller
   logs `OpenFanController connected on <port>`. On a machine with none, the
   absence is logged at `info`, not as a warning: it is optional hardware
 
 ### hwmon fans not detected
 - Check sysfs exists: `ls /sys/class/hwmon/`
-- Check PWM files: `find /sys/class/hwmon -name 'pwm[0-9]' 2>/dev/null`
-- Request rescan: `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/hwmon/rescan`
+- Check PWM files: `ls /sys/class/hwmon/hwmon*/pwm[0-9]`. (A plain
+  `find /sys/class/hwmon -name 'pwm[0-9]'` finds nothing: each `hwmonN` entry is a symlink,
+  which `find` does not follow.)
+- A **sensor** chip whose driver you have just loaded appears after a rescan —
+  **Rescan Hardware** in the GUI footer, or
+  `curl -X POST --unix-socket /run/control-ofc/control-ofc.sock http://localhost/hwmon/rescan`.
+  **New PWM headers need a daemon restart** (`sudo systemctl restart control-ofc-daemon`):
+  the rescan lists them but does not add them to the running controller.
 
 ### Motherboard/GPU fans discovered but not responding
 If a header or GPU fan appears in the dashboard but never changes speed, and the daemon journal repeats a line like:
@@ -380,13 +444,27 @@ sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon
 ```
 If writes still fail **after** upgrading, the cause is hardware prerequisites rather than the sandbox — open the **Hardware** page, which detects a missing Super I/O driver, `acpi_enforce_resources=lax`, or `amdgpu.ppfeaturemask` and shows the exact fix.
 
+### A fan's duty keeps being changed back
+
+If System State shows a duty-drift card for a header, the daemon has stopped correcting it
+(`duty_not_holding`, DEC-406, daemon ≥ 2.53.0): three times in a row it re-wrote the curve's
+duty and the next tick's readback showed something else had changed it again. Something else
+is writing that header — usually the BIOS/EC's own fan control, or another fan tool (`fancontrol`,
+CoreCtrl, a vendor utility). The daemon still commands the curve but no longer re-asserts it, so
+the fan runs at whatever the other writer leaves. Stop the other writer (for the BIOS, set the
+header's Smart Fan mode to manual or full speed) and the flag clears when a readback agrees
+again or the command next changes. The diagnostics spec's
+[duty-drift card](07_Diagnostics_Spec.md#the-duty-drift-card-on-system-state-dec-408-daemon--2530)
+has the detail.
+
 ### GUI shows "Daemon disconnected"
 - Check daemon is running: `systemctl is-active control-ofc-daemon`
 - Check socket exists: `ls -la /run/control-ofc/control-ofc.sock`
 - Check socket permissions (GUI user must be able to connect)
 
 ### Profile not restoring after reboot
-- Check persisted state: `cat /var/lib/control-ofc/daemon_state.json`
+- Check persisted state: `sudo cat /var/lib/control-ofc/daemon_state.json` (the state
+  directory is `0700`, root only)
 - Check profile file exists at the path stored in state
 - Check daemon logs for profile loading errors on startup
 
@@ -399,10 +477,11 @@ The daemon enforces a single thermal safety rule (non-negotiable, not configurab
 - **Action**: Force every OpenFan channel and writable hwmon header the machine has to 100% PWM. GPU fans are excluded — there is no GPU emergency threshold; AMD PMFW firmware protects the GPU independently (DEC-130)
 - **Hold**: Until a fresh reading at or below 80°C. A CPU sensor that stops updating or disappears does not end it — the emergency stays at 100% while the daemon is blind (DEC-386)
 - **Release**: Straight back to active profile control — there is no recovery rung since DEC-386. Every other fan the emergency took is given back (DEC-382)
-- **Fallback**: With nothing latched, apply a 40% PWM floor to the fans the active profile controls if no CPU reading is fresh for 5 consecutive poll cycles. A control skipped because its sensor is gone keeps its fans at their last duty under it (DEC-386). Fans no profile controls stay under their firmware curve, and with no profile active nothing is forced (DEC-382)
+- **Fallback**: With nothing latched, apply a 40% PWM floor to the fans the active profile controls if no CPU reading is fresh for 5 consecutive poll cycles. A control skipped because its sensor is gone keeps its fans at their last duty under it (DEC-386). An OpenFan channel whose last duty is unknown because the controller reconnected or the host resumed goes to 100% instead (DEC-401, daemon ≥ 2.51.3); a duty unknown for any other reason takes the bare 40%. Fans no profile controls stay under their firmware curve, and with no profile active nothing is forced (DEC-382)
 - **Floors, not replacements** (DEC-307): every duty above is a floor over the active profile's output — each fan gets `max(commanded, forced)`, and only the 100% emergency also reaches a fan no control commands (DEC-382). The ladder can only ever raise a fan
+- **After a reconnect or resume**: the daemon treats each OpenFan channel's duty as unknown until it next writes the channel (DEC-393, daemon ≥ 2.51.1). If an emergency starts in that window, a channel no control commands has no duty to be given back, so it stays at 100% when the emergency ends
 - **Visibility**: `GET /status` reports `thermal_state` (`normal` / `emergency` / `no_sensor_fallback`, and `recovery` from daemons before DEC-386); the GUI has no fan control to pause and only **shows** a poll-driven thermal-protection banner while protection is active (DEC-165, superseding the retired DEC-132 GUI stand-down)
 
 There are no per-*header* PWM floors: the daemon reports `min_pwm_percent: 0` for every hwmon header. The **role-aware minimum** is different. The GUI *bakes* a role-aware default into each control's `LogicalControl.minimum_pct` (30% for CPU/pump-labelled members, 20% for chassis/openfan, 0% for GPU-only — DEC-095), and as of 2.0.0 the **daemon enforces and backstops** it (DEC-162): a profile whose pump/CPU control sets `minimum_pct` below the hard 30% floor (`HARD_PUMP_CPU_FLOOR_PCT`) is rejected with `400 validation_error` (`FLOOR_TOO_LOW`), and the profile engine independently re-clamps every eval tick (`member_effective_floor` → `max(minimum_pct, 30%)`). So floor enforcement is **not** purely the GUI's responsibility — the daemon does refuse and re-floor on the role-aware minimum.
 
-The thermal trigger/release thresholds are reported by `GET /diagnostics/hardware` in its thermal-safety section (`emergency_threshold_c`, `release_threshold_c`, plus `state` and `cpu_sensor_found`). They are **not** in `GET /capabilities`: the `limits` object there carries only `pwm_percent_min`, `pwm_percent_max`, and `openfan_stop_timeout_s`. The live override state is also surfaced as `thermal_state` in `GET /status`.
+The thermal trigger/release thresholds are reported by `GET /diagnostics/hardware` in its thermal-safety section (`emergency_threshold_c`, `release_threshold_c`, plus `state` and `cpu_sensor_found`). They are **not** in `GET /capabilities`: the `limits` object there carries `pwm_percent_min`, `pwm_percent_max`, `openfan_stop_timeout_s` and, from daemon 2.55.0, `diagnostic_max_temp_c` (the PWM Test Report's consent limit, DEC-411). The live override state is also surfaced as `thermal_state` in `GET /status`.

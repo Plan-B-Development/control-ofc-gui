@@ -75,13 +75,13 @@ Use a classic desktop shell:
 - Logs
 
 ### Header ribbon and footer
-A lightweight, always-visible status region should expose
-(split across the top ribbon and the bottom footer since DEC-222):
-- connection state
-- active profile
-- control mode
-- warning count
-- demo mode badge when relevant
+Three always-visible bars expose the global state (split this way since DEC-222):
+- the **ribbon** (top): brand, connection state and uptime, a thermal pill, and the
+  alerts indicator that opens Logs
+- the **status strip** under it: the active profile, and a **DEMO** badge in demo mode
+- the **footer** (bottom): operation mode (a demo-styled chip in demo), poll freshness,
+  the health rollup, the thermal-safety detail, the cooling-readiness chip, and the
+  Rescan Hardware / Export Support Bundle actions
 
 **Poll-driven state never outlives the connection (DEC-222, DEC-389).** A thermal
 state, a readiness rollup or a recording chip is refreshed only by a successful
@@ -125,48 +125,41 @@ Tone of copy:
 - not over-explained
 
 ## Dark theme direction
-Default to a dark theme in V1.
+The default is dark. The built-in **Default Dark** palette is green and teal (DEC-208):
 
 ### Mood
-- charcoal and near-black surfaces
-- vivid but restrained blue accenting from the logo
-- neutral grey text hierarchy
-- amber/orange warnings
+- near-black green surfaces, deepening through forest greens for raised cards
+- a teal accent, which is also the success colour
+- a pale grey-green and sage text hierarchy
+- amber-orange warnings, a gold medium-advisory tier, blue info
 - red criticals
-- green success used sparingly
+
+The earlier blue palette ships as the **Classic Blue** preset (docs/15).
 
 ## Theme system strategy
-Do **not** build a giant freeform color editor in V1.
-
-Instead:
-- build a token-based theme system now
-- expose import/export now
-- expose full advanced editing later
+The theme system is token-based: every colour the app draws comes from a `ThemeTokens`
+field, and themes import, export and save as JSON. The Theme page edits every token
+directly, with contrast warnings (shipped after V1; the V1 plan deferred it).
 
 ### Theme token groups
-At minimum define tokens for:
-- window background
-- panel background
-- raised surface
-- border/subtle separator
-- text primary
-- text secondary
-- text muted
-- accent primary
-- accent secondary
-- success
-- warning
-- critical
-- focus ring
-- selection
-- disabled foreground
-- disabled surface
-- chart grid
-- chart axis
-- chart series 1..n
-- dashboard card states
-- manual override highlight
-- demo mode highlight
+`ThemeTokens` (`ui/theme.py`) defines:
+- **surfaces**: `app_bg`, `surface_1`–`surface_3`, `border_default`
+- **text**: `text_primary`, `text_secondary`, `text_muted`
+- **accent**: `accent_primary`, `accent_secondary` (primary-button hover), `primary_btn_text`
+- **interactive states**: `hover_bg`, `pressed_bg`, `selected_bg`, `disabled_bg`, `disabled_text`
+- **status**: `status_ok`, `status_warn`, `status_crit`, `status_info`, `status_caution`
+- **chart**: `chart_bg`, `chart_grid`, `chart_axis_text`, `chart_point_selected`,
+  `chart_point_hover`, `chart_crosshair`, `chart_series` (a list), `chart_tooltip_bg`,
+  `chart_tooltip_border`
+- **navigation**: `nav_bg`, `nav_text`, `nav_text_active`, `nav_item_hover`, `nav_item_active`
+- **inputs**: `input_bg`, `input_text`, `input_placeholder`, `input_border`, `input_border_focus`
+- **modal, table and code**: `modal_bg`, `modal_border`, the `table_*` tokens, `code_block_bg`
+- **typography**: `font_family`, `font_family_heading`, `base_font_size_pt`
+
+There is **no** dedicated token for a focus ring, a card state, a manual-override
+highlight or demo mode. Focus rings reuse `text_primary`, `input_border_focus` and
+`primary_btn_text` (DEC-251, below); states and badges are QSS classes over the status
+tokens — the DEMO badge, for instance, is `.DemoBadge` in `status_info`.
 
 ## Accessibility and readability rules
 **Project policy (DEC-109): shipped themes must pass WCAG 2.1 AA on every
@@ -374,6 +367,37 @@ Branding is intentionally minimal:
 - no marketing imagery, no banners, no decorative graphics behind workflow screens
 
 The product is a technical utility. Visual identity should not draw attention away from operational state.
+
+## Component standard — the shared library and the theme
+New or edited GUI code reuses the shared library and the theme system; it does not re-roll
+primitives or hardcode styling. (Moved here from the gitignored `CLAUDE.md`, DEC-440.)
+
+- **Reuse `src/control_ofc/ui/components/` before building a widget** — `Card` /
+  `SectionHeader` (cards), `make_button` (buttons), `StatusPill` (badges),
+  `apply_dense_table` (tables), `ModalDialog` (dialogs), `RadialGauge` (gauges),
+  `ToggleSwitch`, the glow / `PulsingLed` primitives, `StatusFooter`, `ElidedLabel`, and
+  the accessible-naming helpers in `a11y.py`. Extend a primitive, or add one to the
+  library, rather than hand-rolling a `QFrame` with `setProperty("class", "Card")` inside a
+  page or widget.
+- **Colours are token-driven — no hex literal** outside `theme.py` and `theme_editor.py`;
+  styling flows through `theme.py`'s QSS classes and `ThemeTokens`.
+  `tests/test_theme_system.py::test_no_hardcoded_hex_in_widget_code` enforces it. Prefer a
+  scoped QSS class to an inline `setStyleSheet`: an inline token f-string freezes the colour
+  when it renders and does not repaint on a live theme change.
+- **Font sizes are never hardcoded.** They come from `font_sizes(base)` in `theme.py`, whose
+  multipliers follow the theme's base size; no `font-size` literal on a themed page. The
+  families are the bundled DM Sans and Space Grotesk, registered by
+  `ui/fonts.py::register_bundled_fonts()` (see Typography above).
+- **Every shared component takes a settable `object_name`** and sets a unique objectName.
+  A fixed name collides when the component is used twice and breaks `findChild` and click
+  tests. Follow the `RadialGauge` / `SectionHeader` / `make_button` parameter shape.
+- **View-model plus thin renderer.** Computed state lives in a headless, testable layer —
+  the Qt-free `services/*_view.py` view-models are the model — and the widget renders it.
+- **Every component ships a headless test** (`QT_QPA_PLATFORM=offscreen`) that asserts an
+  outcome or state, not merely that it constructs.
+- **Every interactive control has a visible `:focus` indicator**, and one whose label is
+  empty or a bare glyph has an explicit accessible name — the DEC-251 rules under
+  Accessibility above.
 
 ## Page-level consistency
 Every page should follow the same structural rhythm:

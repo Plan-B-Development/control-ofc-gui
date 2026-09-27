@@ -1,6 +1,6 @@
 # Settings
 
-The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. Changes are batched: edit as many cards as you like, then click **Save Changes** in the page header to persist them all at once.
+The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. Changes are batched: edit as many cards as you like, then click **Save Changes** in the page header to persist them all at once. They are saved to `~/.config/control-ofc/app_settings.json`. Two cards are the exception and save as you change them, because their values live on the daemon: **Daemon Configuration** and **Preferred Sensors**.
 
 Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and export, import and the automatic settings backup live in the **Sync & Backup** card below.
 
@@ -50,15 +50,26 @@ When you change the Profiles directory, the GUI registers the new path with the 
 
 Settings that belong to the daemon rather than to this application. Every value shown here is read from the daemon, never guessed locally, and each row says where its value came from (`set in daemon.toml`, or `set here` when a change made from this card is shadowing the admin file) and whether a daemon restart is still owed. Changes save as you make them — there is no separate Save step for this card, and moving through the card without editing anything writes nothing.
 
-| Setting | Range | Description |
-|---------|-------|-------------|
-| **Startup delay** | 0-30s | Tells the daemon to wait this many seconds after boot before detecting hardware. Useful if your fan controller initialises slowly. Takes effect on the next daemon restart |
-| **Poll interval** | 250-2000 ms | How often the daemon reads your hardware |
-| **Serial port** | a `/dev/tty…` path | The OpenFan device path. Leave blank to auto-detect. If the daemon reports no controller, the row says so and adds *"set a path here to pin one the daemon is not finding"* — the field stays editable, because naming the port explicitly is how you rescue a controller that is plugged in but not being adopted |
-| **Serial timeout** | 50-1000 ms | Read timeout for the OpenFan device. Also annotated when no controller is detected |
-| **Super-I/O port probe** | on/off | Opt-in active chip detection. The switch is only half the requirement — it also needs a root systemd drop-in, and the row says so |
-| **NVIDIA telemetry** | on/off | Opt-in read-only NVML. Same drop-in caveat |
-| **Exit minimum** | 0-100 % | When the daemon stops, it leaves each OpenFan fan — and any motherboard header with no automatic mode to go back to — at its last speed or this, whichever is higher, so a fan the daemon was running slowly does not stay slow with nothing controlling it. A fan whose speed the daemon had lost track of goes to 100 %; 0 turns this off. **Applies immediately**, like the profile search directories, and the row shows the value in force. If you edit the daemon's config files by hand, the row says what the files contain until you run `sudo systemctl reload control-ofc-daemon`. Needs `control-ofc-daemon` v2.50.0 or newer; on an older daemon the row is disabled and says so |
+The defaults below are the daemon's own, used when neither `daemon.toml` nor this card sets a value.
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| **Startup delay** | 0 s | 0-30s | Tells the daemon to wait this many seconds after boot before detecting hardware. Useful if your fan controller initialises slowly. Takes effect on the next daemon restart |
+| **Poll interval** | 1000 ms | 250-2000 ms | How often the daemon reads your hardware |
+| **Serial port** | blank (auto-detect) | a `/dev/tty…` path | The OpenFan device path. Leave blank to auto-detect. If the daemon reports no controller, the row says so and adds *"set a path here to pin one the daemon is not finding"* — the field stays editable, because naming the port explicitly is how you rescue a controller that is plugged in but not being adopted |
+| **Serial timeout** | 500 ms | 50-1000 ms | Read timeout for the OpenFan device. Also annotated when no controller is detected |
+| **Super-I/O port probe** | Off | on/off | Opt-in active chip detection. The switch is only half the requirement — it also needs a root systemd drop-in, and the row says so |
+| **NVIDIA telemetry** | Off | on/off | Opt-in read-only NVML. Same drop-in caveat |
+| **Exit minimum** | 50 % | 0-100 % | When the daemon stops, it leaves each OpenFan fan — and any motherboard header with no automatic mode to go back to — at its last speed or this, whichever is higher, so a fan the daemon was running slowly does not stay slow with nothing controlling it. A fan whose speed the daemon had lost track of goes to 100 %; 0 turns this off. **Applies immediately**, like the profile search directories, and the row shows the value in force. If you edit the daemon's config files by hand, the row says what the files contain until you run `sudo systemctl reload control-ofc-daemon`. Needs `control-ofc-daemon` v2.50.0 or newer; on an older daemon the row is disabled and says so |
+
+**The two opt-in switches need a drop-in file as well.** The daemon package ships them as
+examples, not installed: `/usr/share/doc/control-ofc-daemon/superio-port-probe.conf.example`
+(the Super-I/O port probe; it grants the daemon raw port access) and
+`/usr/share/doc/control-ofc-daemon/nvidia-telemetry.conf.example` (NVIDIA telemetry; it grants
+access to the NVIDIA device nodes). Copy the one you want to
+`/etc/systemd/system/control-ofc-daemon.service.d/`, dropping the `.example` suffix, then run
+`sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon`. Each file's own
+comments say what it allows.
 
 ### Profile search directories
 
@@ -119,7 +130,7 @@ This card (formerly the Import/Export tab) exports and imports your configuratio
 - All saved profiles
 - All custom themes
 
-Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, the default export directory, per-series chart colours, card sizes and card/sensor bindings, fan-zone ordering, hidden sensor rows, sensor-class overrides, dismissed kernel warnings, everything you have dismissed on the System State page, the recorded fan-control test result, and the one-time profile-import flag. A full snapshot of everything (for same-machine debugging) lives in the **Logs** page's support bundle instead.
+Machine-specific state is deliberately **excluded** so the file is safe to share or move between machines: window geometry, last page, data-directory overrides, the default export directory, per-series chart colours, Controls card sizes, panel sizes, the Logs page's filters and search text, hidden sensor rows, sensor-class overrides, dismissed kernel warnings, everything you have dismissed on the System State page, the recorded fan-control test result, the PWM Test Report's setup notes, and the one-time profile-import and fan-name flags. For troubleshooting, the footer's **Export Support Bundle** keeps most of that machine-specific state, leaving out only layout, the export folder and your own notes (see [System Health § Export Support Bundle](diagnostics.md#export-support-bundle)).
 
 ### Import Behaviour
 

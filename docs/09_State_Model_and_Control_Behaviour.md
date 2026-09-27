@@ -74,6 +74,7 @@ Live manual control is an **expiring, fencing-guarded daemon override**, not a G
 - on release (`DELETE`) or expiry the daemon resumes curve control automatically and resets that control's hysteresis
 - the override PWM is still **floor-clamped** (pump/CPU ≥ 30 %, GPU 0 %); deliberately stopping a fan is the identify path, which is floor-exempt for ordinary fans but never stops a pump (DEC-311)
 - a frozen/crashed GUI cannot strand fans — the daemon's deadman reverts to the curve when renewals stop
+- **activating a profile clears every standing override** (DEC-189), and so does deactivating one (DEC-218): an override never outlives the profile it was taken against
 
 The override must be explicit, obvious in the Controls page, and offer a clear **Return to Automatic** action; it must never silently persist after the user thinks profile control resumed.
 
@@ -82,11 +83,13 @@ The Fan Wizard's "change a fan to find it" flow calls `POST /fans/{id}/identify 
 
 **The daemon chooses the hold duty from whether it holds the header as a pump (DEC-311/312/384)** — its role, its own label or chip, or (DEC-384) the active profile's name for it. An ordinary fan is forced to 0 and stays floor-exempt. A pump is *perturbed* instead — shifted clear of its current duty, upward where there is headroom, and never below the 30 % pump floor. This supersedes DEC-166's "you must be able to stop a pump to find it": an audible RPM change identifies a pump just as well, and losing coolant flow to find a header is not a trade worth making. The response's `mode` says which happened; gate any pump-specific wording on `control.header_roles`, since an older daemon still stops everything.
 
+**Activation leaves identify holds alone, with one exception (DEC-394, daemon ≥ 2.51.1).** DEC-189's clear covers control overrides only, because an identify is per physical fan. But activation can make a header a pump — the new profile's name for it joins the pump union (DEC-384) — so an identify **stop** on a header the new profile names a pump is released at activation; a pump perturbation is kept, since it already sits at or above the floor.
+
 ## Lease behaviour for hwmon
 **The GUI no longer holds an hwmon lease.** The daemon owns the lease lifecycle internally (its engine takes/renews it; hwmon write-verify runs under the daemon's own internal verify lease, so the GUI's `verify_hwmon_pwm` call carries no `lease_id`). The diagnostics Lease tab and the lease-status poll were removed at the cutover.
 
 ## Thermal protection (supersedes the DEC-132 GUI stand-down)
-The daemon owns the thermal ladder: at the trip point it forces every OpenFan channel and writable hwmon header the machine has to 100 %, holds that until a **fresh** reading at or below 80 °C — including while the CPU sensor is stale or gone (DEC-386) — and then hands control straight back to the profile (the 60 % recovery rung was removed in DEC-386). With nothing latched it applies a 40 % floor if no CPU reading is fresh for 5 cycles, on the fans the active profile controls only (DEC-382); a control skipped that tick keeps its fans at their last duty under it. GPU fans are excluded by design (DEC-130).
+The daemon owns the thermal ladder: at the trip point it forces every OpenFan channel and writable hwmon header the machine has to 100 %, holds that until a **fresh** reading at or below 80 °C — including while the CPU sensor is stale or gone (DEC-386) — and then hands control straight back to the profile (the 60 % recovery rung was removed in DEC-386). With nothing latched it applies a 40 % floor if no CPU reading is fresh for 5 cycles, on the fans the active profile controls only (DEC-382); a control skipped that tick keeps its fans at their last duty under it, except an OpenFan channel whose duty a controller reconnect or a host resume made unknown, which goes to 100 % (DEC-401, daemon ≥ 2.51.3). GPU fans are excluded by design (DEC-130).
 
 **One fresh reading at or above the trip point latches, and the latch is not bounded (DEC-400).** A CPU sensor stuck in that range keeps the emergency on for as long as it reports it: by the user's decision there is no plausibility gate, maximum latch time or sibling cross-check, following IEC 61511-1 11.2.7 — a safety function that has tripped stays tripped until its reset, which here is a fresh reading at or below 80 °C. A stuck sensor fails loud, at 100 %, and is dealt with at classification, as DEC-294 did for an unconnected `CPUTIN`.
 
@@ -96,7 +99,7 @@ The daemon owns the thermal ladder: at the trip point it forces every OpenFan ch
 
 **Thermal force is a FLOOR over overrides and curves, not a replacement for them (DEC-307, daemon ≥ 2.26.0).** Each output in reach receives `max(commanded, forced)`. At 100 % the reach is every OpenFan channel and writable hwmon header, including ones no control commands — that is what gives the emergency its reach. Below 100 % — since DEC-386 only the 40 % no-sensor floor — it is only the profile's own outputs (DEC-382): a 40 % floor on a fan nothing controls would replace its firmware curve and could run it slower, so those fans are left alone, and any the emergency took are given back when it ends. So the ladder can only ever raise a fan. Before DEC-307 the forced duty replaced the profile's output, which meant the 60 % and 40 % rungs could drive a fan *down* below what its curve was asking for; the 100 % emergency was never affected, because 100 is the maximum.
 
-The old **DEC-132 GUI stand-down** (where `ControlLoopService` paused its own writes while `thermal_state != "normal"`) is **gone** — there is no GUI loop to stand down. The GUI now uses `status.thermal_state` only to **show** a poll-driven thermal-protection banner (DEC-165), never to gate a write. `thermal_state` (`normal | recovery | emergency | no_sensor_fallback`) remains in `GET /status`.
+The old **DEC-132 GUI stand-down** (where `ControlLoopService` paused its own writes while `thermal_state != "normal"`) is **gone** — there is no GUI loop to stand down. The GUI now uses `status.thermal_state` only to **show** a poll-driven thermal-protection banner (DEC-165), never to gate a write. `thermal_state` (`normal | emergency | no_sensor_fallback`, plus `recovery` from daemons before 2.50.0, DEC-386) remains in `GET /status`.
 
 ## Sensor freshness handling
 The GUI surfaces freshness for display, not for control gating (the daemon owns the conservative fallback — e.g. the no-CPU-sensor 40 % floor). If a sensor is stale or invalid the GUI should:
@@ -105,7 +108,7 @@ The GUI surfaces freshness for display, not for control gating (the daemon owns 
 - not present a stale value as live
 
 ## History retention
-The GUI stores only the last **2 hours** of polling history in an in-memory ring buffer (optionally persisting session snapshots). Avoid building a heavy telemetry database.
+The GUI stores only the last **2 hours** of polling history in an in-memory ring buffer; nothing is written to disk, so history starts empty at every launch. Avoid building a heavy telemetry database.
 
 ## GUI-owned vs daemon-owned features
 What lives where as of 2.0.0:
@@ -134,14 +137,13 @@ On app shutdown:
 - flush GUI logs/config if needed
 - leave the daemon as-is; do not invent direct shutdown control of hardware
 
-## Recommended internal classes
-- `AppState`
-- `ConnectionState`
-- `OperationMode`
-- `ActiveProfileState`
-- `FreshnessState`
-- `TargetAssignment`
-- `CurveDefinition`
+## Internal state classes
+- `AppState` (`services/app_state.py`) — the shared Qt state object: the daemon status, the
+  latest sensors and fans (each reading carries its own `freshness`), and the active profile's
+  id and name as the daemon reports them
+- `ConnectionState`, `OperationMode` (`api/models.py`)
+- `Profile`, `LogicalControl`, `ControlMember`, `CurveConfig` (`services/profile_service.py`) —
+  a profile, its fan roles, their members and their curves
 - `DemoController` (demo-mode evaluator)
 
 ## Strong recommendation

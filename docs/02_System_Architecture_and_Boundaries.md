@@ -51,7 +51,7 @@ That means the GUI will:
 6. persist its own **UI-owned** state locally (aliases, themes, layout)
 
 A new-GUI / old-daemon mix is refused (capability gate on `control.autonomous_control` + the package
-pin `control-ofc-daemon>=2.0.0`); the GUI has no loop to fall back to. **Demo mode** is the sole
+pin `control-ofc-daemon>=2.11.0`); the GUI has no loop to fall back to. **Demo mode** is the sole
 exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon.
 
 ## Consequences of this decision
@@ -205,6 +205,11 @@ control_ofc/
                                #   header's reported stop_permitted /
                                #   effective_min_pwm_pct and reconstructs only when
                                #   an older daemon says nothing. One rule, one place.
+    run_step_view.py           # timing words for a running diagnostic's current_step —
+                               #   the characterise and discovery dialogs' live step line,
+                               #   one elapsed-of-bound arithmetic for both (DEC-411)
+    shared_fan_switch.py       # Dell's one shared BIOS fan switch (dell_smm): a profile
+                               #   controls all of those fans or none (DEC-403)
     diagnostic_estimates.py    # "about how long" for each daemon diagnostic, from
                                #   mirrored daemon timing constants — ONE copy for the
                                #   session dialog and the PWM Test Report (DEC-408)
@@ -250,8 +255,12 @@ control_ofc/
                              #   shared assessment superseded it (DEC-224)
     hwmon_guidance.py        # the in-app hardware-advice database — per-chip ChipGuidance,
                              #   VendorQuirk table, severity vocabulary, remediation text
-    theme.py                 # ThemeTokens + QSS class definitions — the single source of colour
-    fonts.py                 # font-size multipliers (font_sizes(base)); no hardcoded sizes
+    theme.py                 # ThemeTokens + QSS class definitions — the single source of colour;
+                             #   also font_sizes(base), the font-size multipliers (no hardcoded sizes)
+    fonts.py                 # registers the bundled OFL fonts at startup (register_bundled_fonts)
+    fonts/                   # DM Sans + Space Grotesk .ttf files and their OFL licences
+    presets/                 # bundled theme presets (Classic Blue, Noctua Dark, Solar Light),
+                             #   copied into the user's themes dir when absent
     branding.py
     about_dialog.py
     fan_display.py           # fan display-name tier resolution (DEC-227/229)
@@ -283,9 +292,10 @@ control_ofc/
       overview_page.py         # Overview page — daemon health + device discovery + sensor & fan tables (DEC-209)
       logs_page.py             # Logs page — List + Inspector: activity strip, event list,
                                #   tabbed inspector (Details/Raw/Diagnostics/Journal),
-                               #   Export Bundle (DEC-210, redesigned DEC-314)
+                               #   export_bundle() — its button is the footer's Export
+                               #   Support Bundle (DEC-282; page DEC-210, redesigned DEC-314)
       system_state_page.py     # System State page — /diagnostics/hardware report + PWM/GPU verify + Rescan (DEC-211)
-      hardware_page.py         # Hardware page — /inventory/readiness checklist + Super-I/O + Probe Ports (DEC-212)
+      hardware_page.py         # Hardware page — /inventory/hardware-readiness checklist + Super-I/O + Probe Ports (DEC-212/207)
       theme_page.py            # Theme page — theme editor + presets + typography + app-wide apply (DEC-215)
       diagnostics_readiness.py # PWM-reclaim severity helpers (Diagnostics page retired — DEC-216); now feed System State
       diagnostics_workers.py   # background QThread workers (verify / rescan / GPU reset) — now feed System State + Hardware;
@@ -346,9 +356,10 @@ control_ofc/
       reorderable_flow.py     # ReorderableFlow — shared drag/reorder base (DEC-187)
       card_metrics.py         # shared card sizing helpers
       card_resize.py          # resize-grip support
-  assets/
-    ...
 ```
+
+Branding assets are not inside the package: they live in the repo-level `assets/branding/`
+(a sibling of `src/`), found at runtime by `paths.assets_dir()`.
 
 ## Process model
 Use a single desktop process unless a compelling reason appears otherwise.
@@ -375,7 +386,7 @@ Responsible for:
 - periodic reads (a single 1 Hz `QTimer` driving a worker-thread `poll()`)
 - freshness tracking
 - emission of updated view models
-- start/stop of the whole loop (`start()`/`stop()`/`shutdown()`); it does not pause selectively per state — disconnect is detected by poll failure, and demo mode swaps in synthetic data rather than pausing this service
+- start/stop of the whole loop (`start()`/`stop()`/`shutdown()`); it does not pause selectively per state — disconnect is detected by poll failure. Demo mode never creates it: `MainWindow`'s own 1 Hz demo timer feeds `DemoService` data into `AppState` instead (docs/10)
 
 ### Demo controller (demo mode only)
 Responsible for:
@@ -390,7 +401,9 @@ identify are issued through the API client directly (the Controls page owns the 
 ### Profile service
 Responsible for:
 - daemon-backed profile CRUD (pull + mirror on load; validate + upload on save) with a local draft cache
-- offline fallback — local drafts when the daemon is unreachable, reconciled on reconnect
+- offline fallback — local drafts when the daemon is unreachable. Nothing reconciles them on
+  reconnect: an offline edit is published only when the user saves it again, and a profile deleted
+  offline comes back from the daemon's store on the next online load (docs/11)
 - exposing published / draft state to the UI
 
 ### Persistence layer
