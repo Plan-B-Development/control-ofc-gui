@@ -4,6 +4,13 @@
 
 ### Documentation
 
+- **The OpenFan manual says what a reconnect opens, and no longer suggests a udev symlink the daemon
+  refuses** (DEC-436, daemon change). While a dropped controller is away, the daemon now tries only the
+  configured port, the controller's own device and newly attached serial devices, so other USB-serial
+  hardware is not reset. The manual, the operations guide and the OpenFan architecture notes say so. The
+  manual points at the `/dev/serial/by-id/` link for a fixed path, where it used to suggest
+  `/dev/control-ofc-controller`, which the daemon does not accept.
+
 - **The manual says which GPUs the daemon resets when it stops** (DEC-435, daemon change). The
   setup checklist and the System State notes now say that a GPU Control-OFC has never driven is left
   to LACT or CoreCtrl across daemon stops and restarts. They also say that **Restore GPU Fan to

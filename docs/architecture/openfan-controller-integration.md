@@ -84,13 +84,42 @@ probes to one per ten seconds and never skips one. The loop owns its own
 candidate-set comparison for exactly that reason (DEC-361).
 
 ### Runtime auto-reconnect (R43)
-After **5 consecutive read errors** the OpenFan poll loop enters reconnect mode:
-it re-runs `auto_detect_port()` with its own capped backoff, recovering a
-disconnected device without a daemon restart. This is the **one remaining caller
-of the opening detection** — DEC-291 moved boot and rescan onto the
-non-opening enumeration but deliberately left this path, because it runs only
-after a controller that was *already adopted* has dropped off, so there is a
-known device to re-find rather than a bus to survey. A re-opened transport is
+After **5 consecutive read errors** the OpenFan poll loop enters reconnect mode,
+recovering a disconnected device without a daemon restart. Its backoff doubles
+to one attempt per 30 poll cycles and never gives up — `POST /fans/openfan/rescan`
+refuses while a controller is installed, so this is the only route back for one
+that dropped off.
+
+**What an attempt opens (DEC-436, `DC-ae`).** Until DEC-436 this path re-ran
+`auto_detect_port()`, which opened every `ttyACM`/`ttyUSB` node to find one — the
+last caller of the opening detection DEC-291 moved boot and rescan off. The
+reasoning for leaving it ("a known device to re-find rather than a bus to
+survey") did not hold: it surveyed the whole bus on every attempt, for as long as
+the controller stayed away, resetting every Arduino-class board on it each time.
+`auto_detect_port` is gone. Each attempt now opens, in order and each node once,
+only what `ReconnectSurvey` (`serial/adoption.rs`) plans:
+
+1. the configured `[serial] port`, when it resolves;
+2. the node the controller was adopted on, while it is still that node — same
+   `(st_dev, st_ino)`. devtmpfs re-creates a node for a new device, so a name
+   another device has taken is not mistaken for it; once seen gone or re-created
+   it is never probed again for that drop. **This re-probe cannot rescue a
+   controller wedged on its node today:** serialport opens with an exclusive
+   `flock`, which root does not bypass, and the loop holds the old port until a
+   replacement is swapped in. It resets nothing and is kept; closing the old port
+   first is register row `DC-ct`. Such a controller needs a daemon restart;
+3. each node that appeared after the survey began: on every attempt for its first
+   60 s (at least 4 opens), then once per 5 minutes while it stays — never given
+   up on, because this probe is the only way back (the rescan endpoint refuses
+   while a controller is installed). A returning controller always arrives as a
+   new node, even when two devices swap names.
+
+The survey is built at the adoption from the candidate list it was made from
+(boot's or the rescan's) and re-seeded on each reconnect, so a tty present all
+along is never opened. A device plugged in after adoption is a new node and is
+opened on that schedule while the controller stays away — at most once per
+5 minutes after its first minute, where the retired sweep reset every tty about
+every 30 s. A re-opened transport is
 re-verified for identity (DEC-250/255) and the write-coalescing cache is
 invalidated before it goes live (DEC-256). A single channel's cache entry is also
 dropped whenever one of its commands fails, since the frame may already have reached

@@ -52,7 +52,7 @@ The daemon needs read/write access to the serial port. On the supported Arch / C
 Two cases need a manual step:
 
 - **Debian / Ubuntu** (where the serial group is `dialout`, not `uucp`): add a systemd drop-in — `sudo systemctl edit control-ofc-daemon` and set `SupplementaryGroups=uucp dialout`.
-- **You want a fixed symlink** (e.g. `/dev/control-ofc-controller`): the daemon repo ships an optional udev rules example (`99-control-ofc.rules`) you can copy and fill in with your device's USB vendor / product id. This is optional convenience, not a requirement.
+- **You want a specific group or mode on the device node**: the daemon repo ships an optional udev rules example (`99-control-ofc.rules`) you can copy and fill in with your device's USB vendor / product id. This is optional convenience, not a requirement. For a fixed path, use the `/dev/serial/by-id/` link above rather than a custom udev symlink: the daemon refuses a name such as `/dev/control-ofc-controller`.
 
 ## Identifying which fan is which
 
@@ -82,7 +82,7 @@ How roles, curves, and profiles fit together is covered in [Profiles and Curves]
 |---|---|---|
 | Controller not detected | Daemon started before the device was plugged in, or a non-standard port | Plug in the controller, then use **Rescan Hardware** in the footer — no restart needed. Confirm the device exists with `ls /dev/ttyACM*`. If it only appears under a non-standard path, set `[serial] port` explicitly (see above), which also makes the daemon retry for longer at boot |
 | Detected, but no fans show RPM | Fans not connected to populated channels, or 3-pin fans with no tachometer | A `0` RPM on an empty or tach-less channel is normal. Connect a known-good 4-pin fan to confirm |
-| Worked, then stopped after unplug / replug | USB re-enumeration | The daemon detects the dropout and **auto-reconnects** — after 5 consecutive failed reads it re-scans for the device on a backoff that doubles up to 30 poll intervals — about 1 s up to 30 s at the default poll interval, and proportionally shorter if you have lowered it — and resumes when it reappears. Pinning the `by-id` path makes reconnection reliable |
+| Worked, then stopped after unplug / replug | USB re-enumeration | The daemon detects the dropout and **auto-reconnects** — after 5 consecutive failed reads it tries again on a backoff that doubles up to 30 poll intervals — about 1 s up to 30 s at the default poll interval, and proportionally shorter if you have lowered it — and resumes when it reappears. Each try opens only your configured port, the controller's own device, and a serial device that has just appeared, so other USB-serial hardware is left alone. A pinned `by-id` path is tried first on every attempt |
 | Permission denied on the serial port | The service is not in the serial group (most likely on non-Arch distros) | Add the serial group via a systemd drop-in (see permissions above), then restart the daemon |
 | A fan briefly stops, then restarts on its own | The controller will not hold a fan at 0% for more than a few seconds (a built-in safety) | Expected. Set a small non-zero minimum if you want the fan to keep spinning |
 

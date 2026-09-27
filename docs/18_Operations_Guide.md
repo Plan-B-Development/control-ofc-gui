@@ -146,7 +146,14 @@ Linux opening a serial port asserts DTR, which **resets Arduino-class boards**.
 After the window closes, use the GUI's **Rescan Hardware** action (or
 `POST /fans/openfan/rescan`) to adopt a controller without restarting the
 daemon. A controller that was adopted and then dropped off is recovered
-automatically by the poll loop's own reconnect, with no action needed.
+automatically by the poll loop's own reconnect, with no action needed: it keeps
+trying, about every 30 s at the default poll interval, for as long as the daemon
+runs. Each try opens only the configured port, the controller's own device node,
+and a serial device that has appeared since the controller dropped off (on every
+try for its first minute, then once every five minutes), so USB-serial hardware
+that was attached all along is not reset while the controller is away (DEC-436).
+A controller that stops answering without leaving the USB bus is not recovered
+this way — restart the daemon.
 
 > Before DEC-361 this was a ladder of up to six attempts sleeping 1+2+4+8+16 s
 > that ran *ahead* of the API server and the profile engine. If you are reading
