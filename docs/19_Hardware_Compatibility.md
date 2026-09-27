@@ -274,6 +274,8 @@ used as evidence — several were found attached to the wrong board.
 | | ASRock X870E Nova WiFi | NCT6796D-S + NCT5585D (+ Fintek bridge) | mainline `nct6775` (both chips) |
 | | ASRock B850 / X870 Steel Legend WiFi, B850I Lightning WiFi | **NCT6686D only** | in-kernel `nct6683` read-only; out-of-tree driver for PWM |
 | | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686D @ 0x0a20 + NCT6796D-S @ 0x0290 (reported as `nct6799`) + Fintek F85227N bridge | `nct6687d` (or read-only `nct6683`) + mainline `nct6775` (DEC-106 collision-detector exemption). On an X870E Taichi an owner measured CHA_FAN1/2, CPU_FAN2 and AIO_PUMP on the `nct6799` chip and CHA_FAN3/4 on the NCT6686D, where `nct6687d` labels one channel "Pump Fan" — so assign the pump role by hand ([nct6687d #155](https://github.com/Fred78290/nct6687d/issues/155)) |
+| **TR4 X399** (Threadripper 1000 / 2000) | Gigabyte (X399 AORUS PRO (incl. -CF) / XTREME / GAMING 7, X399 DESIGNARE EX (incl. -CF)) | **IT8686E + IT8792E** (dual-chip; [it87 #135](https://github.com/frankcrawford/it87/issues/135) dmesg on the PRO-CF: IT8686E at `0xa40`, IT8792E/IT8795E at `0xa60`; the SIV catalogue lists all four boards with this pair) | out-of-tree `it87-dkms-git` |
+| **sTRX4 TRX40** (Threadripper 3000) | Gigabyte (TRX40 AORUS XTREME / MASTER / PRO WIFI, TRX40 DESIGNARE) | **IT8688E + IT8792E** (dual-chip; the it87 fork's `GA-TRX40-AORUS-XTREME.conf` names `it8688-isa-0a40` + `it8792-isa-0a60`; the SIV catalogue lists all four boards with this pair) | out-of-tree `it87-dkms-git` |
 
 The System State page (`/diagnostics/hardware`) reports the actual loaded
 modules and detected chips, so users should always cross-reference this
@@ -282,7 +284,8 @@ generic table against their own system's output.
 ## Intel platform → typical chip mapping
 
 Parallel table for Intel LGA1700 (12th–14th Gen Core) and LGA1851 (Core
-Ultra) platforms. Added in DEC-110 alongside the GUI's Intel vendor
+Ultra) platforms, plus the older Gigabyte Z390 / Z490 boards the daemon's
+dual-chip table enrols. Added in DEC-110 alongside the GUI's Intel vendor
 quirks and the daemon's CPU vendor detection, and re-checked board by board on
 2026-09-24 (DEC-421). As with the AMD table, every entry is cross-referenced
 against a verifiable upstream source (kernel lists, lm-sensors `configs/`,
@@ -290,6 +293,7 @@ Fred78290/nct6687d source, the it87 SIV catalogue, ASRock manuals).
 
 | Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
 |---|---|---|---|
+| **LGA1151 / LGA1200** (Z390 / Z490) | Gigabyte Z390 AORUS MASTER (incl. G2 EDITION) / PRO (incl. PRO WIFI) / ULTRA (incl. -CF), Z490 AORUS MASTER | **IT8688E + IT8792E** (dual-chip; the SIV catalogue gives each board an `it8688` and an `it8792` stanza) | out-of-tree `it87-dkms-git` |
 | **LGA1700 600-series** (Z690 / B660 / H670) | ASUS (ROG MAXIMUS Z690 FORMULA, ROG STRIX Z690-A GAMING WIFI D4 / Z690-E GAMING WIFI, TUF GAMING Z690-PLUS) | NCT6798D (reports `0xd42b`) + `asus_ec_sensors` enrichment on listed ROG boards | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
 | | MSI (MAG Z690 TOMAHAWK WIFI, MPG Z690 EDGE WIFI) | NCT6687D, **default** register map — no `msi_alt1` | out-of-tree `nct6687d-dkms-git`, with `nct6683` blacklisted |
 | | Gigabyte Z690 AORUS PRO / MASTER | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds default MMIO on (older builds need `mmio=on`) |
@@ -303,7 +307,7 @@ Fred78290/nct6687d source, the it87 SIV catalogue, ASRock manuals).
 | | ASRock Z790 Taichi | **NCT6686D (5 headers) + NCT5585D (3 headers)** (manual block diagram) | NCT5585D: mainline `nct6775` (`nct6798`); NCT6686D: in-kernel `nct6683` read-only, out-of-tree driver for PWM |
 | **LGA1851 800-series** (Z890 / B860 / H810) | MSI (MAG/MEG/MPG Z890) | NCT6687D (reports `0xd592`) with the alternate "msi_alt1" EC map (monitoring tools label these boards *NCT6687DR*); **requires `fan_config=msi_alt1`**, set automatically for boards in the driver's `nct6687_msi_alt_boards[]` | out-of-tree `nct6687d-dkms-git` (auto-allowlist) or manual `fan_config=msi_alt1`; several also need `msi_fan_brute_force=1` |
 | | ASUS (ROG STRIX Z890 / B860) | **NCT6701D** — by chip ID it binds as `nct6799`; no Linux log for an ASUS Z890 exists yet | mainline `nct6775`. Not on the ASUS WMI access list, and no `asus_ec_sensors` or `asus_wmi_sensors` support |
-| | Gigabyte Z890 AORUS MASTER (and, per the SIV catalogue, XTREME AI TOP / PRO ICE / ELITE X ICE) | **IT8696E + IT87952E** | out-of-tree `it87-dkms-git`; same dual-chip remediation |
+| | Gigabyte Z890 AORUS MASTER (incl. AI TOP; LibreHardwareMonitor PR #2512), and — per the SIV catalogue alone — Z890 AORUS XTREME AI TOP / PRO ICE / ELITE X ICE / TACHYON ICE / TACHYON DUO X ICE, Z890 AI TOP, Z890 AERO D and W880 AI TOP | **IT8696E + IT87952E** | out-of-tree `it87-dkms-git`; same dual-chip remediation |
 | | Gigabyte Z890 AORUS ELITE WIFI7 (incl. ICE / PLUS / DUO X) | **IT8696E only** | out-of-tree `it87-dkms-git` |
 | | ASRock Z890 (Steel Legend, Lightning, Pro-A, Pro RS, Nova, Taichi) | **NCT6686D** carries the fans; the Nova and Taichi add an NCT6796D-E (reported as `nct6798`) with little or nothing wired | in-kernel `nct6683` reads the NCT6686D read-only (Z890 Pro-A customer ID since 7.2; others may need `force=1`); PWM via `nct6687d`, or `asrock-nct6683` on the Z890 Nova WiFi |
 

@@ -2024,15 +2024,17 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "Gigabyte Intel Z890 AORUS MASTER boards (MASTER, MASTER AI TOP) "
             "ship the same IT8696E + IT87952E topology as their AMD X870E "
             "counterparts, and the it87 sensor catalogue lists the Z890 AORUS "
-            "XTREME AI TOP, PRO ICE and ELITE X ICE the same way. The Z890 AORUS "
-            "ELITE WIFI7 (and its ICE / PLUS / DUO X editions) has the IT8696E "
-            "only.",
+            "XTREME AI TOP, PRO ICE, ELITE X ICE, TACHYON ICE and TACHYON DUO X "
+            "ICE, the Z890 AI TOP, the Z890 AERO D and the W880 AI TOP the same "
+            "way. The Z890 AORUS ELITE WIFI7 (and its ICE / PLUS / DUO X "
+            "editions) has the IT8696E only.",
             "Apply the same dual-chip remediation if the secondary chip "
             "fails to enumerate: update it87-dkms-git first (2026-03+ "
             "builds default mmio=on); on older builds set "
-            "`options it87 mmio=on`. The daemon's board table includes the "
-            "Z890 AORUS MASTER; other Z890 boards are added as exact-board "
-            "evidence appears.",
+            "`options it87 mmio=on`. The daemon's board table lists every "
+            "dual-chip board named above, so a missing secondary raises its "
+            "warning. Apart from the MASTER boards, those entries rest on the "
+            "catalogue alone — the it87 tracker has no report for them yet.",
             _IT87_V2_RENAME_NOTE,
             "BIOS: Smart Fan 6 can take a header back from Linux within "
             "seconds; the daemon's watchdog re-asserts manual mode.",

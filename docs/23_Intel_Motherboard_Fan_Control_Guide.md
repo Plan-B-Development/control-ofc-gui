@@ -56,7 +56,7 @@ temperature path (which is always `coretemp` on Intel).
 |---|---|---|---|
 | **LGA1700 600-series** (Z690, B660, H670, H610) | ASUS ROG STRIX / TUF GAMING / PRIME Z690; MSI MAG/MEG/MPG Z690; Gigabyte Z690 AORUS; ASRock Z690 Steel Legend/Extreme | `nct6775` (mainline) on NCT6798D / NCT6796D-E boards; `nct6687d-dkms-git` on MSI Z690 (NCT6687D, default register map — no module parameter; blacklist the read-only in-kernel `nct6683`); `it87-dkms-git` on Gigabyte IT8689E (+ IT87952E on the PRO / MASTER); `asus_ec_sensors` (mainline) for extra ASUS Z690 sensors | Strong mainline coverage. Z690 has the only LGA1700-era ASRock board with an upstream lm-sensors config (Z690 Extreme). |
 | **LGA1700 700-series** (Z790, B760, H770, H610 refresh) | ASUS ROG STRIX Z790-E/-H/-I; MSI MAG Z790 TOMAHAWK / MPG Z790 EDGE WIFI; Gigabyte Z790 AORUS ELITE/MASTER/XTREME; ASRock Z790 Steel Legend/Taichi | Similar to Z690. MSI Z790 ships the NCT6687D with the default map. Gigabyte Z790 AORUS MASTER / XTREME / PRO X are dual-chip (IT8689E + IT87952E); the Z790 AORUS ELITE / ELITE AX has the IT8689E only. ASRock's Z790 Taichi puts five headers on an NCT6686D, read-only in the kernel driver. | The kernel `asus_ec_sensors` list includes ROG STRIX Z790-E GAMING WIFI II, Z790-H and Z790-I GAMING WIFI and ROG MAXIMUS Z790 EXTREME (7.3 adds Z790 HERO). |
-| **LGA1851 800-series** (Z890, B860, H810) | MSI MAG/MEG/MPG Z890; ASUS ROG STRIX Z890; Gigabyte Z890 AORUS; ASRock Z890 Taichi/Steel Legend | MSI Z890 ships the NCT6687D with the alternate "msi_alt1" EC map (monitoring tools call it *NCT6687DR*) — **requires `fan_config=msi_alt1`**, set automatically for boards on the upstream list. ASUS Z890 / B860 carry an NCT6701D, bound as `nct6799`. Gigabyte Z890 AORUS MASTER uses IT8696E + IT87952E; the Z890 AORUS ELITE WIFI7 the IT8696E only. ASRock Z890 fans sit on an NCT6686D, read-only in the kernel driver. | Newest platform — many specifics still settling. Treat upstream support as evolving. |
+| **LGA1851 800-series** (Z890, B860, H810) | MSI MAG/MEG/MPG Z890; ASUS ROG STRIX Z890; Gigabyte Z890 AORUS; ASRock Z890 Taichi/Steel Legend | MSI Z890 ships the NCT6687D with the alternate "msi_alt1" EC map (monitoring tools call it *NCT6687DR*) — **requires `fan_config=msi_alt1`**, set automatically for boards on the upstream list. ASUS Z890 / B860 carry an NCT6701D, bound as `nct6799`. Gigabyte Z890 AORUS MASTER uses IT8696E + IT87952E, as — per the it87 SIV catalogue — do the XTREME AI TOP, PRO ICE, ELITE X ICE, TACHYON ICE and TACHYON DUO X ICE, the Z890 AI TOP, the Z890 AERO D and the W880 AI TOP; the Z890 AORUS ELITE WIFI7 has the IT8696E only. ASRock Z890 fans sit on an NCT6686D, read-only in the kernel driver. | Newest platform — many specifics still settling. Treat upstream support as evolving. |
 
 The `coretemp` mainline driver covers CPU temperature reporting on all of
 these generations (per-core + Package id 0). It is **not** a fan-control
@@ -284,9 +284,12 @@ sudo systemctl reboot
 generation). Requires `it87-dkms-git`.
 
 **Secondary chip:** **IT87952E** on the Z890 AORUS MASTER (LibreHardwareMonitor
-PR #2512), and per the it87 SIV catalogue on the XTREME AI TOP, PRO ICE and ELITE
-X ICE. The **Z890 AORUS ELITE WIFI7** (ICE / PLUS / DUO X) has the IT8696E only.
-Same remediation as Z690/Z790.
+PR #2512), and per the it87 SIV catalogue alone on the Z890 AORUS XTREME AI TOP,
+PRO ICE, ELITE X ICE, TACHYON ICE and TACHYON DUO X ICE, the Z890 AI TOP, the
+Z890 AERO D and the W880 AI TOP (the it87 tracker has no report for those yet). All of them are in
+the daemon's dual-chip table, so a missing secondary raises its warning. The
+**Z890 AORUS ELITE WIFI7** (ICE / PLUS / DUO X) has the IT8696E only. Same
+remediation as Z690/Z790.
 
 **BIOS tips:** as for Z690/Z790 — no 0% curve points; Full Speed is a fail-safe,
 not a fix.

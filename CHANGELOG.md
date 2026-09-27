@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The hardware reference names every Gigabyte board the daemon expects two sensor chips on**
+  (DEC-434). The Hardware Compatibility guide now has rows for the X399, TRX40 and Z390 / Z490 AORUS
+  boards the daemon already knew. The guide, the Intel motherboard guide and the Gigabyte Z890 advice in
+  the app now list the eight LGA1851 boards the daemon has just added (Z890 AORUS XTREME AI TOP, PRO ICE,
+  ELITE X ICE, TACHYON ICE, TACHYON DUO X ICE, Z890 AI TOP, Z890 AERO D, W880 AI TOP). They say those
+  entries rest on the it87 sensor catalogue alone. The in-app advice no longer says other Z890 boards
+  will be added only once a board-specific report exists.
+
 ## [2.83.4] — 2026-09-27
 
 ### Fixed
