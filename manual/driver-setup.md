@@ -105,13 +105,14 @@ Both drivers can bind the same chip, which garbles readings and makes PWM writes
 
 ### it87 v2.0 renames your chips
 
-Builds of `it87-dkms-git` made on or after **2026-09-09** (the driver's v2.0 release, [PR #132](https://github.com/frankcrawford/it87/pull/132)) name Gigabyte chips after the board's own ID whenever the driver can read it — for example `it8696_a008090a` instead of `it8696`. The driver keeps working, but everything that is keyed on the chip name changes with it:
+Builds of `it87-dkms-git` made on or after **2026-09-09** (the driver's v2.0 release, [PR #132](https://github.com/frankcrawford/it87/pull/132)) name Gigabyte chips after the board's own ID whenever the driver can read it — for example `it8696_a008090a` instead of `it8696`.
 
-- **Every fan header gets a new id.** Profile members, fan names you gave, header role assignments — **including a pump role you assigned** — and cooling-device members all point at ids that no longer exist. **Until you re-check them, your profile no longer controls those fans:** they stay under the BIOS's control, and a control whose fans were all on those chips shows as *Not controlled* on the Controls page. After the first boot on the new build, re-assign pump roles first, then re-check fan names and each profile's members.
-- The built-in header labels for boards in Control-OFC's table (for example the X870E AORUS MASTER's `SYS_FAN5_PUMP`) stop applying, so those headers show as `pwm1`, `pwm2`…
-- The dual-chip warning on **System State** reports both chips missing although both are working.
+**With control-ofc-daemon 2.57.0 or newer, the rename changes nothing in Control-OFC.** The daemon strips that suffix where it reads the chip name, so every fan header, sensor and voltage rail keeps the id it had before the rebuild. Profiles, fan names, pump roles and cooling devices keep working, the built-in header labels (for example the X870E AORUS MASTER's `SYS_FAN5_PUMP`) still apply, and the dual-chip check on **System State** still recognises both chips. It also reads back anything an older daemon saved under the new names. Two things it cannot do:
 
-Control-OFC does not match the new names yet. Until it does, you can stay on the old names by building commit **`c567739`** (2026-08-25). It has the same driver code as the last build before the rename (only a build-script change came between them), including the [PR #128](https://github.com/frankcrawford/it87/pull/128) fixes:
+- **Members already lost stay lost.** If you rebuilt the driver while running an older Control-OFC, the app removed every profile member on the renamed chips the first time it saw the new ids, and saved the profiles without them. Re-add those fans to their profiles.
+- **An `/etc/sensors.d` file written for the old name stops matching.** `sensors` itself matches the new name, so a block that starts `chip "it8696-*"` no longer applies, in `sensors` or in Control-OFC. Upstream's per-board configs are written for the new names, and Control-OFC reads those.
+
+**On an older daemon, every fan header gets a new id after the rebuild.** Profile members, fan names, header roles — including a pump role you assigned — and cooling-device members all point at ids that no longer exist, so your profile stops controlling those fans, the built-in labels stop applying, and the dual-chip warning reports both chips missing. Update control-ofc-daemon before you rebuild the driver. If you cannot yet, stay on the old names by building commit **`c567739`** (2026-08-25). It has the same driver code as the last build before the rename (only a build-script change came between them), including the [PR #128](https://github.com/frankcrawford/it87/pull/128) fixes:
 
 ```bash
 yay -G it87-dkms-git          # or: git clone https://aur.archlinux.org/it87-dkms-git.git
@@ -121,7 +122,7 @@ sed -i 's|it87.git"|it87.git#commit=c567739c639533177abd66894a6a8d561337285f"|' 
 makepkg -si
 ```
 
-A later `yay -Syu` will offer to "update" the package back to the current master. Skip it (or add `it87-dkms-git` to `IgnorePkg` in `/etc/pacman.conf`) until you are ready to re-check your ids.
+A later `yay -Syu` will offer to "update" the package back to the current master. Skip it (or add `it87-dkms-git` to `IgnorePkg` in `/etc/pacman.conf`) until control-ofc-daemon is updated.
 
 > **Secondary-chip fan control on dual-Super-I/O Gigabyte boards is bound by board pairing, not fixed for the family.** Some boards work — the X870E AORUS ELITE X3D reports both chips and controls both. On others the secondary can be masked by an ITE eSPI→LPC bridge latched in configuration mode, measured on an X870E AORUS MASTER. **That is recoverable, but not the way you would guess**: reinstalling, `mmio=on` and `force_id` all change nothing. The latch is written by the `nct6775`/`w83627ehf` modules (or `sensors-detect`). Stop those, reboot, and if the chip is still missing, power down at the wall. Follow the ladder in [Hardware Troubleshooting → *Some of my fan headers are missing*](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
@@ -239,7 +240,7 @@ If you created `/etc/modprobe.d/control-ofc-superio-local.conf` while [recoverin
 ## Staying current
 
 - **Kernel updates:** DKMS rebuilds the module automatically when a new kernel + matching headers are installed. If fans disappear right after a kernel update, the usual cause is missing/mismatched headers — re-check Step 2.
-- **Driver updates:** `-git` AUR packages only pick up upstream fixes when *reinstalled* (`yay -S it87-dkms-git`). Do this before troubleshooting any fan-control regression — except `it87-dkms-git` on a Gigabyte board: a build from 2026-09-09 on renames your chips and changes every fan header's id, so read [it87 v2.0 renames your chips](#it87-v20-renames-your-chips) and stay on the pinned commit until Control-OFC recognises the new names. (If a current build *fails to compile*, see upstream [issue #108](https://github.com/frankcrawford/it87/issues/108) for a known `-Werror=unused-function` toolchain failure.)
+- **Driver updates:** `-git` AUR packages only pick up upstream fixes when *reinstalled* (`yay -S it87-dkms-git`). Do this before troubleshooting any fan-control regression. On a Gigabyte board, a build from 2026-09-09 on renames your chips: with control-ofc-daemon 2.57.0 or newer that changes nothing, but on an older daemon it changes every fan header's id, so update the daemon first — see [it87 v2.0 renames your chips](#it87-v20-renames-your-chips). (If a current build *fails to compile*, see upstream [issue #108](https://github.com/frankcrawford/it87/issues/108) for a known `-Werror=unused-function` toolchain failure.)
 
 ## AMD GPU fan control prerequisite (RDNA3+)
 

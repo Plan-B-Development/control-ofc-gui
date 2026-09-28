@@ -125,6 +125,7 @@ def _label(no_libsensors, vendor, board, chip, idx):
     return resolve_hwmon_header_label(
         sysfs_label=f"pwm{idx}",  # the daemon's synthesised placeholder
         chip_name=chip,
+        sysfs_chip_name="",
         pwm_index=idx,
         board_vendor=vendor,
         board_name=board,

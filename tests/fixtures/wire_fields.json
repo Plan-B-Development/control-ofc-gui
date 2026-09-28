@@ -92,6 +92,7 @@
         "id",
         "label",
         "chip_name",
+        "sysfs_chip_name",
         "device_id",
         "pwm_index",
         "supports_enable",
@@ -114,6 +115,7 @@
       ],
       "must_be_read": [
         "chip_name",
+        "sysfs_chip_name",
         "device_id",
         "pwm_index",
         "supports_enable",
@@ -151,6 +153,7 @@
         "id",
         "label",
         "chip_name",
+        "sysfs_chip_name",
         "device_id",
         "pwm_index",
         "supports_enable",
@@ -173,6 +176,7 @@
       ],
       "must_be_read": [
         "chip_name",
+        "sysfs_chip_name",
         "device_id",
         "pwm_index",
         "supports_enable",

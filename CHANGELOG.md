@@ -2,7 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Fan names, profiles and settings survive the it87 v2.0 driver rename** (DEC-442). With
+  control-ofc-daemon 2.57.0 or newer, an `it87-dkms-git` rebuild that renames Gigabyte chips (for
+  example `it8696_a008090a`) no longer changes any fan header's id. The app also reads back
+  anything it saved under the new names while running an older daemon: fan names, hidden chart
+  series, series colours, hidden sensors, sensor class overrides, hardware notes, and the fan and
+  sensor ids in your profiles. Where both spellings hold a fan name, the newer one is kept.
+- **Labels from `/etc/sensors.d` files written for the new chip names apply** (DEC-442).
+  Upstream now ships per-board configs for the renamed chips, including pump labels such as
+  `SYS_FAN5_PUMP`. The app matches them against the chip name as the kernel published it, the
+  same way `sensors` does.
+
 ### Changed
+
+- **The app now requires control-ofc-daemon 2.57.0 or newer** (DEC-442). The package depends on it from this release.
+  The app stores fan ids under the canonical chip name, which an older daemon on a renamed it87
+  chip does not publish. If the app meets such a daemon anyway (for example, one not yet restarted
+  after an upgrade), those fans go uncontrolled until the daemon is updated. The app no longer
+  removes a profile member whose fan the daemon lists under the other chip spelling.
+- **The it87 v2.0 caution follows the connected daemon** (DEC-442). With a daemon that handles the
+  rename, the board notes, chip tooltips and PWM test advice say that ids stay the same across a
+  rebuild, and the dual-chip warning drops its "false alarm check" paragraph. With an older daemon
+  they still tell you to re-check pump roles, fan names and profile members.
 
 - **The System State pop-out is now titled "System Health — Full Report"** (DEC-441). It used to be
   called "Hardware Readiness", which is the name of the Hardware page's checklist. The two answer

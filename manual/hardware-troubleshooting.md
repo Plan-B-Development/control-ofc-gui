@@ -272,7 +272,7 @@ Since v2.74.0 the count is **dated**, not merely counted. The daemon reports how
 
 Since v2.56.0 each header's own card in **Cooling Hardware** shows this count too, in its **Details ▸ Capabilities** block — a header that has never been reclaimed reads *Not observed*. A header currently under firmware control **and** with reclaims on record shows a **Control reclaimed** status; a header that was reclaimed in the past but is back under the daemon's control does not, because that is contention the daemon won rather than a live problem.
 
-The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically, so control still works in the WARN/HIGH cases. The remedy is per vendor, and the board notes the report shows for your chip carry it. On Gigabyte boards, an `it87-dkms-git` build from 2026-08-24 on carries the fixes (PR #128) for the firmware logic that retakes headers; if yours is older, rebuild it — but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first, because a build from 2026-09-09 on changes every header id. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: on some boards it locks Linux out of that header.
+The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically, so control still works in the WARN/HIGH cases. The remedy is per vendor, and the board notes the report shows for your chip carry it. On Gigabyte boards, an `it87-dkms-git` build from 2026-08-24 on carries the fixes (PR #128) for the firmware logic that retakes headers; if yours is older, rebuild it — but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first, because a build from 2026-09-09 on changes every header id unless control-ofc-daemon is 2.57.0 or newer. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: on some boards it locks Linux out of that header.
 
 ## Vendor quirks
 
@@ -394,20 +394,20 @@ Open the **System State** page:
 
 - If the **Hardware Registry** shows the expected chip but its **Driver Status is "not loaded"**, the kernel module is missing. The row names the module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
 - If the driver is loaded but the summary line says **0 writable**, the bound driver publishes the pwm files read-only. On MSI and ASRock Nuvoton boards that usually means the in-kernel `nct6683` is bound — it never makes PWM writable outside Mitac OEM systems — so the out-of-tree driver the registry names is needed. See [Driver Setup](driver-setup.md).
-- If headers are writable but a fan test's result is `pwm_enable_reverted`, the firmware is taking control back — see the board notes on that page. On Gigabyte IT8689E boards, an `it87-dkms-git` build from before 2026-08-24 is the usual cause: rebuild it, but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first, because a build from 2026-09-09 on changes every header id. Setting the header to *Full Speed* in BIOS Smart Fan is a fail-safe, not a fix, and on some boards it locks Linux out of that header.
+- If headers are writable but a fan test's result is `pwm_enable_reverted`, the firmware is taking control back — see the board notes on that page. On Gigabyte IT8689E boards, an `it87-dkms-git` build from before 2026-08-24 is the usual cause: rebuild it, but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first: a build from 2026-09-09 on changes every header id unless control-ofc-daemon is 2.57.0 or newer. Setting the header to *Full Speed* in BIOS Smart Fan is a fail-safe, not a fix, and on some boards it locks Linux out of that header.
 - If an ACPI resource conflict blocks the driver, an *ACPI I/O port conflict* card says so. For `it87` prefer `options it87 ignore_resource_conflict=1`; `acpi_enforce_resources=lax` is the system-wide fallback.
 
 ### "Some of my fan headers are missing — only 5 of 8 show up"
 
 Open the **System State** page. If a *Super-I/O chip not enumerated* card (the dual-chip warning) is under the **System Health Overview**, your motherboard is one of the Gigabyte boards with two ITE chips (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) and one of them did not appear.
 
-**First, rule out a false alarm (it87 builds from 2026-09-09).** From its v2.0 release the out-of-tree `it87` driver names Gigabyte chips with a suffix — `it8696_a008090a` instead of `it8696`. Control-OFC does not recognise the new names yet, so it reports both chips missing while they are working. Check:
+**On a daemon older than 2.57.0, first rule out a false alarm (it87 builds from 2026-09-09).** From its v2.0 release the out-of-tree `it87` driver names Gigabyte chips with a suffix — `it8696_a008090a` instead of `it8696`. A daemon older than 2.57.0 does not recognise the new names, so the card reports both chips missing while they are working (the card then says so itself). Check:
 
 ```
 cat /sys/class/hwmon/hwmon*/name
 ```
 
-If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are present — ignore the banner. The rename also changes every fan header's id; see [Driver Setup → *it87 v2.0 renames your chips*](driver-setup.md#it87-v20-renames-your-chips) for what to re-check.
+If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are present — update control-ofc-daemon, and the card goes away. The rename also changes every fan header's id on such a daemon; see [Driver Setup → *it87 v2.0 renames your chips*](driver-setup.md#it87-v20-renames-your-chips). From 2.57.0 the daemon recognises the new names, so a card you see there is a real missing chip.
 
 **Case A — the driver is not loaded.** Run `sudo dmesg | grep -i it87` (or `journalctl -k -b | grep -i it87`). Each chip the driver found prints a line such as `Found IT8696E chip at 0xa40 … revision 0`. If there are no `it87` lines at all, or `modprobe` says "module not found":
 

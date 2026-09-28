@@ -79,6 +79,10 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         "duty_reconciliation": "2.53.0",
         # DEC-407, control.stall_probe. The opt-in below-20 % stall/restart probe.
         "stall_probe": "2.54.0",
+        # DEC-442, control.canonical_chip_names. Chip names and ids survive the
+        # it87 v2.0 board-suffix rename. The version is the release that ships
+        # DEC-442; `/ofc:release` confirms it.
+        "canonical_chip_names": "2.57.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -130,6 +134,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "exit_floor": "exit_floor",
         "duty_reconciliation": "duty_reconciliation",
         "stall_probe": "stall_probe",
+        "canonical_chip_names": "canonical_chip_names",
     }
 )
 
@@ -154,6 +159,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "exit_floor": "setting an exit minimum",
         "duty_reconciliation": "correcting a fan duty something else changed",
         "stall_probe": "the stall/restart probe below 20 %",
+        "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
     }
 )

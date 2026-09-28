@@ -29,6 +29,7 @@ from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.constants import DEFAULT_CURVE_POINTS
+from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
     is_liquid_cooler_chip,
@@ -711,7 +712,14 @@ class Profile:
             Number of members dropped across all controls. Callers
             should re-save affected profiles when this is non-zero so
             the cleanup persists across restarts.
+
+        Ids are compared canonical on both sides (DEC-442): a daemon older
+        than DEC-442 on an it87 v2.0 driver publishes the suffixed chip
+        spelling while this GUI holds the canonical one, and the same header
+        must not read as missing — that would delete the member.
         """
+        writable = {canonical_hwmon_id(i) for i in writable_header_ids}
+        every = None if all_header_ids is None else {canonical_hwmon_id(i) for i in all_header_ids}
         dropped = 0
         for control in self.controls:
             kept: list[ControlMember] = []
@@ -719,7 +727,7 @@ class Profile:
                 if m.source != "hwmon":
                     kept.append(m)
                     continue
-                if m.member_id in writable_header_ids:
+                if canonical_hwmon_id(m.member_id) in writable:
                     kept.append(m)
                     continue
                 # Member targets an hwmon header that is either missing
@@ -727,7 +735,7 @@ class Profile:
                 # control loop will fail every cycle — drop the member.
                 reason = (
                     "missing from current hwmon discovery"
-                    if all_header_ids is not None and m.member_id not in all_header_ids
+                    if every is not None and canonical_hwmon_id(m.member_id) not in every
                     else "is not writable"
                 )
                 log.warning(
@@ -776,6 +784,8 @@ class Profile:
             # Apply the v4 floor pass to v1-migrated profiles too so the
             # one-shot upgrade path always lands at the current schema.
             profile.controls = [_migrate_control_to_v4(c) for c in profile.controls]
+            # DEC-442: ids before anything below reads them.
+            _canonicalize_hwmon_ids(profile.controls, profile.curves)
             # DEC-102 sanitization runs on every load, regardless of schema.
             _drop_dead_hwmon_members(profile.controls)
             # DEC-423: and so does the pump/CPU floor (see the main path below).
@@ -789,6 +799,11 @@ class Profile:
 
         controls = [LogicalControl.from_dict(c) for c in data.get("controls", [])]
         curves = [CurveConfig.from_dict(c) for c in data.get("curves", [])]
+
+        # DEC-442: an id carrying the it87 v2.0 chip suffix is brought to the id
+        # the daemon publishes now, before the floor passes below classify the
+        # members and before the runtime sanitizer would see it as dead.
+        _canonicalize_hwmon_ids(controls, curves)
 
         if version < 4:
             controls = [_migrate_control_to_v4(c) for c in controls]
@@ -1004,6 +1019,51 @@ def _is_known_dead_hwmon_member(member: ControlMember) -> bool:
     if member.source != "hwmon":
         return False
     return any(member.member_id.startswith(p) for p in _DEAD_HWMON_MEMBER_PREFIXES)
+
+
+def _canonicalize_hwmon_ids(controls: list[LogicalControl], curves: list[CurveConfig]) -> None:
+    """Bring hwmon member and sensor ids to the spelling the daemon publishes (DEC-442).
+
+    A pre-DEC-442 daemon on an it87 v2.0 driver published ids with the board
+    suffix in the chip segment (``hwmon:it8696_a008090a:…``); a current daemon
+    publishes ``hwmon:it8696:…``. Left alone, such a member is not a live header
+    id, and the DEC-102 runtime sanitizer would delete it and publish the loss.
+
+    Two members of one control whose *different* spellings collapse to the same
+    id keep ONE: the one whose label names a pump or CPU (it carries the 30%
+    floor), otherwise the suffixed one, which can only have been written after
+    the rebuild. Members already spelled identically are left alone. The same
+    rule as the daemon's ``profile::canonicalize_profile_document``.
+    """
+    for control in controls:
+        kept: list[ControlMember] = []
+        # canonical id -> [index into kept, the raw spelling kept there]
+        first: dict[str, list] = {}
+        for m in control.members:
+            raw = m.member_id
+            canonical = canonical_hwmon_id(raw)
+            suffixed = canonical != raw
+            m.member_id = canonical
+            seen = first.get(canonical)
+            if seen is None or seen[1] == raw:
+                if seen is None:
+                    first[canonical] = [len(kept), raw]
+                kept.append(m)
+                continue
+            at = seen[0]
+            new_floored = _label_indicates_cpu_or_pump(m.member_label)
+            kept_floored = _label_indicates_cpu_or_pump(kept[at].member_label)
+            if (new_floored and not kept_floored) or (new_floored == kept_floored and suffixed):
+                kept[at] = m
+                seen[1] = raw
+            log.warning(
+                "DEC-442: control '%s' named header '%s' under two chip spellings; kept one",
+                control.name or control.id,
+                canonical,
+            )
+        control.members = kept
+    for curve in curves:
+        curve.sensor_id = canonical_hwmon_id(curve.sensor_id)
 
 
 def _drop_dead_hwmon_members(controls: list[LogicalControl]) -> int:
@@ -2036,8 +2096,16 @@ class ProfileService(QObject):
                 post_sanitize_member_ids = {
                     m.member_id for c in profile.controls for m in c.members
                 }
-                members_sanitized = pre_sanitize_member_ids != post_sanitize_member_ids
-                if schema_migrated or members_sanitized:
+                # DEC-442: an id brought to its canonical spelling is not a
+                # dropped member — compare canonical ids for the DEC-102 check,
+                # and re-save a rewrite on its own so it persists.
+                members_sanitized = {
+                    canonical_hwmon_id(i) for i in pre_sanitize_member_ids
+                } != post_sanitize_member_ids
+                ids_canonicalised = not members_sanitized and (
+                    pre_sanitize_member_ids != post_sanitize_member_ids
+                )
+                if schema_migrated or members_sanitized or ids_canonicalised:
                     # Local-only write: load() never re-uploads (no auto-sync).
                     self._write_local(profile)
                     if schema_migrated:
@@ -2045,6 +2113,11 @@ class ProfileService(QObject):
                     if members_sanitized:
                         log.info(
                             "Profile %s persisted after DEC-102 member sanitization",
+                            profile.name,
+                        )
+                    if ids_canonicalised:
+                        log.info(
+                            "Profile %s persisted with canonical hwmon chip names (DEC-442)",
                             profile.name,
                         )
                 loaded = True

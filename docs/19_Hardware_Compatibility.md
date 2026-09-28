@@ -138,27 +138,33 @@ master carries a built-in DMI ACPI-exemption table (`it87_acpi_ignore`) for
 known-safe boards. The AUR package is a `-git` build, so a reinstall picks up the
 current snapshot — **but see the v2.0 rename below before rebuilding.**
 
-**⚠ it87 v2.0 renames Gigabyte chips (2026-09-09).**
+**it87 v2.0 renames Gigabyte chips (2026-09-09).**
 [PR #132](https://github.com/frankcrawford/it87/pull/132) names each chip after
 the board's Gigabyte SIV whenever the driver can read it — `it8696_a008090a`
-instead of `it8696`. The driver keeps working, but Control-OFC's stable header
-ids embed the chip name, so every profile member, fan alias, header-role
+instead of `it8696`. Control-OFC's stable header ids embed the chip name, so
+**control-ofc-daemon 2.57.0 and newer strip the suffix where they read the chip
+name** (DEC-442): every header, sensor, fan and voltage id stays what it was
+before the rebuild, the built-in board labels and the dual-chip check keep
+matching, and ids an older daemon saved under the suffixed spelling (header
+roles, preferred sensors, cooling devices, profiles) are read back canonical.
+The daemon publishes the sysfs spelling beside the canonical one as
+`sysfs_chip_name`, and the GUI matches `/etc/sensors.d` blocks against that —
+exactly as `sensors` does, so a block written for the old `it8696-*` name stops
+applying. **On an older daemon** every profile member, fan alias, header-role
 assignment (including a user-assigned pump role) and cooling-device member on
-those boards points at an id that no longer exists. Until those are re-checked
-the profile no longer controls the fans: a control whose members were all on
-those chips commands nothing — daemon ≥ 2.55.0 lists it in `skipped_controls[]`
-as `backend_unavailable` and the Controls page shows *Not controlled* — and the
-fans stay under the BIOS's control. The built-in board labels and the dual-chip
-check also stop matching. Until Control-OFC matches the new names
-(register row BRD-a), either re-check those settings after the first boot on a
-v2.0 build, or build commit `c567739` (2026-08-25). It has the same driver code as
-the last build before the rename, including PR #128. The manual's Driver Setup
-page has the commands.
+those boards points at an id that no longer exists after a rebuild: a control
+whose members were all on those chips commands nothing (daemon ≥ 2.55.0 lists it
+in `skipped_controls[]` as `backend_unavailable`) and the fans stay under the
+BIOS's control; the built-in labels and the dual-chip check stop matching too.
+Update the daemon first, or build commit `c567739` (2026-08-25), which has the
+same driver code as the last build before the rename, including PR #128. Profile
+members the GUI already dropped after a rebuild under an older daemon are not
+recovered. The manual's Driver Setup page has the commands.
 
 **Known issue — secondary chip not enumerated.** On some systems only the primary
 chip appears in `sensors` output (5 of 8 fan headers visible on an X870E AORUS
-MASTER, etc.). First rule out the v2.0 rename above — suffixed names mean both
-chips are present. Otherwise the secondary is blocked: an ITE eSPI→LPC bridge is
+MASTER, etc.). On a daemon older than 2.57.0, first rule out the v2.0 rename
+above — suffixed names mean both chips are present. Otherwise the secondary is blocked: an ITE eSPI→LPC bridge is
 latched in configuration mode and answering in place of the chip. The latch is
 written by anything that sends the Super-I/O unlock key to port 0x2E/0x4E —
 `nct6775` and `w83627ehf` do so before reading the device ID even on boards they

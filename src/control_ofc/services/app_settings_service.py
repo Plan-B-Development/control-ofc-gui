@@ -10,6 +10,12 @@ from pathlib import Path
 
 from control_ofc.colors import is_valid_color
 from control_ofc.constants import BUILTIN_DEFAULT_THEME_NAME
+from control_ofc.knowledge.chip_name import (
+    canonical_hwmon_id,
+    canonical_series_key,
+    canonicalize_keyed,
+    canonicalize_list,
+)
 from control_ofc.paths import app_settings_path, atomic_write, load_json_capped
 from control_ofc.services.pwm_report.setup_facts import (
     coerce_cooler_notes,
@@ -488,15 +494,25 @@ class AppSettings:
             ),
             theme_name=_migrate_theme_name(data),
             theme_name_scheme=1,
-            fan_aliases=_as_str_dict(data.get("fan_aliases"), {}),
+            # DEC-442: every id-keyed store is canonicalised on load, so an id a
+            # pre-DEC-442 daemon published with the it87 v2.0 chip suffix names
+            # the header the daemon publishes now. The suffixed entry wins a
+            # collision — see `chip_name.canonicalize_keyed`.
+            fan_aliases=canonicalize_keyed(
+                _as_str_dict(data.get("fan_aliases"), {}), canonical_hwmon_id
+            ),
             fan_zones=_as_str_dict(data.get("fan_zones"), {}),
             fan_aliases_seeded=_as_bool(data.get("fan_aliases_seeded"), False),
-            hidden_chart_series=_as_str_list(data.get("hidden_chart_series"), []),
+            hidden_chart_series=canonicalize_list(
+                _as_str_list(data.get("hidden_chart_series"), []), canonical_series_key
+            ),
             chart_series_seeded=_as_bool(data.get("chart_series_seeded"), False),
             show_gpu_zero_rpm_warning=_as_bool(data.get("show_gpu_zero_rpm_warning"), True),
             show_aio_pump_info=_as_bool(data.get("show_aio_pump_info"), True),
             daemon_import_prompted=_as_bool(data.get("daemon_import_prompted"), False),
-            series_colors=_as_color_dict(data.get("series_colors"), {}),
+            series_colors=canonicalize_keyed(
+                _as_color_dict(data.get("series_colors"), {}), canonical_series_key
+            ),
             last_page_index=last_page,
             window_geometry=_as_geometry(data.get("window_geometry"), [100, 100, 1200, 800]),
             profiles_dir_override=_as_str(data.get("profiles_dir_override"), ""),
@@ -508,10 +524,12 @@ class AppSettings:
             card_size=_as_enum(data.get("card_size"), _CARD_SIZES, "comfortable"),
             controls_card_sizes=_as_card_sizes(data.get("controls_card_sizes"), {}),
             acknowledged_kernel_warnings=_as_str_list(data.get("acknowledged_kernel_warnings"), []),
-            diagnostics_hidden_sensor_ids=_as_str_list(
-                data.get("diagnostics_hidden_sensor_ids"), []
+            diagnostics_hidden_sensor_ids=canonicalize_list(
+                _as_str_list(data.get("diagnostics_hidden_sensor_ids"), []), canonical_hwmon_id
             ),
-            sensor_class_overrides=_as_sensor_overrides(data.get("sensor_class_overrides"), {}),
+            sensor_class_overrides=canonicalize_keyed(
+                _as_sensor_overrides(data.get("sensor_class_overrides"), {}), canonical_hwmon_id
+            ),
             # DEC-359 one-way migration: a previously-acknowledged note folds
             # into the dismissal list. Both hide the note; the only difference
             # under the new rule is persistence, and the OLD acknowledgement was
@@ -540,7 +558,9 @@ class AppSettings:
             ],
             logs_search_text=_as_str(data.get("logs_search_text"), "", maxlen=200),
             logs_source_filter=_as_str(data.get("logs_source_filter"), "", maxlen=64),
-            hardware_notes=coerce_hardware_notes(data.get("hardware_notes")),
+            hardware_notes=canonicalize_keyed(
+                coerce_hardware_notes(data.get("hardware_notes")), canonical_hwmon_id
+            ),
             cooler_notes=coerce_cooler_notes(data.get("cooler_notes")),
         )
 

@@ -296,6 +296,16 @@ GUI treats every flag as false / old behaviour (AIP-180):
   PWM Test Report offers the probe only where `daemon_supports("stall_probe", caps) is True`,
   and sends `acknowledge_below_floor: true` only for a header the user confirmed on its
   consent page — a gate enforced in the window and again in the report's runner.
+- `canonical_chip_names` (bool, DEC-442, daemon ≥ 2.57.0) — every hwmon chip name the
+  daemon publishes, and every id built from one, is **canonical**: the it87 v2.0 board suffix
+  (`it8696_a008090a`) is stripped where the daemon reads the chip name, stored ids a
+  pre-DEC-442 daemon saved under the suffixed spelling are canonicalised on read and on every
+  incoming write, and `/hwmon/headers` carries the sysfs spelling as `sysfs_chip_name` — see
+  [Canonical hwmon chip names](#canonical-hwmon-chip-names-dec-442). Absent → `false`.
+  **GUI use (DEC-442, GUI ≥ 2.84.0):** registered in `daemon_features` as
+  `canonical_chip_names`; `AppState.set_capabilities` records it, and the "a driver rebuild
+  changes your ids" caution and the dual-chip warning's false-alarm paragraph render only
+  where it is not `True` — on an older daemon both remain true.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -1202,6 +1212,19 @@ Use to discover:
   member keeps driving that member. Before 2.55.0 the control published a duty
   its read-only header never received. Control-path discovery and the stall
   probe refuse a read-only header with `400 feature_unavailable`.
+- `chip_name` — **canonical** (DEC-442, daemon ≥ 2.57.0): on an it87 v2.0
+  Gigabyte chip the driver's board suffix is stripped, so this reads `it8696`
+  where sysfs says `it8696_a008090a`, and it is the name embedded in `id`.
+  Compare hardware tables against it.
+- `sysfs_chip_name` (string, DEC-442, daemon ≥ 2.57.0) — the hwmon `name`
+  attribute exactly as sysfs published it; differs from `chip_name` only on an
+  it87 v2.0 Gigabyte chip. **Match `/etc/sensors.d` `chip "…"` blocks against
+  this and nothing else** — libsensors does, and upstream's per-board configs are
+  written against the suffixed name, so matching them against `chip_name` would
+  apply another board's labels. Never build or compare an id from it. Omitted by
+  older daemons; the GUI then uses `chip_name` (`HwmonHeader.sysfs_chip_name`,
+  `hwmon_label_resolver.resolve_hwmon_header_label`). The same struct serves
+  `GET /inventory/hwmon`'s `pwm_controls`, so the field appears there too.
 - `pwm_mode` (optional integer) — `0` = DC (voltage) mode, `1` = PWM
   mode, omitted when the chip does not expose `pwmN_mode`. Consumed by
   the dashboard fan table and the diagnostics hwmon panel to label
@@ -1438,9 +1461,13 @@ and the GUI parser defaults to `[]`:
   warning banner with the recovery ladder (DEC-421: stop the trigger, reboot,
   then remove mains power; the `mmio=on` modprobe.d line only on pre-2026-03
   driver builds). Since daemon 2.56.1 (DEC-421) a few single-chip Gigabyte boards are listed
-  with **one** chip, so the list is not always a pair. The comparison is exact,
-  so the it87 v2.0 chip names (`it8696_a008090a`, 2026-09-09 builds) do not
-  match it yet (register row BRD-a).
+  with **one** chip, so the list is not always a pair. The comparison is exact.
+  From daemon 2.57.0 (DEC-442) `chips_detected[].chip_name` is canonical, so an
+  it87 v2.0 chip (`it8696_a008090a`, 2026-09-09 builds) matches; each entry also
+  carries `sysfs_chip_name`, the name as sysfs published it, for display and
+  support use. The GUI does not read it yet (register row `BRD-x`); it reads the
+  `/hwmon/headers` copy. On an older daemon the suffixed names do not match and
+  the warning is a false alarm, which the GUI's copy then says.
 - `kernel_detected_chips: list[str]` — best-effort kernel-level chip
   detection parsed from `/dev/kmsg` `it87:` lines. **In the shipped
   deployment this is always empty** (DEC-421): the packaged systemd unit sets
@@ -3064,6 +3091,58 @@ The GUI must reflect these constraints honestly.
 The `PollingService` owns the full read path (`/poll`, history). The GUI is poll-only and detects
 transitions by poll-diff. (SSE was never consumed — DEC-164 deferred it past 2.0.0, and the `/events`
 endpoint was removed entirely in daemon v2.5.1, DEC-198.)
+
+## Canonical hwmon chip names (DEC-442)
+**Contract change in both repos** (daemon ≥ 2.57.0, capability `control.canonical_chip_names`;
+GUI ≥ 2.84.0). it87 v2.0 (frankcrawford/it87 PR #132, 2026-09-09) names every ITE chip on a
+Gigabyte board `<chip>_<siv>` whenever the driver can read the board's SIV
+(`it8696_a008090a`), and every stable hwmon id embeds the chip name. The rule is upstream's own
+(`install-sensorsd.sh`): a name matching `^it[0-9]+_[0-9A-Fa-f]{8}$` is that chip with the
+suffix. A name that starts like an ITE chip and carries an underscore but does not fit is left
+as published and logged once by the daemon.
+
+- **Where the name is read.** The daemon strips the suffix at the four places it reads a hwmon
+  `name` (PWM headers, temperature sensors, monitor-only tachs, voltage rails), so every id and
+  every `chip_name` it publishes is what the same chip published before the rename. The device
+  segment (`it87.2624`) is the platform device and never changed. `chip_name` therefore no
+  longer always equals the sysfs `name`; `sysfs_chip_name` on `/hwmon/headers` (and on each
+  `chips_detected` entry of `/diagnostics/hardware`) carries the sysfs spelling.
+- **Stored state, on read.** Ids a pre-DEC-442 daemon saved under the suffixed spelling are
+  canonicalised when read, and the file is not rewritten: `runtime.toml` header roles,
+  preferred CPU/motherboard sensors and cooling-device members and sensors; profiles at the
+  engine's load (`load_profile` — boot restore and `POST /profile/activate`, including the
+  GUI's by-path activation). Where both spellings of one header hold a role, **the more
+  protective role wins** — pump, then CPU fan, then the rest — and on a tie the suffixed one.
+  The two daemon-owned boot-pruned stores (`control_paths.json`, `pwm_baselines.json`) are
+  re-keyed when loaded, before the prune, so their records survive it.
+- **Incoming writes.** `POST /config/header-role`, `POST /config/preferred-{cpu,mb}-sensor`,
+  `POST /config/cooling-device` and `POST`/`PUT /profiles` canonicalise the ids they are sent.
+  A header-role set or clear replaces **every** spelling of that header, so clearing a role a
+  pre-DEC-442 daemon saved suffixed really clears it.
+- **Profile documents are lossless except for ids.** `POST`/`PUT /profiles` and
+  `GET /profiles/{id}` rewrite only `controls[].members[].member_id` and `curves[].sensor_id`;
+  every other field, known or not, is kept as sent. `GET` canonicalises what it serves and
+  leaves the file as it is, so a profile stored before DEC-442 is served with the ids
+  `/hwmon/headers` publishes — a client comparing the two (an older GUI's DEC-102 sweep) does
+  not see its members as missing. Two members of one control whose *different* spellings
+  collapse to one id keep one: the one whose label names a pump or CPU, otherwise the
+  suffixed one. Members already spelled identically are left alone.
+- **GUI side (DEC-442, GUI ≥ 2.84.0).** `knowledge/chip_name.py` applies the same rule, pinned
+  to the daemon's by the shared oracle `tests/fixtures/chip_name_canonical.json`
+  (byte-identical in both repos, `parity.yml`). `Profile.from_dict` canonicalises member and
+  curve sensor ids on every load — so a profile hydrated from the daemon or read from the local
+  copy never reaches the DEC-102 runtime sanitizer with a suffixed member — and
+  `AppSettings.from_dict` canonicalises every id-keyed setting (fan names, hidden chart series,
+  series colours, hidden sensors, sensor class overrides, hardware notes), the suffixed entry
+  winning a collision. This happens on load whichever daemon is connected, so **the GUI
+  requires daemon ≥ 2.57.0** (its package depends on it from the release that ships DEC-442;
+  `/ofc:release` moves the PKGBUILD floor and the README pairing together). Against an older daemon on an it87
+  v2.0 driver, which still publishes suffixed ids, the GUI's canonical ids name nothing that
+  daemon publishes: fan names do not apply and such members go uncontrolled until the daemon is
+  updated. They are not deleted. `Profile.sanitize_hwmon_members` (the DEC-102 runtime sweep)
+  compares canonical ids on both sides, so a header published under either spelling counts as
+  present. The caution text is gated on the capability and describes an older daemon
+  truthfully.
 
 ## Model normalisation
 Define internal view-model friendly data classes for:

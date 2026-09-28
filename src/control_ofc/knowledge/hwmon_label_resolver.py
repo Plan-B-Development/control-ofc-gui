@@ -598,6 +598,7 @@ def resolve_hwmon_header_label(
     *,
     sysfs_label: str,
     chip_name: str,
+    sysfs_chip_name: str,
     pwm_index: int,
     board_vendor: str = "",
     board_name: str = "",
@@ -617,7 +618,16 @@ def resolve_hwmon_header_label(
     Args:
         sysfs_label: ``HwmonHeader.label`` from the daemon (passes
             through when non-empty and not a placeholder).
-        chip_name: ``HwmonHeader.chip_name`` (e.g. ``it8696``).
+        chip_name: ``HwmonHeader.chip_name`` (e.g. ``it8696``) — canonical;
+            the in-repo fallback table is keyed by it.
+        sysfs_chip_name: ``HwmonHeader.sysfs_chip_name`` — the name as sysfs
+            published it (``it8696_a008090a`` on an it87 v2.0 Gigabyte chip,
+            DEC-442). **libsensors blocks are matched against this and nothing
+            else**: upstream writes them against the suffixed name, exactly as
+            ``sensors`` itself matches, and matching them against the canonical
+            name would apply another board's labels. ``""`` (an older daemon)
+            falls back to *chip_name*. Required, so a caller cannot silently
+            match on the wrong spelling.
         pwm_index: ``HwmonHeader.pwm_index`` (the N in ``pwmN``).
         board_vendor: DMI ``board_vendor`` from
             ``/diagnostics/hardware``. Empty ⇒ skip vendor match.
@@ -630,9 +640,10 @@ def resolve_hwmon_header_label(
     fan_key = f"fan{pwm_index}"
     # Tier 3 — libsensors. Communities almost always write fan-N labels
     # rather than pwm-N, so check fan first.
+    sensors_chip = sysfs_chip_name or chip_name
     label = resolve_label_from_libsensors(
-        chip_name, fan_key, paths=sensors_paths
-    ) or resolve_label_from_libsensors(chip_name, pwm_key, paths=sensors_paths)
+        sensors_chip, fan_key, paths=sensors_paths
+    ) or resolve_label_from_libsensors(sensors_chip, pwm_key, paths=sensors_paths)
     if label:
         return label
     # Tier 4 — fallback table. Its keys are exclusively ``pwm{N}`` (unlike the

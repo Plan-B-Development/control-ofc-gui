@@ -303,6 +303,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="FROM_SYSFS",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",
@@ -319,6 +320,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",
@@ -330,6 +332,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",
@@ -341,6 +344,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="it87952",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",
@@ -363,6 +367,7 @@ class TestResolverPriority:
             label = resolve_hwmon_header_label(
                 sysfs_label="",
                 chip_name="it87952",
+                sysfs_chip_name="",
                 pwm_index=idx,
                 board_vendor="Gigabyte Technology Co., Ltd.",
                 board_name="X870E AORUS MASTER",
@@ -374,6 +379,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="nct6798",
+            sysfs_chip_name="",
             pwm_index=2,
             board_vendor="Some Vendor Inc.",
             board_name="Some Other Board",
@@ -392,6 +398,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             sensors_paths=[str(cfg)],
         )
@@ -403,6 +410,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             sensors_paths=[str(cfg)],
         )
@@ -413,6 +421,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="pwm1",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",
@@ -429,6 +438,7 @@ class TestResolverPriority:
         label = resolve_hwmon_header_label(
             sysfs_label="pwm1",
             chip_name="it8696",
+            sysfs_chip_name="",
             pwm_index=1,
             board_vendor="Gigabyte Technology Co., Ltd.",
             board_name="X870E AORUS MASTER",

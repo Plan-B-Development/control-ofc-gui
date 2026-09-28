@@ -269,8 +269,8 @@ their IT8689E with an IT8792E, not an IT87952E.)
 **Dual-chip remediation (in order):**
 
 ```bash
-# 0. Rule out the it87 v2.0 rename: suffixed names (it8689_900a090a) mean
-#    both chips are present.
+# 0. On a daemon older than 2.57.0, rule out the it87 v2.0 rename: suffixed
+#    names (it8689_900a090a) mean both chips are present.
 cat /sys/class/hwmon/hwmon*/name
 
 # 1. Is it87 loaded? One "Found IT8xxxE chip" line per chip.
@@ -415,8 +415,9 @@ plane uses `coretemp` exclusively.
    scope platform-specific guidance — if your CPU vendor is reported as
    empty, the platform-scoped quirks won't fire.
 3. **Look for the dual-chip warning** on Gigabyte LGA1700/LGA1851
-   AORUS boards. First rule out an it87 v2.0 build (suffixed chip names
-   such as `it8689_900a090a` mean both chips are present). Otherwise, on a
+   AORUS boards. On a daemon older than 2.57.0, first rule out an it87 v2.0
+   build (suffixed chip names such as `it8689_900a090a` mean both chips are
+   present; from 2.57.0 the daemon recognises them). Otherwise, on a
    current build, a missing IT87952E is most likely a blocked Super-I/O (the
    cause measured on AM5 boards): keep `sensors-detect`, `nct6775` and
    `w83627ehf` away, reboot, then remove mains power if needed. Only pre-2026-03

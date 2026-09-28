@@ -1,0 +1,37 @@
+{
+  "_comment": "Cross-stack oracle for the it87 v2.0 chip-name canonicaliser (DEC-442, BRD-a). Byte-identical copies: control-ofc-daemon daemon/tests/fixtures/chip_name_canonical.json (hwmon::chip_name tests) and control-ofc-gui tests/fixtures/chip_name_canonical.json (tests/test_chip_name.py); parity.yml in both repos fails on drift. The rule is upstream's install-sensorsd.sh pattern ^it[0-9][0-9]*_([0-9A-Fa-f]{8})$.",
+  "chip_names": [
+    {"name": "x870e_primary", "raw": "it8696_a008090a", "canonical": "it8696"},
+    {"name": "x870e_secondary", "raw": "it87952_a008090a", "canonical": "it87952"},
+    {"name": "upper_case_hex", "raw": "it8689_A008090A", "canonical": "it8689"},
+    {"name": "short_base", "raw": "it87_0000beef", "canonical": "it87"},
+    {"name": "bare_name_unchanged", "raw": "it8696", "canonical": "it8696"},
+    {"name": "bare_short_unchanged", "raw": "it87", "canonical": "it87"},
+    {"name": "nuvoton_with_suffix_unchanged", "raw": "nct6799_a008090a", "canonical": "nct6799_a008090a"},
+    {"name": "wireless_unchanged", "raw": "ath12k_hwmon", "canonical": "ath12k_hwmon"},
+    {"name": "xhci_unchanged", "raw": "prom21_xhci", "canonical": "prom21_xhci"},
+    {"name": "seven_hex_digits_unchanged", "raw": "it8696_a008090", "canonical": "it8696_a008090"},
+    {"name": "nine_hex_digits_unchanged", "raw": "it8696_a008090ab", "canonical": "it8696_a008090ab"},
+    {"name": "non_hex_suffix_unchanged", "raw": "it8696_g008090a", "canonical": "it8696_g008090a"},
+    {"name": "second_underscore_unchanged", "raw": "it8696_a008090a_x", "canonical": "it8696_a008090a_x"},
+    {"name": "no_digits_unchanged", "raw": "it_a008090a", "canonical": "it_a008090a"},
+    {"name": "letter_in_base_unchanged", "raw": "it86x6_a008090a", "canonical": "it86x6_a008090a"},
+    {"name": "upper_case_prefix_unchanged", "raw": "IT8696_a008090a", "canonical": "IT8696_a008090a"},
+    {"name": "cpu_chip_unchanged", "raw": "k10temp", "canonical": "k10temp"},
+    {"name": "empty_unchanged", "raw": "", "canonical": ""}
+  ],
+  "ids": [
+    {"name": "header_id", "raw": "hwmon:it8696_a008090a:it87.2624:pwm5:SYS_FAN5_PUMP", "canonical": "hwmon:it8696:it87.2624:pwm5:SYS_FAN5_PUMP"},
+    {"name": "secondary_header_id", "raw": "hwmon:it87952_a008090a:it87.2640:pwm1:pwm1", "canonical": "hwmon:it87952:it87.2640:pwm1:pwm1"},
+    {"name": "sensor_id", "raw": "hwmon:it8696_a008090a:it87.2624:temp1", "canonical": "hwmon:it8696:it87.2624:temp1"},
+    {"name": "monitor_only_fan_id", "raw": "hwmon:it8696_a008090a:it87.2624:fan7:fan7", "canonical": "hwmon:it8696:it87.2624:fan7:fan7"},
+    {"name": "label_with_colon_kept", "raw": "hwmon:it8696_a008090a:it87.2624:pwm2:A:B", "canonical": "hwmon:it8696:it87.2624:pwm2:A:B"},
+    {"name": "canonical_id_unchanged", "raw": "hwmon:it8696:it87.2624:pwm5:SYS_FAN5_PUMP", "canonical": "hwmon:it8696:it87.2624:pwm5:SYS_FAN5_PUMP"},
+    {"name": "nuvoton_id_unchanged", "raw": "hwmon:nct6799:nct6775.656:pwm1:CPU_FAN", "canonical": "hwmon:nct6799:nct6775.656:pwm1:CPU_FAN"},
+    {"name": "openfan_id_unchanged", "raw": "openfan:ch00", "canonical": "openfan:ch00"},
+    {"name": "gpu_id_unchanged", "raw": "amd_gpu:0000:03:00.0", "canonical": "amd_gpu:0000:03:00.0"},
+    {"name": "suffix_outside_chip_segment_unchanged", "raw": "hwmon:nct6799:it8696_a008090a:pwm1:X", "canonical": "hwmon:nct6799:it8696_a008090a:pwm1:X"},
+    {"name": "truncated_id_unchanged", "raw": "hwmon:it8696_a008090a", "canonical": "hwmon:it8696_a008090a"},
+    {"name": "empty_unchanged", "raw": "", "canonical": ""}
+  ]
+}

@@ -25,7 +25,9 @@ from control_ofc.api.models import (
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
 from control_ofc.knowledge.sensor_knowledge import SensorClassification, classify_reading
 from control_ofc.services.alerts import AlertCondition, AlertLedger
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.session_stats import SessionStatsTracker
+from control_ofc.ui.hwmon_guidance import set_daemon_canonicalises_chip_names
 
 # DEC-227: presentation suffix tagging a liquid-cooler fan in the Dashboard's
 # Sensors rail. It is a hardware fact rendered onto the row, never part of the
@@ -198,6 +200,10 @@ class AppState(QObject):
 
     def set_capabilities(self, caps: Capabilities) -> None:
         self.capabilities = caps
+        # DEC-442: the one writer of the it87-rename wording switch, set before
+        # the signal so every page that re-renders on it already sees the new
+        # answer.
+        set_daemon_canonicalises_chip_names(daemon_supports("canonical_chip_names", caps) is True)
         self.capabilities_updated.emit(caps)
 
     def set_status(self, status: DaemonStatus) -> None:
@@ -437,6 +443,7 @@ class AppState(QObject):
                 return resolve_hwmon_header_label(
                     sysfs_label=h.label,
                     chip_name=h.chip_name,
+                    sysfs_chip_name=h.sysfs_chip_name,
                     pwm_index=h.pwm_index,
                     board_vendor=self.board_info.vendor,
                     board_name=self.board_info.name,

@@ -130,7 +130,7 @@ def advisory_detail_html(details: list[str]) -> str:
     GUI-authored, but escaping keeps future edits safe inside a rich-text label.
     Returns an empty string when there is no detail to show.
     """
-    items = [d.strip() for d in details if d and d.strip()]
+    items = [localise_it87_rename_note(d.strip()) for d in details if d and d.strip()]
     if not items:
         return ""
     listy = len(items) >= 3 and all(len(d) <= _ADVISORY_BULLET_MAXLEN for d in items)
@@ -285,6 +285,12 @@ _GB_FULL_SPEED_NOTE = (
 # after it — but that commit only touched the Makefile's version string, so
 # c567739 carries the same driver code and is the build this project runs on its
 # own X870E AORUS MASTER.
+#
+# DEC-442: a daemon advertising `control.canonical_chip_names` strips that suffix
+# where it reads the chip name and in the state it saved before, so on it the
+# rebuild changes no id and the caution above is false. The entries below keep
+# the older-daemon wording as their data; the renderers swap it through
+# `localise_it87_rename_note` for whichever daemon is connected.
 _IT87_V2_RENAME_NOTE = (
     "⚠ it87-dkms-git builds from 2026-09-09 (it87 v2.0) rename Gigabyte chips "
     "after the board's ID (e.g. it8696_a008090a), which changes every fan "
@@ -292,6 +298,59 @@ _IT87_V2_RENAME_NOTE = (
     "rebuilding. To keep the old names, build commit c567739 (2026-08-25) — the "
     "same driver code as the last build before the rename, including PR #128."
 )
+_IT87_V2_RENAME_HANDLED_NOTE = (
+    "it87-dkms-git builds from 2026-09-09 (it87 v2.0) name Gigabyte chips after "
+    "the board's ID (e.g. it8696_a008090a). The connected daemon strips that "
+    "suffix, so fan header ids, pump roles, fan names and profile members stay "
+    "the same across a rebuild. Profile members already lost to a rebuild made "
+    "under an older daemon cannot be restored — add them back."
+)
+
+#: Whether the connected daemon canonicalises chip names (DEC-442). Written by
+#: exactly one caller — `AppState.set_capabilities`, where capabilities arrive —
+#: and read only by `it87_rename_note`. Before capabilities arrive it is False,
+#: so the older-daemon caution shows: the safe direction.
+_daemon_canonicalises_chip_names = False
+
+
+def set_daemon_canonicalises_chip_names(value: bool) -> None:
+    """Record whether the connected daemon canonicalises chip names (DEC-442)."""
+    global _daemon_canonicalises_chip_names
+    _daemon_canonicalises_chip_names = bool(value)
+
+
+def daemon_canonicalises_chip_names() -> bool:
+    """Whether the connected daemon canonicalises chip names (DEC-442)."""
+    return _daemon_canonicalises_chip_names
+
+
+def it87_rename_note() -> str:
+    """The it87 v2.0 rename note for the connected daemon (DEC-442)."""
+    if _daemon_canonicalises_chip_names:
+        return _IT87_V2_RENAME_HANDLED_NOTE
+    return _IT87_V2_RENAME_NOTE
+
+
+def localise_it87_rename_note(text: str) -> str:
+    """Swap the older-daemon rename caution in *text* for the connected daemon's."""
+    return text.replace(_IT87_V2_RENAME_NOTE, it87_rename_note())
+
+
+def _dual_chip_false_alarm_paragraph() -> str:
+    """The dual-chip warning's it87 v2.0 false-alarm check — only where it can
+    be a false alarm. A DEC-442 daemon publishes canonical chip names, so the
+    comparison matches a renamed chip and the paragraph would be wrong advice."""
+    if _daemon_canonicalises_chip_names:
+        return ""
+    return (
+        "<b>False alarm check:</b> if <code>sensors</code> lists your chips with "
+        "a suffix — e.g. <code>it8696_a008090a</code> — they are present. it87 "
+        "builds from 2026-09-09 rename Gigabyte chips that way, and this "
+        "daemon's check does not recognise the new names; updating "
+        "control-ofc-daemon fixes that.<br><br>"
+    )
+
+
 _GB_RECLAIM_NOTE = (
     "If a header keeps being taken back: keep it87-dkms-git current — PR #128 "
     "(2026-08-24) addressed the firmware logic that retakes headers on IT8689E, "
@@ -2430,7 +2489,7 @@ def verification_guidance(
                 "including on Rev 1, and more boards have reported working since the "
                 "merge. Re-run this test after updating to confirm on your own board "
                 "rather than assume. If it still fails, use a different fan header "
-                f"or an external fan controller. {_IT87_V2_RENAME_NOTE}"
+                f"or an external fan controller. {it87_rename_note()}"
             )
         if "asrock" in vendor_lower and chip_lower.startswith("nct6"):
             return (
@@ -2563,9 +2622,11 @@ def dual_chip_warning_html(
     complement; if that one chip is missing, "dual-chip board" would be false.
 
     **it87 v2.0 renames the chips** (`it8696_a008090a`, from 2026-09-09 builds,
-    register row `BRD-a`). The comparison below is exact, so on such a build the
-    chips are present and this warning is a false alarm until the name matching
-    is widened; the copy says so rather than sending the user round the ladder.
+    register row `BRD-a`). A daemon with `control.canonical_chip_names` (DEC-442)
+    strips the suffix before it publishes `chips_detected`, so the exact
+    comparison below matches and the warning cannot be that false alarm. On an
+    older daemon it can, and the copy then says so rather than sending the user
+    round the ladder; on a current one that paragraph is dropped.
 
     *board_name* is the DMI ``board_name`` (used only for the heading);
     callers should pass the empty string when DMI is unavailable and the
@@ -2677,10 +2738,7 @@ def dual_chip_warning_html(
         f"on <code>mmio</code> (already the driver default), <code>force_id</code>, "
         f"or reinstalling the driver — none of them touch this. The full "
         f"walk-through is in the manual, linked below.<br><br>"
-        f"<b>False alarm check:</b> if <code>sensors</code> lists your chips with "
-        f"a suffix — e.g. <code>it8696_a008090a</code> — they are present. it87 "
-        f"builds from 2026-09-09 rename Gigabyte chips that way, and this check "
-        f"does not recognise the new names yet.<br><br>"
+        f"{_dual_chip_false_alarm_paragraph()}"
         f"<i>⚠ {REMEDIATION_DISCLAIMER}</i><br><br>"
         f"<b>Outcomes differ per board, not per board family</b> — two "
         f"boards with the same pair of chips can differ. The frankcrawford/it87 "

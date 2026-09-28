@@ -435,6 +435,18 @@ def _sync_override_dispatch(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_it87_rename_gate():
+    """DEC-442: `AppState.set_capabilities` records a process-wide wording switch
+    in `hwmon_guidance`. Start and end every test on the older-daemon default so
+    a test that connects a DEC-442 daemon cannot change another test's text."""
+    from control_ofc.ui import hwmon_guidance
+
+    hwmon_guidance.set_daemon_canonicalises_chip_names(False)
+    yield
+    hwmon_guidance.set_daemon_canonicalises_chip_names(False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_libsensors(monkeypatch):
     """Keep the host's ``/etc/sensors.d`` out of every test (DEC-229).
 

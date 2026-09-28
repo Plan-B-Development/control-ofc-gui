@@ -40,6 +40,7 @@ from control_ofc.ui.hwmon_guidance import (
     advisory_detail_html,
     detect_module_conflicts,
     dual_chip_warning_html,
+    localise_it87_rename_note,
     lookup_chip_guidance,
     severity_display,
 )
@@ -1337,7 +1338,10 @@ def _chip_tooltip(chip_name: str) -> str:
     if g.bios_tips:
         parts.append("BIOS tips:\n" + "\n".join(f"• {t}" for t in g.bios_tips))
     if g.known_issues:
-        parts.append("Known issues:\n" + "\n".join(f"• {i}" for i in g.known_issues))
+        parts.append(
+            "Known issues:\n"
+            + "\n".join(f"• {localise_it87_rename_note(i)}" for i in g.known_issues)
+        )
     if g.driver_url:
         parts.append(f"Driver docs: {g.driver_url}")
     return "\n\n".join(parts)

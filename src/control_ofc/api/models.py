@@ -305,6 +305,12 @@ class ControlCapability:
     #: preflight token. Gate on this rather than probing: an older daemon 404s
     #: the POST from the route fallback, the same status an unknown header gets.
     stall_probe: bool = False
+    #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
+    #: suffix is stripped where the daemon reads it and in the state it saved
+    #: before — so a driver rebuild no longer changes any fan header's id. Gates
+    #: the "a rebuild changes your ids" caution, which stays true on an older
+    #: daemon.
+    canonical_chip_names: bool = False
     # `WIRE-k` (daemon >= 2.36.0): five features that shipped BEFORE this block
     # had keys for them. Until the daemon grew these flags the GUI detected them
     # by comparing the daemon's version string — which says when a feature first
@@ -958,7 +964,15 @@ class HwmonHeader:
     # than reading this field directly; `is_placeholder_hwmon_label` is the test.
     # Note the label is also embedded in `id` (`hwmon:<chip>:<dev>:pwmN:<label>`).
     label: str = ""
+    # Canonical (DEC-442): on an it87 v2.0 Gigabyte chip the daemon strips the
+    # driver's board suffix, so this is `it8696`, the name embedded in `id`.
     chip_name: str = ""
+    # DEC-442: the hwmon `name` exactly as sysfs published it (`it8696_a008090a`
+    # on an it87 v2.0 Gigabyte chip, otherwise equal to `chip_name`). Read ONLY
+    # to match `/etc/sensors.d` blocks, which upstream writes against this
+    # spelling; never compare a table or build an id from it. An older daemon
+    # omits it, so "" means "use `chip_name`".
+    sysfs_chip_name: str = ""
     device_id: str = ""
     pwm_index: int = 0
     supports_enable: bool = False
