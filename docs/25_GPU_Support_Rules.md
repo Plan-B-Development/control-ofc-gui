@@ -119,6 +119,14 @@ writes, PMFW handling, or GPU display naming.
   daemon 2.56.4; daemon 2.56.3 and older reset every AMD card at every stop.
   *(Safety-critical;
   also stated in `CLAUDE.md`.)*
+- **A GPU the active profile stops naming is handed back at once, not at the next stop
+  (DEC-448, daemon ≥ 2.57.0).** On the tick after a deactivate, or a switch to a profile
+  that drops the card, the engine resets it to firmware auto — the same reset
+  `POST /gpu/{id}/fan/reset` makes, under the same GPU write lock — and takes it off the
+  hand-back list. A card a skipped or overridden control still names is kept; a verify
+  holding the write pause defers it; a reset that fails leaves the card listed (so the
+  stop still resets it) and is retried after a minute. The member set it judges by is its
+  own type, never the thermal force's reach: the GPU stays outside the force (DEC-130).
 
 ## Truthfulness
 

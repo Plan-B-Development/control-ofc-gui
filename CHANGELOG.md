@@ -112,6 +112,10 @@
     National chip tables, and the man page's file list.
   - **Screenshots.** Manual screenshots and links to other repository files now use GitHub URLs, so
     they work from the installed copy.
+- **A GPU a profile stops naming is handed back** (DEC-448, daemon 2.57.0). *Profiles and Curves*,
+  the setup checklist, the API contract and the GPU support rules now say that switching to a
+  profile without an AMD GPU, or stopping profile control, puts that GPU back on its firmware fan
+  curve at once, where older daemons left it at the old profile's speed until they stopped.
 
 ## [2.83.5] — 2026-09-27
 

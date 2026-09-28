@@ -201,7 +201,10 @@ back when it ends — see
 
 **When you switch profiles**, a motherboard header the new profile does not name is given
 back to exactly what it was doing before the daemon first took it — usually the BIOS curve
-— within a second. An OpenFan channel the new profile does not name keeps its last speed.
+— within a second. So is an AMD GPU the new profile does not name: it goes back to its
+firmware fan curve (daemon 2.57.0 and newer; older daemons leave it at the old profile's
+speed until the daemon stops). The same happens to both when no profile is left active — the
+tray's **Stop profile control**, or deleting the active profile. An OpenFan channel the new profile does not name keeps its last speed.
 
 **When the daemon stops** — a normal stop, a crash, or an uninstall — each motherboard
 header goes back to what it was doing before, and each AMD GPU the daemon drove goes back

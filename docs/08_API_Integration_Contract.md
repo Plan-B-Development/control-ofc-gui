@@ -2726,7 +2726,10 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     restart brings back the previous one.
   - **On the next tick the engine gives back every hwmon header the new profile does not
     name** (DEC-382, daemon ≥ 2.50.0) — to the mode or duty it had before the daemon took
-    it, as at shutdown.
+    it, as at shutdown — **and puts every AMD GPU the daemon drove that the new profile does
+    not name back on its firmware fan curve** (DEC-448, daemon ≥ 2.57.0; the reset
+    `POST /gpu/{id}/fan/reset` makes; the card's `last_commanded_pwm` is then absent, since nothing
+    commands it — unlike after the reset endpoint, which reports `0`).
   - GUI must only update "active" state after daemon confirms success
 - `POST /profile/deactivate` — body ignored (DEC-097, daemon v1.6.0+)
   - Clears the in-memory active profile, persists the cleared state (best-effort,
@@ -2735,7 +2738,9 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     re-activate cleanly re-takes it. (There is no GUI lease to preserve as
     of 2.0.0 — DEC-165.)
   - **On the next tick the engine gives back every hwmon header it took**
-    (DEC-382, daemon ≥ 2.50.0) — not a GPU fan. With no profile active it
+    (DEC-382, daemon ≥ 2.50.0) **and puts every AMD GPU it drove back on its
+    firmware fan curve** (DEC-448, daemon ≥ 2.57.0; older daemons left a GPU on
+    the profile's last curve until they stopped). With no profile active it
     evaluates no curve; the thermal emergency still reaches every writable
     header.
   - **Also clears all active control-overrides (DEC-218, daemon ≥ 2.12.0)** —
