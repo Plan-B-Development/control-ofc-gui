@@ -2,13 +2,17 @@
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-09-28
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which this release's package now requires (DEC-442).
+
 ### Added
 
 - **Coolant limit setting** (DEC-443). Settings ▸ Daemon Configuration has a **Coolant limit** row
-  (40–70 °C, default 60 °C). With control-ofc-daemon 2.57.0 or newer, a coolant sensor at or above
+  (40–70 °C, default 60 °C). With control-ofc-daemon 3.0.0 or newer, a coolant sensor at or above
   it makes the daemon run every fan and pump at full speed until the coolant is 5 °C cooler. It
   applies at once. On an older daemon the row is disabled and says which version it needs.
-- **Pump stall and cooling alerts** (DEC-443). With daemon 2.57.0 or newer, a pump the daemon is
+- **Pump stall and cooling alerts** (DEC-443). With daemon 3.0.0 or newer, a pump the daemon is
   running at full speed because it stopped turning is an **error** alert naming the pump, and a
   CPU held at its ceiling while every fan and pump runs slowly is a **warning** alert. Both
   appear in the alert bar and the event log.
@@ -36,7 +40,7 @@
   the pump picker starts on the pump you chose rather than one a header label names.
 
 - **Fan names, profiles and settings survive the it87 v2.0 driver rename** (DEC-442). With
-  control-ofc-daemon 2.57.0 or newer, an `it87-dkms-git` rebuild that renames Gigabyte chips (for
+  control-ofc-daemon 3.0.0 or newer, an `it87-dkms-git` rebuild that renames Gigabyte chips (for
   example `it8696_a008090a`) no longer changes any fan header's id. The app also reads back
   anything it saved under the new names while running an older daemon: fan names, hidden chart
   series, series colours, hidden sensors, sensor class overrides, hardware notes, and the fan and
@@ -58,7 +62,7 @@
   **Set role… ▸ Not set** on the Hardware page, or untick it in the Fan Wizard.
 - **The stall/restart probe's tooltip points to where a role can be set** (DEC-444). It used to
   send you to the Controls page, which cannot set a header's role.
-- **The app now requires control-ofc-daemon 2.57.0 or newer** (DEC-442). The package depends on it from this release.
+- **The app now requires control-ofc-daemon 3.0.0 or newer** (DEC-442). The package depends on it from this release.
   The app stores fan ids under the canonical chip name, which an older daemon on a renamed it87
   chip does not publish. If the app meets such a daemon anyway (for example, one not yet restarted
   after an upgrade), those fans go uncontrolled until the daemon is updated. The app no longer
@@ -112,10 +116,10 @@
     National chip tables, and the man page's file list.
   - **Screenshots.** Manual screenshots and links to other repository files now use GitHub URLs, so
     they work from the installed copy.
-- **The kernel hang advisory covers every AMD GPU** (DEC-449, daemon 2.57.0). The API contract, the
+- **The kernel hang advisory covers every AMD GPU** (DEC-449, daemon 3.0.0). The API contract, the
   hardware-compatibility guide and the troubleshooting page say that an integrated GPU beside a
   discrete card is checked too, and that the advisory's message names the cards it applies to.
-- **A GPU a profile stops naming is handed back** (DEC-448, daemon 2.57.0). *Profiles and Curves*,
+- **A GPU a profile stops naming is handed back** (DEC-448, daemon 3.0.0). *Profiles and Curves*,
   the setup checklist, the API contract and the GPU support rules now say that switching to a
   profile without an AMD GPU, or stopping profile control, puts that GPU back on its firmware fan
   curve at once, where older daemons left it at the old profile's speed until they stopped.

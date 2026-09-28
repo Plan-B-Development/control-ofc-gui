@@ -167,7 +167,7 @@ Notable fields:
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions
   applicable to **any AMD GPU on the machine**, not only the card `devices.amd_gpu`
-  describes (DEC-449, daemon ≥ 2.57.0 — older daemons evaluated the primary card
+  describes (DEC-449, daemon ≥ 3.0.0 — older daemons evaluated the primary card
   alone, so an RDNA3 iGPU behind an RDNA2 discrete card got no advisory). Each id
   appears once however many cards it applies to, and its `message` names them — model
   and PCI address, e.g. "the AMD Radeon 780M (0000:c5:00.0)". No field changed. **Since DEC-422** (daemon 2.56.1) the only id raised is `rdna_mes_hang_drm_amd_4765` (drm/amd #4765:
@@ -308,17 +308,17 @@ GUI treats every flag as false / old behaviour (AIP-180):
   PWM Test Report offers the probe only where `daemon_supports("stall_probe", caps) is True`,
   and sends `acknowledge_below_floor: true` only for a header the user confirmed on its
   consent page — a gate enforced in the window and again in the report's runner.
-- `canonical_chip_names` (bool, DEC-442, daemon ≥ 2.57.0) — every hwmon chip name the
+- `canonical_chip_names` (bool, DEC-442, daemon ≥ 3.0.0) — every hwmon chip name the
   daemon publishes, and every id built from one, is **canonical**: the it87 v2.0 board suffix
   (`it8696_a008090a`) is stripped where the daemon reads the chip name, stored ids a
   pre-DEC-442 daemon saved under the suffixed spelling are canonicalised on read and on every
   incoming write, and `/hwmon/headers` carries the sysfs spelling as `sysfs_chip_name` — see
   [Canonical hwmon chip names](#canonical-hwmon-chip-names-dec-442). Absent → `false`.
-  **GUI use (DEC-442, GUI ≥ 2.84.0):** registered in `daemon_features` as
+  **GUI use (DEC-442, GUI ≥ 3.0.0):** registered in `daemon_features` as
   `canonical_chip_names`; `AppState.set_capabilities` records it, and the "a driver rebuild
   changes your ids" caution and the dual-chip warning's false-alarm paragraph render only
   where it is not `True` — on an older daemon both remain true.
-- `cooling_failure_detection` (bool, DEC-443, daemon ≥ 2.57.0) — the daemon runs the coolant
+- `cooling_failure_detection` (bool, DEC-443, daemon ≥ 3.0.0) — the daemon runs the coolant
   emergency at `safety.coolant_limit_c` (settable with `POST /config/coolant-limit`), answers a
   stalled pump, floors a DC-mode pump at 70 %, raises the cooling advisory, and publishes
   `emergency_causes`, `pump_stalls[]` and `advisories[]` on `/status` and `coolant_limit_c` /
@@ -327,7 +327,7 @@ GUI treats every flag as false / old behaviour (AIP-180):
   Absent → `false`. **Gate the Settings control on this, and treat the key's absence the same
   way** (the `exit_floor` shape): an older daemon `404`s the write and has no coolant rung at all.
   The `/status` fields need no gate — an older daemon omits them and a client reads that as quiet.
-  **GUI use (DEC-443, GUI ≥ 2.84.0):** registered in `daemon_features` as
+  **GUI use (DEC-443, GUI ≥ 3.0.0):** registered in `daemon_features` as
   `cooling_failure_detection`; gates the Settings ▸ Daemon Configuration "Coolant limit" row and
   the Hardware page's DC-pump note.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
@@ -763,7 +763,7 @@ there a **current** reading?"*, so it is `false` for a sensor that is listed but
 no longer updating. Clients rendering it as "found / not found" should reword —
 `{"state": "emergency", "cpu_sensor_found": false}` is a normal pairing now.
 
-#### Coolant emergency, pump stall response, cooling advisory (DEC-443, daemon ≥ 2.57.0)
+#### Coolant emergency, pump stall response, cooling advisory (DEC-443, daemon ≥ 3.0.0)
 
 **Contract change in both repos** (capability `control.cooling_failure_detection`). The three
 `/status` fields below are additive (`api_version` unchanged) and **omitted when empty**; an older
@@ -773,7 +773,7 @@ daemon never sends them, and a client defaults each to `[]`.
 `"coolant"`, in that order, present only while it is. The state is still one token — an emergency
 is the same force with the same reach whichever rule tripped it — so a client reading
 `thermal_state` alone stays correct; the causes let it *explain* the emergency truthfully. Render
-an unrecognised token. `emergency` with no causes means a daemon older than 2.57.0, whose only
+an unrecognised token. `emergency` with no causes means a daemon older than 3.0.0, whose only
 emergency is the CPU one.
 
 **The coolant rung.** The hottest FRESH reading of kind `coolant_temp` at or above
@@ -816,7 +816,7 @@ publishes one, else 85 °C. **It forces nothing**: it names the shape of a dead 
 self-throttling CPU, which the CPU emergency — a backstop above the ceiling — practically never
 sees. Quiet without a fresh CPU reading or with nothing commanded. Render an unrecognised `code`.
 
-**GUI use (GUI ≥ 2.84.0):** a pump stall is an error-level alert naming the pump by its display
+**GUI use (GUI ≥ 3.0.0):** a pump stall is an error-level alert naming the pump by its display
 name, an advisory is a warning-level alert, and the thermal-safety detail names the emergency's
 cause. None of the three is capability-gated: absence reads as quiet.
 
@@ -1293,11 +1293,11 @@ Use to discover:
   member keeps driving that member. Before 2.55.0 the control published a duty
   its read-only header never received. Control-path discovery and the stall
   probe refuse a read-only header with `400 feature_unavailable`.
-- `chip_name` — **canonical** (DEC-442, daemon ≥ 2.57.0): on an it87 v2.0
+- `chip_name` — **canonical** (DEC-442, daemon ≥ 3.0.0): on an it87 v2.0
   Gigabyte chip the driver's board suffix is stripped, so this reads `it8696`
   where sysfs says `it8696_a008090a`, and it is the name embedded in `id`.
   Compare hardware tables against it.
-- `sysfs_chip_name` (string, DEC-442, daemon ≥ 2.57.0) — the hwmon `name`
+- `sysfs_chip_name` (string, DEC-442, daemon ≥ 3.0.0) — the hwmon `name`
   attribute exactly as sysfs published it; differs from `chip_name` only on an
   it87 v2.0 Gigabyte chip. **Match `/etc/sensors.d` `chip "…"` blocks against
   this and nothing else** — libsensors does, and upstream's per-board configs are
@@ -1344,7 +1344,7 @@ Use to discover:
     backstop (20%). Prefer this over re-deriving a floor from labels and chip names. With the
     generic-only policy table shipped in 2.31.0 it is `30` for every pump-protected header and
     `0` for every other header — identical to what the engine already enforces. **Since daemon
-    2.57.0 (DEC-443) a pump-protected header whose `pwm_mode` is `0` (DC) reports `70`** — the DC
+    3.0.0 (DEC-443) a pump-protected header whose `pwm_mode` is `0` (DC) reports `70`** — the DC
     pump floor, which the engine, identify, verify, characterisation, discovery and the stall probe
     all apply to it: a voltage-driven pump stalls much higher in its range than a PWM one. A
     non-pump header in DC mode is unaffected, and a driver that publishes no `pwmN_mode` (it87)
@@ -1486,7 +1486,7 @@ as `thermal_state`, so the two cannot disagree by a tick. Render it; never
 compare it to a literal and never assume 105. `release_threshold_c` is still the
 fixed 80 °C. Older daemons report the constant, which remains a correct floor.
 
-**`thermal_safety.coolant_limit_c` / `coolant_release_c` (DEC-443, daemon ≥ 2.57.0)** — the
+**`thermal_safety.coolant_limit_c` / `coolant_release_c` (DEC-443, daemon ≥ 3.0.0)** — the
 coolant emergency's limit and release point (limit − 5 °C) as the engine acted on them, published
 in the same write as `thermal_state`; before the engine's first tick, the configured limit. Absent
 on an older daemon, which has no coolant rung.
@@ -1553,7 +1553,7 @@ and the GUI parser defaults to `[]`:
   then remove mains power; the `mmio=on` modprobe.d line only on pre-2026-03
   driver builds). Since daemon 2.56.1 (DEC-421) a few single-chip Gigabyte boards are listed
   with **one** chip, so the list is not always a pair. The comparison is exact.
-  From daemon 2.57.0 (DEC-442) `chips_detected[].chip_name` is canonical, so an
+  From daemon 3.0.0 (DEC-442) `chips_detected[].chip_name` is canonical, so an
   it87 v2.0 chip (`it8696_a008090a`, 2026-09-09 builds) matches; each entry also
   carries `sysfs_chip_name`, the name as sysfs published it, for display and
   support use. The GUI does not read it yet (register row `BRD-x`); it reads the
@@ -2731,7 +2731,7 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
   - **On the next tick the engine gives back every hwmon header the new profile does not
     name** (DEC-382, daemon ≥ 2.50.0) — to the mode or duty it had before the daemon took
     it, as at shutdown — **and puts every AMD GPU the daemon drove that the new profile does
-    not name back on its firmware fan curve** (DEC-448, daemon ≥ 2.57.0; the reset
+    not name back on its firmware fan curve** (DEC-448, daemon ≥ 3.0.0; the reset
     `POST /gpu/{id}/fan/reset` makes; the card's `last_commanded_pwm` is then absent, since nothing
     commands it — unlike after the reset endpoint, which reports `0`).
   - GUI must only update "active" state after daemon confirms success
@@ -2743,7 +2743,7 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     of 2.0.0 — DEC-165.)
   - **On the next tick the engine gives back every hwmon header it took**
     (DEC-382, daemon ≥ 2.50.0) **and puts every AMD GPU it drove back on its
-    firmware fan curve** (DEC-448, daemon ≥ 2.57.0; older daemons left a GPU on
+    firmware fan curve** (DEC-448, daemon ≥ 3.0.0; older daemons left a GPU on
     the profile's last curve until they stopped). With no profile active it
     evaluates no curve; the thermal emergency still reaches every writable
     header.
@@ -3130,7 +3130,7 @@ According to the provided daemon notes:
   coalesces.
 - the daemon holds the hwmon lease internally (the GUI holds none — DEC-165)
 - no diagnostic commands below 20 % (a pump never below its pump floor — 30 %, or 70 % on a
-  DC-mode header since daemon 2.57.0, DEC-443) **except the stall probe**
+  DC-mode header since daemon 3.0.0, DEC-443) **except the stall probe**
   (DEC-407, capability `control.stall_probe`), which is opt-in per header, refuses every
   pump-protected, `cpu_fan` and `unknown`-role header, re-checks that before every write and on
   every sample, and ends every abort and cancel with a 100 % kick — except while shutting down
@@ -3190,8 +3190,8 @@ transitions by poll-diff. (SSE was never consumed — DEC-164 deferred it past 2
 endpoint was removed entirely in daemon v2.5.1, DEC-198.)
 
 ## Canonical hwmon chip names (DEC-442)
-**Contract change in both repos** (daemon ≥ 2.57.0, capability `control.canonical_chip_names`;
-GUI ≥ 2.84.0). it87 v2.0 (frankcrawford/it87 PR #132, 2026-09-09) names every ITE chip on a
+**Contract change in both repos** (daemon ≥ 3.0.0, capability `control.canonical_chip_names`;
+GUI ≥ 3.0.0). it87 v2.0 (frankcrawford/it87 PR #132, 2026-09-09) names every ITE chip on a
 Gigabyte board `<chip>_<siv>` whenever the driver can read the board's SIV
 (`it8696_a008090a`), and every stable hwmon id embeds the chip name. The rule is upstream's own
 (`install-sensorsd.sh`): a name matching `^it[0-9]+_[0-9A-Fa-f]{8}$` is that chip with the
@@ -3224,7 +3224,7 @@ as published and logged once by the daemon.
   not see its members as missing. Two members of one control whose *different* spellings
   collapse to one id keep one: the one whose label names a pump or CPU, otherwise the
   suffixed one. Members already spelled identically are left alone.
-- **GUI side (DEC-442, GUI ≥ 2.84.0).** `knowledge/chip_name.py` applies the same rule, pinned
+- **GUI side (DEC-442, GUI ≥ 3.0.0).** `knowledge/chip_name.py` applies the same rule, pinned
   to the daemon's by the shared oracle `tests/fixtures/chip_name_canonical.json`
   (byte-identical in both repos, `parity.yml`). `Profile.from_dict` canonicalises member and
   curve sensor ids on every load — so a profile hydrated from the daemon or read from the local
@@ -3232,7 +3232,7 @@ as published and logged once by the daemon.
   `AppSettings.from_dict` canonicalises every id-keyed setting (fan names, hidden chart series,
   series colours, hidden sensors, sensor class overrides, hardware notes), the suffixed entry
   winning a collision. This happens on load whichever daemon is connected, so **the GUI
-  requires daemon ≥ 2.57.0** (its package depends on it from the release that ships DEC-442;
+  requires daemon ≥ 3.0.0** (its package depends on it from the release that ships DEC-442;
   `/ofc:release` moves the PKGBUILD floor and the README pairing together). Against an older daemon on an it87
   v2.0 driver, which still publishes suffixed ids, the GUI's canonical ids name nothing that
   daemon publishes: fan names do not apply and such members go uncontrolled until the daemon is
@@ -3460,7 +3460,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   missing values are `400 validation_error`. A crash cannot apply it: `ExecStopPost` has no
   way to reach the OpenFan controller.
 - `POST /config/coolant-limit` — `{"coolant_limit_c": 40..70}`, whole °C (DEC-443, daemon ≥
-  2.57.0; capability `control.cooling_failure_detection`; **default 60**, from `[safety]
+  3.0.0; capability `control.cooling_failure_detection`; **default 60**, from `[safety]
   coolant_limit_c` in `daemon.toml` when no `runtime.toml` value overrides it). The coolant
   temperature at which the daemon forces every fan and pump to 100 %, released 5 °C below. **Applies
   live**: persisted to `runtime.toml` first, then put in force from the next engine tick, so a failed

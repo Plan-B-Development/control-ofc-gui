@@ -1177,7 +1177,7 @@ Reference: https://github.com/frankcrawford/it87
   [#70](https://github.com/frankcrawford/it87/issues/70) and DEC-101 for the
   diagnostics surfaced by the GUI. **it87 builds from 2026-09-09 rename this
   board's chips to `it8696_a008090a` / `it87952_a008090a`**; control-ofc-daemon
-  2.57.0 and newer strip the suffix so no header id changes, while an older
+  3.0.0 and newer strip the suffix so no header id changes, while an older
   daemon changes every header id — see doc 19.
 
   BIOS Smart Fan 6 reclaims `pwm_enable` on CPU_FAN at ~1 Hz; the
@@ -1270,7 +1270,7 @@ Prioritise these hwmon driver names when discovered:
   names as the in-kernel driver, so check the bound driver)
 - `it87` (ITE, mainline or out-of-tree — hwmon names `it86xx` / `it87xx`, with
   a board suffix such as `it8696_a008090a` on builds from 2026-09-09; the daemon
-  reports the chip without it from 2.57.0, DEC-442)
+  reports the chip without it from 3.0.0, DEC-442)
 - `asus_ec_sensors` (ASUS EC, read-only sensors — hwmon name `asusec`)
 - `asus_wmi_sensors` (ASUS WMI, read-only sensors)
 

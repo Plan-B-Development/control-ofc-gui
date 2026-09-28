@@ -140,7 +140,7 @@ _THERMAL_REASONS: dict[str, str] = {
     # is every OpenFan channel and writable hwmon header, AIO/USB devices included.
     # DEC-443: the opening clause names the trigger and follows
     # `emergency_causes` (see `_emergency_reason`); this entry is the CPU one,
-    # which is also what a daemon before 2.57.0 means by "emergency".
+    # which is also what a daemon before 3.0.0 means by "emergency".
     "emergency": emergency_opening(()) + _EMERGENCY_REACH,
     "no_sensor_fallback": (
         # DEC-269: "reachable" was true when the only trigger was a sensor that

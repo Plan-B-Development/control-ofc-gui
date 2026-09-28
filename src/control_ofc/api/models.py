@@ -780,12 +780,12 @@ class DaemonStatus:
     verify_active: bool = False
     # DEC-443: WHY `thermal_state` is "emergency" — tokens from
     # `EMERGENCY_CAUSE_VALUES`, "cpu" before "coolant". Omitted when empty and
-    # absent before daemon 2.57.0 → []. An older daemon's only emergency is the
+    # absent before daemon 3.0.0 → []. An older daemon's only emergency is the
     # CPU one, so an empty list reads as the CPU's (`cooling_watch`); a newer
     # daemon in emergency always names at least one cause.
     emergency_causes: list[str] = field(default_factory=list)
     # DEC-443: pumps under the stall response, and cooling advisories. Omitted
-    # when empty and absent before daemon 2.57.0 → [] either way.
+    # when empty and absent before daemon 3.0.0 → [] either way.
     pump_stalls: list[PumpStall] = field(default_factory=list)
     advisories: list[CoolingAdvisory] = field(default_factory=list)
 
@@ -1430,7 +1430,7 @@ class ThermalSafetyInfo:
     emergency_threshold_c: float = 105.0
     release_threshold_c: float = 80.0
     # DEC-443: the coolant emergency's limit and release point, as the engine
-    # acted on them. `None` on a daemon before 2.57.0, which has no coolant rung.
+    # acted on them. `None` on a daemon before 3.0.0, which has no coolant rung.
     coolant_limit_c: float | None = None
     coolant_release_c: float | None = None
 
@@ -2258,7 +2258,7 @@ def parse_status(data: dict) -> DaemonStatus:
         # writing", the state that shows the daemon's figures rather than
         # suppressing them, so a bad payload cannot blank a live Controls page.
         verify_active=data.get("verify_active") is True,
-        # DEC-443: omitted when empty, absent before daemon 2.57.0 → [].
+        # DEC-443: omitted when empty, absent before daemon 3.0.0 → [].
         emergency_causes=[c for c in _wire_list(data, "emergency_causes") if isinstance(c, str)],
         pump_stalls=[
             PumpStall(**_filter_fields(PumpStall, e))

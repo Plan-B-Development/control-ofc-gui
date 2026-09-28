@@ -120,7 +120,7 @@ writes, PMFW handling, or GPU display naming.
   *(Safety-critical;
   also stated in `CLAUDE.md`.)*
 - **A GPU the active profile stops naming is handed back at once, not at the next stop
-  (DEC-448, daemon ≥ 2.57.0).** On the tick after a deactivate, or a switch to a profile
+  (DEC-448, daemon ≥ 3.0.0).** On the tick after a deactivate, or a switch to a profile
   that drops the card, the engine resets it to firmware auto — the same reset
   `POST /gpu/{id}/fan/reset` makes, under the same GPU write lock — and takes it off the
   hand-back list. A card a skipped or overridden control still names is kept; a verify

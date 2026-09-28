@@ -208,7 +208,7 @@ profile keeps running. The banner goes away on your next successful **Apply**.
 
 The daemon has two thermal safety states, and it drives both itself:
 
-- **Emergency** — the hottest CPU sensor reached the emergency limit, or (daemon 2.57.0 and
+- **Emergency** — the hottest CPU sensor reached the emergency limit, or (daemon 3.0.0 and
   later) a coolant sensor reached the **coolant limit** set under **Settings**; the chip's
   detail says which. Every OpenFan fan and
   every writable fan header runs at full speed, including fans no profile controls. The
@@ -227,7 +227,7 @@ counted as a warning and does not appear in the Logs page's alert bar. See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
 
-Two cooling checks sit beside these states and **are** counted as alerts (daemon 2.57.0 and
+Two cooling checks sit beside these states and **are** counted as alerts (daemon 3.0.0 and
 later): a **pump stall** — a pump in your profile reading 0 RPM while it should run, which the
 daemon answers by running it at full speed — is an error alert naming the pump, and the
 **cooling advisory** — the CPU held at its ceiling for a minute with every fan and pump running

@@ -251,7 +251,7 @@ Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip na
 was what reached `coolant`. The daemon reports these as
 the `coolant_temp` sensor kind.
 
-**Coolant is a safety input (DEC-443, daemon ≥ 2.57.0).** The hottest fresh
+**Coolant is a safety input (DEC-443, daemon ≥ 3.0.0).** The hottest fresh
 coolant reading at or above the coolant limit — Settings ▸ Daemon Configuration,
 40–70 °C, default 60 — forces every fan and pump to 100 % until the coolant is 5 °C
 cooler. Only a sensor **the daemon** classifies as `coolant_temp` triggers it — the

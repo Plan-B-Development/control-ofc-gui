@@ -1065,7 +1065,7 @@ class DaemonClient:
     def get_profile(self, profile_id: str) -> dict[str, Any]:
         """GET /profiles/{id} — fetch a stored profile's full document.
 
-        Lossless except that daemon >= 2.57.0 serves hwmon member and sensor ids
+        Lossless except that daemon >= 3.0.0 serves hwmon member and sensor ids
         canonical (DEC-442). Returns the stored document at the top level (``id``/``name``/
         ``controls``/``curves``/…), ready for ``Profile.from_dict``. Raises
         ``DaemonError`` with status 404 ``validation_error`` if no profile has

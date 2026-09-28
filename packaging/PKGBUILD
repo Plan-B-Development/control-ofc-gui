@@ -1,6 +1,6 @@
 # Maintainer: Plan-B-Development <https://github.com/Plan-B-Development>
 pkgname=control-ofc-gui
-pkgver=2.83.5
+pkgver=3.0.0
 pkgrel=1
 pkgdesc="PySide6 desktop GUI for the Control-OFC fan control daemon"
 arch=('any')
@@ -11,11 +11,12 @@ license=('MIT' 'OFL-1.1')
 # (the platform check happens after the import). Arch's
 # `python-pyqtgraph` package omits the dep upstream; declaring it here
 # is load-bearing on clean systems. See DEC-103. Do not remove.
-# control-ofc-daemon floor tracks the README pairing (≥ v2.11.0 — the daemon
-# that shipped the DEC-207 shared readiness assessment + the /status·/poll
-# readiness rollup the current GUI's Hardware page consumes). This is what the
-# GUI *requires*, not the ship-time pairing — bump only when that floor moves.
-depends=('control-ofc-daemon>=2.11.0' 'python' 'pyside6' 'python-httpx'
+# control-ofc-daemon floor tracks the README pairing (≥ v3.0.0 — the daemon
+# that canonicalises it87 v2.0 chip names, DEC-442: this GUI stores fan ids
+# under the canonical chip name, which an older daemon on a renamed chip does
+# not publish). This is what the GUI *requires*, not the ship-time pairing —
+# bump only when that floor moves.
+depends=('control-ofc-daemon>=3.0.0' 'python' 'pyside6' 'python-httpx'
          'python-pyqtgraph' 'python-numpy' 'python-colorama'
          'hicolor-icon-theme')
 makedepends=('python-build' 'python-installer' 'python-wheel' 'python-setuptools' 'scdoc')

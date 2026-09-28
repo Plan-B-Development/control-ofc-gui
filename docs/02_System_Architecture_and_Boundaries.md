@@ -51,7 +51,7 @@ That means the GUI will:
 6. persist its own **UI-owned** state locally (aliases, themes, layout)
 
 A new-GUI / old-daemon mix is refused (capability gate on `control.autonomous_control` + the package
-pin `control-ofc-daemon>=2.11.0`); the GUI has no loop to fall back to. **Demo mode** is the sole
+pin `control-ofc-daemon>=3.0.0`); the GUI has no loop to fall back to. **Demo mode** is the sole
 exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon.
 
 ## Consequences of this decision

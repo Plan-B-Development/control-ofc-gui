@@ -65,7 +65,7 @@ With the GUI present:
 - live manual control is an **expiring daemon override** (DEC-163), not a GUI write; fan identification is a daemon **identify** call (DEC-166)
 - the GUI persists its own UI-owned state locally (fan aliases, themes, window layout)
 
-A new-GUI / old-daemon mix is **refused**, never run dual-writer: the GUI gates control on the daemon advertising `control.autonomous_control`, and the package pins `control-ofc-daemon>=2.11.0` (`packaging/PKGBUILD`). **Demo mode** is the one exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon (DEC-165).
+A new-GUI / old-daemon mix is **refused**, never run dual-writer: the GUI gates control on the daemon advertising `control.autonomous_control`, and the package pins `control-ofc-daemon>=3.0.0` (`packaging/PKGBUILD`). **Demo mode** is the one exception — it runs a GUI-side evaluator against synthetic hardware, never touching the daemon (DEC-165).
 
 This daemon-owns-control model is the single most important build assumption in this pack. (Before 2.0.0 the GUI owned the control loop — DEC-010, now superseded.)
 

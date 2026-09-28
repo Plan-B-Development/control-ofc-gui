@@ -80,14 +80,12 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # DEC-407, control.stall_probe. The opt-in below-20 % stall/restart probe.
         "stall_probe": "2.54.0",
         # DEC-442, control.canonical_chip_names. Chip names and ids survive the
-        # it87 v2.0 board-suffix rename. The version is the release that ships
-        # DEC-442; `/ofc:release` confirms it.
-        "canonical_chip_names": "2.57.0",
+        # it87 v2.0 board-suffix rename. Shipped in daemon 3.0.0.
+        "canonical_chip_names": "3.0.0",
         # DEC-443, control.cooling_failure_detection. The coolant emergency, the
         # pump stall response, the DC pump floor, the cooling advisory and
-        # `POST /config/coolant-limit`. The version is the release that ships
-        # DEC-443; `/ofc:release` confirms it.
-        "cooling_failure_detection": "2.57.0",
+        # `POST /config/coolant-limit`. Shipped in daemon 3.0.0.
+        "cooling_failure_detection": "3.0.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN

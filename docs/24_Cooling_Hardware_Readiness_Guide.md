@@ -149,7 +149,7 @@ Some chips (notably several Gigabyte ITE variants) are not supported by the main
 the driver, but installing a DKMS package is a system change you should make
 deliberately, after checking it matches your chip. Never pass `force_id` — it can
 misconfigure the chip. **`it87-dkms-git` builds from 2026-09-09 (the driver's v2.0)
-rename Gigabyte chips** — e.g. `it8696_a008090a`. control-ofc-daemon 2.57.0 and newer
+rename Gigabyte chips** — e.g. `it8696_a008090a`. control-ofc-daemon 3.0.0 and newer
 strip that suffix, so no fan header's id changes; on an older daemon every id changes and
 pump roles, fan names and profile members need re-checking afterwards — the manual's
 Driver Setup page explains how to stay on the old names until the daemon is updated.

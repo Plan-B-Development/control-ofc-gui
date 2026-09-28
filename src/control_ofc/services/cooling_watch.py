@@ -117,7 +117,7 @@ def advisory_alert(advisory: CoolingAdvisory) -> CoolingAlert:
 
 def emergency_opening(causes: Sequence[str]) -> str:
     """The clause naming what tripped the emergency, e.g. "The coolant reached its
-    configured limit". Empty ``causes`` — a daemon before 2.57.0, whose only
+    configured limit". Empty ``causes`` — a daemon before 3.0.0, whose only
     emergency is the CPU one — reads as the CPU clause, which is true of it."""
     if not causes:
         return EMERGENCY_CAUSE_PHRASES["cpu"]
@@ -135,7 +135,7 @@ def emergency_opening(causes: Sequence[str]) -> str:
 def emergency_resume(causes: Sequence[str]) -> str:
     """When a profile resumes after an emergency, e.g. "once the coolant cools".
 
-    Empty ``causes`` is a daemon before 2.57.0, whose only emergency is the CPU
+    Empty ``causes`` is a daemon before 3.0.0, whose only emergency is the CPU
     one. A cause this client does not know makes the clause generic rather than
     naming only the causes it does know — it must not point the user at the
     wrong component.

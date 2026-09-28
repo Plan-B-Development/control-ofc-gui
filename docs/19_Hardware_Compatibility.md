@@ -142,7 +142,7 @@ current snapshot — **but see the v2.0 rename below before rebuilding.**
 [PR #132](https://github.com/frankcrawford/it87/pull/132) names each chip after
 the board's Gigabyte SIV whenever the driver can read it — `it8696_a008090a`
 instead of `it8696`. Control-OFC's stable header ids embed the chip name, so
-**control-ofc-daemon 2.57.0 and newer strip the suffix where they read the chip
+**control-ofc-daemon 3.0.0 and newer strip the suffix where they read the chip
 name** (DEC-442): every header, sensor, fan and voltage id stays what it was
 before the rebuild, the built-in board labels and the dual-chip check keep
 matching, and ids an older daemon saved under the suffixed spelling (header
@@ -163,7 +163,7 @@ recovered. The manual's Driver Setup page has the commands.
 
 **Known issue — secondary chip not enumerated.** On some systems only the primary
 chip appears in `sensors` output (5 of 8 fan headers visible on an X870E AORUS
-MASTER, etc.). On a daemon older than 2.57.0, first rule out the v2.0 rename
+MASTER, etc.). On a daemon older than 3.0.0, first rule out the v2.0 rename
 above — suffixed names mean both chips are present. Otherwise the secondary is blocked: an ITE eSPI→LPC bridge is
 latched in configuration mode and answering in place of the chip. The latch is
 written by anything that sends the Super-I/O unlock key to port 0x2E/0x4E —
@@ -746,7 +746,7 @@ Phase 1 (DEC-156, daemon ≥ 1.18.0 / GUI ≥ 1.40.0 — built as 1.39.0, which 
 Coolers ride the ordinary hwmon path; the daemon classifies coolant sensors as `coolant_temp`,
 flags pump/fan headers `is_aio`, and reports a dynamic `aio_hwmon` capability. **Per-driver pump
 writability is asymmetric** — the GUI reflects the kernel's per-channel `is_writable` and never
-fakes control. **A coolant sensor is a safety input since DEC-443** (daemon ≥ 2.57.0): at or above
+fakes control. **A coolant sensor is a safety input since DEC-443** (daemon ≥ 3.0.0): at or above
 the coolant limit (default 60 °C, settable 40–70) the daemon forces every fan and pump to 100 %.
 
 | Driver (hwmon `name`) | Devices | Coolant temp | Pump/fan control |
@@ -887,7 +887,7 @@ DEC-098) that matches the running kernel against published amdgpu
 regressions and surfaces matches via
 `GET /capabilities` (`devices.amd_gpu.kernel_warnings`). Every AMD GPU in the
 machine is checked, an integrated one beside a discrete card included, and the
-message names the affected cards (DEC-449, daemon ≥ 2.57.0). The GUI raises a
+message names the affected cards (DEC-449, daemon ≥ 3.0.0). The GUI raises a
 one-time `QMessageBox` when a high- or critical-severity warning fires,
 and lists every match on the System State page. Acknowledged warnings are
 remembered in `app_settings.acknowledged_kernel_warnings` so the popup

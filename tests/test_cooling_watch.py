@@ -208,7 +208,7 @@ class TestEmergencyReason:
         assert "the coolant reached its configured limit" in text
 
     def test_an_older_daemon_keeps_the_cpu_wording(self):
-        """No causes = a pre-2.57.0 daemon, whose only emergency is the CPU one."""
+        """No causes = a pre-3.0.0 daemon, whose only emergency is the CPU one."""
         assert _THERMAL_REASONS["emergency"] in self._text([])
 
     def test_an_unknown_cause_renders(self):
