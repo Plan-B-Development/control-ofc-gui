@@ -80,9 +80,10 @@ _GPU_SOURCES = ("amd_gpu", "intel_gpu", "nvidia_gpu")
 # sensor. They keep whatever sensor_id they last had, so it must not be trusted.
 _COMPOSITE_CURVE_TYPES = (CurveType.MIX, CurveType.SYNC)
 
-# Control methods that mean "this fan has no write path". Mirrors the strings
-# returned by :func:`overview_view.fan_control_method` (DEC-102 / DEC-204).
-_READ_ONLY_METHODS = ("read-only", "no fan control", "unknown")
+# Control methods that mean "no profile can drive this fan". Mirrors the strings
+# returned by :func:`overview_view.fan_control_method` (DEC-102 / DEC-204). A
+# legacy GPU is here although verify and reset write it: no engine does (DEC-445).
+_READ_ONLY_METHODS = ("read-only", "no fan control", "unknown", "verify only (legacy pwm1)")
 
 
 class FanState(Enum):

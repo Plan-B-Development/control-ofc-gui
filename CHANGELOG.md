@@ -74,6 +74,18 @@
 
 ### Fixed
 
+- **An RX 6000 or older AMD GPU fan is no longer shown as profile-controlled** (DEC-445). No
+  daemon has ever driven such a card from a profile: it can be tested and reset, and otherwise
+  its own fan curve stays in charge. The Overview's control method now reads **verify only
+  (legacy pwm1)**, the Dashboard gives it a read-only card of its own when no control claims it
+  (it had none), and the Controls member picker lists it greyed out as **(verify only)** instead
+  of letting you assign it. An AMD GPU with no write path at all — usually an RX 7000/9000
+  without its firmware fan curve — is listed the same way as **(read-only)**, with a tooltip
+  that names the kernel setting when that is the cause. On a machine with two AMD GPUs only the
+  card the daemon describes is judged. A control you already built on such a card now shows
+  **Not controlled** and the daemon reports a warning while it stays in the profile; remove the
+  GPU from the control to clear it. This holds against older daemons too, which still report such a card as
+  writable.
 - **The GUI names the right driver for three Fintek chips** (DEC-441). F71805F, F71806F and F71872F use
   the `f71805f` driver, as the daemon already said. The GUI's chip guidance named `f71882fg` for the
   whole F718xx series. The note for older ITE chips now also lists IT8726F, IT8758E and IT8795E.

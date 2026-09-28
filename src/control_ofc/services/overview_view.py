@@ -51,7 +51,10 @@ CONTROL_METHOD_TOOLTIPS: dict[str, str] = {
     "hwmon PWM — no RPM": (
         "Motherboard PWM output without a tachometer input. Writable but no RPM feedback."
     ),
-    "hwmon PWM (legacy)": ("Pre-RDNA3 GPU fan controlled via the legacy pwm1 sysfs interface."),
+    "verify only (legacy pwm1)": (
+        "Pre-RDNA3 GPU fan. The daemon can test and reset it through the legacy pwm1 "
+        "interface, but no profile drives it — its firmware fan curve stays in charge."
+    ),
     "PMFW curve": ("GPU fan controlled via the AMD PMFW fan_curve sysfs interface."),
     "read-only": (
         "BIOS/EC owns this fan; PWM writes will be reverted. Run Test PWM Control to confirm."
@@ -155,7 +158,8 @@ def fan_control_method(
         method = caps.amd_gpu.fan_control_method
         return {
             "pmfw_curve": "PMFW curve",
-            "hwmon_pwm": "hwmon PWM (legacy)",
+            # DEC-445: verify and reset write it; no daemon engine ever has.
+            "hwmon_pwm": "verify only (legacy pwm1)",
             "read_only": "read-only",
             "none": "no fan control",
         }.get(method, "unknown")

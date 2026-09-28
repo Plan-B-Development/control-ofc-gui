@@ -358,7 +358,7 @@ GPU fan RPM is polled alongside motherboard hwmon sensors in the same `hwmon_pol
 
 (The bare `POST /gpu/{gpu_id}/fan/pwm` static-speed write was retired at 2.0.0 — DEC-165. GPU fans are engine-driven; live manual control is the override API, DEC-163.)
 
-GPU fan writes are routed through the PMFW `fan_curve` sysfs interface (RDNA3+) or `pwm1_enable=1` + `pwm1` (pre-RDNA3). No lease is required — PMFW operations are atomic and firmware-managed.
+The engine's GPU fan writes go through the PMFW `fan_curve` sysfs interface (RDNA3+) only. A pre-RDNA3 card's `pwm1_enable=1` + `pwm1` is written by `POST /gpu/{id}/fan/verify` and `/fan/reset` and by nothing else, so no profile drives it and `/capabilities` reports it `fan_write_supported: false` (DEC-445). No lease is required — PMFW operations are atomic and firmware-managed.
 
 **Write suppression (v0.5.3):** GPU PMFW writes use a 5% minimum change threshold (not 1% like OpenFan/hwmon). Each PMFW commit triggers SMU firmware processing that can stall the GPU display pipeline. During gaming, temperature fluctuations of 0.5-1°C per second would otherwise produce continuous writes. The `disable_zero_rpm()` call is idempotent — it reads the multi-line sysfs output and skips if already disabled.
 

@@ -63,6 +63,34 @@ def test_fan_control_method_amd_gpu():
     assert ov.fan_control_method(f, [], None) == "unknown"  # no caps → unknown
 
 
+def test_a_legacy_amd_gpu_is_verify_only_and_not_controllable():
+    """DEC-445: a pre-RDNA3 card's legacy pwm1 is written by verify and reset,
+    never by the engine, on every daemon — so ``"hwmon_pwm"`` reads as verify
+    only and the fan is not controllable, whatever ``fan_write_supported`` says
+    (daemons before DEC-445 said ``true``). PMFW is the opposite arm."""
+    from control_ofc.services.fan_cards_view import is_fan_controllable
+
+    f = FanReading(id="amd_gpu:0000:0a:00.0", source="amd_gpu", rpm=900)
+    for fan_write_supported in (True, False):
+        legacy = Capabilities(
+            amd_gpu=AmdGpuCapability(
+                present=True,
+                fan_control_method="hwmon_pwm",
+                fan_write_supported=fan_write_supported,
+            )
+        )
+        method = ov.fan_control_method(f, [], legacy)
+        assert method == "verify only (legacy pwm1)"
+        assert method in ov.CONTROL_METHOD_TOOLTIPS, "every method string has a tooltip"
+        assert not is_fan_controllable(f, [], legacy), fan_write_supported
+    pmfw = Capabilities(
+        amd_gpu=AmdGpuCapability(
+            present=True, fan_control_method="pmfw_curve", fan_write_supported=True
+        )
+    )
+    assert is_fan_controllable(f, [], pmfw)
+
+
 def test_fan_control_method_intel_nvidia_readonly():
     assert (
         ov.fan_control_method(FanReading(id="i", source="intel_gpu", rpm=0), [], None)
@@ -307,3 +335,24 @@ def test_the_age_note_does_not_claim_age_is_the_poll_time():
     assert "refreshed" in vm.age_note.lower(), (
         f"the note must still explain what age means, got {vm.age_note!r}"
     )
+
+
+def test_support_bundle_says_whether_a_profile_can_drive_the_gpu_fan():
+    """Contract review of DEC-446: a pre-DEC-445 daemon reports a legacy card
+    ``fan_write_supported: true``, so the bundle also prints the GUI's own
+    answer — otherwise bundles from two daemon versions disagree about one card."""
+    from control_ofc.services.app_state import AppState
+    from control_ofc.services.diagnostics_service import DiagnosticsService
+
+    for method, drivable in (("hwmon_pwm", "No"), ("pmfw_curve", "Yes")):
+        state = AppState()
+        state.set_capabilities(
+            Capabilities(
+                amd_gpu=AmdGpuCapability(
+                    present=True, fan_control_method=method, fan_write_supported=True
+                )
+            )
+        )
+        text = DiagnosticsService(state=state).format_gpu_status()
+        assert "Fan write supported: Yes" in text, "the wire value is still shown"
+        assert f"Profile can drive the fan: {drivable}" in text, method

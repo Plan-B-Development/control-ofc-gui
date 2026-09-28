@@ -579,8 +579,11 @@ mainline `nct6775` driver.
 - **RDNA3+ (RX 7000 / RX 9000 series):** Fan control uses PMFW `fan_curve`
   sysfs interface. Requires `amdgpu.ppfeaturemask` kernel parameter with
   bit 14 set (e.g., `amdgpu.ppfeaturemask=0xffffffff`).
-- **RDNA2 and older (RX 6000, RX 5000, Vega, Polaris):** Use the
-  traditional `pwm1_enable=1` + `pwm1` control path. RX 6000 = RDNA2,
+- **RDNA2 and older (RX 6000, RX 5000, Vega, Polaris):** Expose the
+  traditional `pwm1_enable=1` + `pwm1` control path. The daemon uses it for
+  **Test GPU Fan Control** and **Restore GPU Fan to Automatic** only: no
+  profile drives these fans, and their firmware curve stays in charge
+  (DEC-445). RX 6000 = RDNA2,
   RX 5000 = RDNA1; RX 7000 is the first generation where the legacy
   path was removed in favour of PMFW `fan_curve`.
   AMD GPU family map: [AMD `amdgpu.ids` (libdrm)](https://gitlab.freedesktop.org/mesa/drm/-/blob/main/data/amdgpu.ids),

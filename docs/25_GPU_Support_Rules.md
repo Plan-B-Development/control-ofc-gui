@@ -26,7 +26,13 @@ writes, PMFW handling, or GPU display naming.
 - **RDNA3+ GPUs (RX 7000/9000 series) do NOT support `pwm1_enable=1` manual mode** —
   fan control MUST use the PMFW `fan_curve` sysfs interface. *(Safety-critical; also
   stated in `CLAUDE.md`.)*
-- Pre-RDNA3 GPUs (RX 6000 and older) use traditional `pwm1_enable=1` + `pwm1` control.
+- Pre-RDNA3 GPUs (RX 6000 and older) expose traditional `pwm1_enable=1` + `pwm1`
+  control, and the daemon writes it **only** from the GPU fan verify and reset. No
+  engine has ever driven it, so no profile controls these fans: `/capabilities`
+  reports `fan_control_method: "hwmon_pwm"` with `fan_write_supported: false`, the
+  GUI labels the fan "verify only", its picker will not assign it, and a control
+  bound to it is listed as `backend_unavailable` (DEC-445). Building an engine arm
+  for them is deferred work (`GPU-c`).
 - **GPU fans are outside the thermal force, and keep following the profile through it.**
   Neither the 100 % emergency nor the 40 % no-sensor floor is ever written to a GPU fan
   (the GPU firmware owns its own thermal protection). On a forced tick the daemon still
@@ -123,7 +129,9 @@ writes, PMFW handling, or GPU display naming.
 - The read-only hint says why: while overdrive is off it names
   `amdgpu.ppfeaturemask`; with it on, it says the kernel did not expose the curve
   (the kernel 7.0+ case above) instead of repeating advice the user already took.
-- Read-only GPU fans show a `(read-only)` suffix in fan-role member selection.
+- In fan-role member selection a GPU fan no profile can drive is listed but disabled,
+  with a `(read-only)` or, for a pre-RDNA3 card, `(verify only)` suffix and a tooltip
+  saying why (DEC-445).
 
 ## Display and UX
 

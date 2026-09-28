@@ -391,3 +391,79 @@ class TestProfileSanitizeAgainstHeaders:
 
         assert dropped == 0
         assert profile.controls[0].members[0].member_id == "hwmon:it8696:dev:pwm1:CPU_FAN"
+
+
+class TestEditMembersPickerGpuWritability:
+    """DEC-445 (`GPU-a`): the picker lists an AMD GPU fan no profile can drive,
+    but not as something to select — the daemon would list its control as
+    ``backend_unavailable``. Driven through ``_on_edit_members`` so the call
+    site's capability argument is what is tested, not the builder alone."""
+
+    def _rows(self, qtbot, monkeypatch, amd_gpu: AmdGpuCapability) -> list[dict]:
+        from control_ofc.api.models import FanReading
+
+        captured, ControlsPage = TestEditMembersPickerFiltersUnwritableHeaders()._captured_picker(
+            monkeypatch
+        )
+        state = _state_with_headers([])
+        state.set_capabilities(Capabilities(amd_gpu=amd_gpu))
+        state.set_fans([FanReading(id="amd_gpu:0000:0a:00.0", source="amd_gpu", rpm=900)])
+        profile_service = ProfileService()
+        profile = Profile(id="p1", name="Test")
+        profile.controls = [LogicalControl(id="c1", name="GPU", mode=ControlMode.CURVE)]
+        profile_service._profiles = {"p1": profile}
+        profile_service._active_id = "p1"
+        page = ControlsPage(state=state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        page._on_edit_members("c1")
+        return [r for r in (captured["available"] or []) if r["source"] == "amd_gpu"]
+
+    def test_a_legacy_gpu_a_pre_dec445_daemon_calls_writable_is_not_selectable(
+        self, qtbot, monkeypatch
+    ):
+        # The discriminating arm: the old daemon's answer (`true`) is what the
+        # page used to read, and it offered the card as assignable.
+        rows = self._rows(
+            qtbot,
+            monkeypatch,
+            AmdGpuCapability(
+                present=True, fan_control_method="hwmon_pwm", fan_write_supported=True
+            ),
+        )
+        assert len(rows) == 1, "listed, so the reason is visible"
+        assert rows[0]["selectable"] is False
+        assert "(verify only)" in rows[0]["label"]
+
+    def test_nothing_is_judged_before_capabilities_arrive(self, qtbot, monkeypatch):
+        """The page passes None while capabilities are absent, not a default
+        (all-False) capability that would call every GPU read-only."""
+        from control_ofc.api.models import FanReading
+
+        captured, ControlsPage = TestEditMembersPickerFiltersUnwritableHeaders()._captured_picker(
+            monkeypatch
+        )
+        state = _state_with_headers([])
+        state.capabilities = None
+        state.set_fans([FanReading(id="amd_gpu:0000:0a:00.0", source="amd_gpu", rpm=900)])
+        profile_service = ProfileService()
+        profile = Profile(id="p1", name="Test")
+        profile.controls = [LogicalControl(id="c1", name="GPU", mode=ControlMode.CURVE)]
+        profile_service._profiles = {"p1": profile}
+        profile_service._active_id = "p1"
+        page = ControlsPage(state=state, profile_service=profile_service)
+        qtbot.addWidget(page)
+        page._on_edit_members("c1")
+        rows = [r for r in (captured["available"] or []) if r["source"] == "amd_gpu"]
+        assert len(rows) == 1
+        assert "selectable" not in rows[0]
+
+    def test_a_pmfw_gpu_stays_selectable(self, qtbot, monkeypatch):
+        rows = self._rows(
+            qtbot,
+            monkeypatch,
+            AmdGpuCapability(
+                present=True, fan_control_method="pmfw_curve", fan_write_supported=True
+            ),
+        )
+        assert len(rows) == 1
+        assert "selectable" not in rows[0]

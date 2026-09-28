@@ -78,7 +78,7 @@ The fan table has the following columns:
 |--------|---------|
 | **ID** | Display name (user alias if set, otherwise hardware label or fan ID) |
 | **Source** | Connection type: openfan, hwmon, amd_gpu, intel_gpu, or nvidia_gpu |
-| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW or legacy pwm1), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [System State](#system-state-page) page explains why |
+| **Control method** | How this fan can be controlled: `openfan`, `hwmon` (with PWM-only or full read/write), `amd_gpu` (PMFW curve; or *verify only (legacy pwm1)* on an RX 6000 or older, which can be tested and reset but not driven by a profile), `read_only`, or `unknown`. Read-only entries cannot be commanded — **Test PWM Control** on the [System State](#system-state-page) page explains why |
 | **RPM** | Hardware-measured speed (dash if not available). Writable hwmon headers reading 0 RPM are annotated `(no fan detected)` so you don't accidentally assign a curve to an empty header |
 | **PWM (%)** | Last commanded speed percentage (dash if not set) |
 | **Freshness** | "fresh" (under 2 s), "stale" (2-10 s, shown in yellow), or "invalid" (over 10 s, shown in red) |

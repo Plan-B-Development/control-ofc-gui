@@ -11,7 +11,7 @@ extraction (audit 2026-07-29, rule-6 finding).
 
 from __future__ import annotations
 
-from control_ofc.api.models import FanReading, HwmonHeader
+from control_ofc.api.models import AmdGpuCapability, FanReading, HwmonHeader
 from control_ofc.services.controls_view import (
     assigned_elsewhere_map,
     build_member_candidates,
@@ -27,6 +27,11 @@ def _fan(fan_id: str, source: str = "hwmon", rpm: int | None = 900) -> FanReadin
 
 def _header(header_id: str, **kw) -> HwmonHeader:
     return HwmonHeader(id=header_id, **kw)
+
+
+# The AMD GPU capability a profile can drive (PMFW), and one it cannot.
+_PMFW = AmdGpuCapability(present=True, fan_control_method="pmfw_curve", fan_write_supported=True)
+_RDNA_READ_ONLY = AmdGpuCapability(present=True, fan_control_method="read_only")
 
 
 def _names(mapping: dict[str, str]):
@@ -45,7 +50,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             fans,
             headers,
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({}),
             fallback_name=_names({}),
         )
@@ -55,7 +60,7 @@ class TestBuildMemberCandidates:
         """DEC-121/DEC-204: no kernel write path exists, permanently."""
         fans = [_fan("i", source="intel_gpu"), _fan("n", source="nvidia_gpu")]
         rows = build_member_candidates(
-            fans, [], gpu_writable=True, display_name=_names({}), fallback_name=_names({})
+            fans, [], amd_gpu=_PMFW, display_name=_names({}), fallback_name=_names({})
         )
         assert rows == []
 
@@ -65,12 +70,95 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("gpu", source="amd_gpu")],
             [],
-            gpu_writable=False,
+            amd_gpu=_RDNA_READ_ONLY,
             display_name=_names({"gpu": "9070XT Fan"}),
             fallback_name=_names({}),
         )
         assert len(rows) == 1
         assert "(read-only)" in rows[0]["label"]
+        assert rows[0]["selectable"] is False
+        assert "ppfeaturemask" in rows[0]["tooltip"]
+
+    def test_only_the_card_the_capability_describes_is_judged(self):
+        """Contract review of DEC-446: ``devices.amd_gpu`` describes the primary
+        card only. With a legacy primary at 03:00.0 and a PMFW card at 0a:00.0,
+        blocking by the primary's answer disabled the card the engine DOES
+        drive. Only the described card is blocked; the other is offered."""
+        legacy_primary = AmdGpuCapability(
+            present=True, pci_id="0000:03:00.0", fan_control_method="hwmon_pwm"
+        )
+        rows = {
+            r["id"]: r
+            for r in build_member_candidates(
+                [
+                    _fan("amd_gpu:0000:03:00.0", source="amd_gpu"),
+                    _fan("amd_gpu:0000:0a:00.0", source="amd_gpu"),
+                ],
+                [],
+                amd_gpu=legacy_primary,
+                display_name=_names({}),
+                fallback_name=_names({}),
+            )
+        }
+        assert rows["amd_gpu:0000:03:00.0"]["selectable"] is False
+        assert "selectable" not in rows["amd_gpu:0000:0a:00.0"]
+        assert "(verify only)" not in rows["amd_gpu:0000:0a:00.0"]["label"]
+
+    def test_nothing_is_judged_before_capabilities_arrive(self):
+        """Contract review of DEC-446: with no capabilities yet, an unknown is
+        not an 'unwritable' — the row is offered unlabelled."""
+        rows = build_member_candidates(
+            [_fan("amd_gpu:0000:03:00.0", source="amd_gpu")],
+            [],
+            amd_gpu=None,
+            display_name=_names({}),
+            fallback_name=_names({}),
+        )
+        assert "selectable" not in rows[0]
+        assert "(read-only)" not in rows[0]["label"]
+
+    def test_read_only_advice_names_ppfeaturemask_only_while_overdrive_is_off(self):
+        """DEC-430: with overdrive on, a missing fan_curve is the kernel's doing,
+        so repeating the ppfeaturemask advice would send the user to a setting
+        they already have."""
+        rows = build_member_candidates(
+            [_fan("gpu", source="amd_gpu")],
+            [],
+            amd_gpu=AmdGpuCapability(
+                present=True, fan_control_method="read_only", overdrive_enabled=True
+            ),
+            display_name=_names({"gpu": "9070XT Fan"}),
+            fallback_name=_names({}),
+        )
+        assert rows[0]["selectable"] is False
+        assert "no write path" in rows[0]["tooltip"]
+        assert "ppfeaturemask" not in rows[0]["tooltip"]
+
+    def test_legacy_amd_gpu_is_listed_verify_only_and_not_selectable(self):
+        """DEC-445: a pre-RDNA3 card's legacy pwm1 is written by verify and
+        reset, never by the engine, so no profile can drive it. Both daemon
+        answers are covered: the new one (``fan_write_supported: false``) and
+        the pre-DEC-445 one (``true``), which the GUI must not believe — no
+        engine has ever written that card."""
+        for fan_write_supported in (False, True):
+            legacy = AmdGpuCapability(
+                present=True,
+                fan_control_method="hwmon_pwm",
+                fan_write_supported=fan_write_supported,
+            )
+            rows = build_member_candidates(
+                [_fan("gpu", source="amd_gpu")],
+                [],
+                amd_gpu=legacy,
+                display_name=_names({"gpu": "RX 6800 XT Fan"}),
+                fallback_name=_names({}),
+            )
+            assert len(rows) == 1, "listed, so the reason is visible"
+            assert "(verify only)" in rows[0]["label"], fan_write_supported
+            assert rows[0]["selectable"] is False, fan_write_supported
+            assert "no profile drives it" in rows[0]["tooltip"]
+            # The badge describes hardware, not the user's name for the fan.
+            assert rows[0]["clean_label"] == "RX 6800 XT Fan"
 
     def test_writable_amd_gpu_is_offered_unflagged(self):
         """Twin of the read-only case — the suffix must be conditional, not
@@ -78,12 +166,13 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("gpu", source="amd_gpu")],
             [],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({"gpu": "9070XT Fan"}),
             fallback_name=_names({}),
         )
         assert len(rows) == 1
         assert "(read-only)" not in rows[0]["label"]
+        assert "selectable" not in rows[0]
         assert rows[0]["clean_label"] == "9070XT Fan"
 
     def test_clean_label_keeps_the_role_a_user_alias_hides(self):
@@ -93,7 +182,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("h1")],
             [_header("h1", is_writable=True)],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({"h1": "My Fan"}),  # alias hides the role
             fallback_name=_names({"h1": "CPU_OPT"}),  # hardware carries it
         )
@@ -106,7 +195,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("h1")],
             [_header("h1", is_writable=True)],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({"h1": "Pump"}),
             fallback_name=_names({"h1": "SYS_FAN2"}),
         )
@@ -118,7 +207,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("h1")],
             [_header("h1", is_writable=True, is_aio=True)],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({"h1": "Pump"}),
             fallback_name=_names({"h1": "Pump"}),
         )
@@ -131,7 +220,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("openfan:ch00", source="openfan")],
             [],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({"openfan:ch00": "Front"}),
             fallback_name=_names({"openfan:ch00": "CPU_FAN"}),  # must be ignored
         )
@@ -142,7 +231,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("h1")],
             headers,
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({}),
             fallback_name=_names({}),
         )
@@ -155,7 +244,7 @@ class TestBuildMemberCandidates:
         rows = build_member_candidates(
             [_fan("h1", rpm=None)],
             [_header("h1", is_writable=True)],
-            gpu_writable=True,
+            amd_gpu=_PMFW,
             display_name=_names({}),
             fallback_name=_names({}),
         )

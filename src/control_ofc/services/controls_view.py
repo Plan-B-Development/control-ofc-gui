@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from control_ofc.api.models import AmdGpuCapability
 from control_ofc.knowledge.sensor_knowledge import (
     classify_sensor_with_overrides,
     sensor_is_coolant,
@@ -379,13 +380,14 @@ def build_member_candidates(
     fans,
     headers,
     *,
-    gpu_writable: bool,
+    amd_gpu: AmdGpuCapability | None,
     display_name,
     fallback_name,
 ) -> list[dict]:
     """Rows for the member-picker: every fan output that may be controlled.
 
-    Each row carries a user-facing ``label`` (badges, AIO tag, ``(read-only)``)
+    Each row carries a user-facing ``label`` (badges, AIO tag, ``(read-only)``,
+    ``(verify only)``)
     and a separate ``clean_label`` — what would be persisted as
     ``ControlMember.member_label``, which is a **safety input**, not decoration:
     it drives the DEC-095/162 30% CPU/pump floor on both sides of the API. See
@@ -401,8 +403,17 @@ def build_member_candidates(
       that is permanent. Their temperature sensors stay available as curve sensors.
 
     ``display_name``/``fallback_name`` are the ``AppState`` resolvers, injected so
-    this stays headless. An AMD GPU is still listed when ``gpu_writable`` is False
-    — flagged ``(read-only)`` rather than hidden, because that state is fixable.
+    this stays headless. ``amd_gpu`` is ``None`` until capabilities arrive, and
+    then nothing is judged. An AMD GPU no profile can drive
+    (:attr:`AmdGpuCapability.profile_writable` false) is still LISTED, with its
+    reason in the label, but carries ``selectable: False`` (DEC-445): the daemon
+    would list a control of it as ``backend_unavailable``. It is shown rather
+    than hidden because the reason is worth knowing, and on RDNA3/RDNA4 fixable
+    (``ppfeaturemask``). ``(verify only)`` is a pre-RDNA3 card, whose legacy
+    ``pwm1`` verify and reset write and no engine drives. Only the card the
+    capability describes is judged (:meth:`AmdGpuCapability.describes_fan`): on a
+    machine with two AMD GPUs the other is offered unjudged, and the daemon's
+    ``backend_unavailable`` reports it if no profile can drive it (`GPU-b`).
     """
     header_by_id = {h.id: h for h in headers}
     available: list[dict] = []
@@ -421,13 +432,35 @@ def build_member_candidates(
         fallback = fallback_name(fan.id) if header_by_id.get(fan.id) is not None else ""
         clean_label = role_preserving_label(label, fallback, fan.source)
 
-        if fan.source == "amd_gpu" and not gpu_writable:
-            label = f"{label} (read-only)"
+        gpu_blocked_tip = ""
+        if (
+            fan.source == "amd_gpu"
+            and amd_gpu is not None
+            and amd_gpu.describes_fan(fan.id)
+            and not amd_gpu.profile_writable
+        ):
+            if amd_gpu.fan_control_method == "hwmon_pwm":
+                label = f"{label} (verify only)"
+                gpu_blocked_tip = (
+                    "A pre-RDNA3 GPU: the daemon can test and reset this fan, but no "
+                    "profile drives it — its firmware fan curve stays in charge."
+                )
+            else:
+                label = f"{label} (read-only)"
+                # The ppfeaturemask advice only while overdrive is off: with it on,
+                # a missing fan_curve is the kernel's doing, not the user's (DEC-430).
+                gpu_blocked_tip = "The daemon has no write path to this GPU fan." + (
+                    " An RX 7000/9000 is driven through its firmware fan curve, which the "
+                    "kernel exposes only with amdgpu.ppfeaturemask bit 14 set — see Driver "
+                    "Setup in the manual."
+                    if amd_gpu.fan_control_method == "read_only" and not amd_gpu.overdrive_enabled
+                    else ""
+                )
         # Surface "no fan detected" / PWM-only states so users don't assign
         # curves to empty headers.
         presence = classify_fan_presence(fan, header_by_id.get(fan.id))
         badge = PRESENCE_BADGE.get(presence, "")
-        if badge and "(read-only)" not in label:
+        if badge and not gpu_blocked_tip:
             label = f"{label} ({badge})"
 
         h_aio = header_by_id.get(fan.id)
@@ -451,7 +484,10 @@ def build_member_candidates(
             "rpm": fan.rpm,  # DEC-214: live RPM (None → "no fan", never invented)
         }
         tip = PRESENCE_TOOLTIP.get(presence, "") if presence != FanPresence.PRESENT else ""
-        if tip:
+        if gpu_blocked_tip:
+            entry["selectable"] = False
+            entry["tooltip"] = gpu_blocked_tip
+        elif tip:
             entry["tooltip"] = tip
         available.append(entry)
 

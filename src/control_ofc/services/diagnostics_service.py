@@ -384,6 +384,9 @@ class DiagnosticsService(QObject):
             lines.append(f"  PMFW supported: {'Yes' if gpu.pmfw_supported else 'No'}")
             lines.append(f"  Fan RPM available: {'Yes' if gpu.fan_rpm_available else 'No'}")
             lines.append(f"  Fan write supported: {'Yes' if gpu.fan_write_supported else 'No'}")
+            # DEC-446: what the GUI concludes, since daemons before it reported a
+            # legacy (hwmon_pwm) card writable although no engine drives it.
+            lines.append(f"  Profile can drive the fan: {'Yes' if gpu.profile_writable else 'No'}")
             lines.append(f"  Discrete GPU: {'Yes' if gpu.is_discrete else 'No'}")
             lines.append(f"  Overdrive enabled: {'Yes' if gpu.overdrive_enabled else 'No'}")
             if not gpu.overdrive_enabled and not gpu.pmfw_supported:

@@ -228,7 +228,11 @@ def test_dedicate_gpu_button_visibility_tracks_capability(qtbot, app_state, prof
 
     # Writable but no zero-RPM support → hidden (nothing to dedicate for).
     page._on_capabilities_updated(
-        Capabilities(amd_gpu=AmdGpuCapability(present=True, fan_write_supported=True))
+        Capabilities(
+            amd_gpu=AmdGpuCapability(
+                present=True, fan_control_method="pmfw_curve", fan_write_supported=True
+            )
+        )
     )
     assert page._dedicate_gpu_action.isVisible() is False
 
@@ -236,11 +240,28 @@ def test_dedicate_gpu_button_visibility_tracks_capability(qtbot, app_state, prof
     page._on_capabilities_updated(
         Capabilities(
             amd_gpu=AmdGpuCapability(
-                present=True, fan_write_supported=True, gpu_zero_rpm_available=True
+                present=True,
+                fan_control_method="pmfw_curve",
+                fan_write_supported=True,
+                gpu_zero_rpm_available=True,
             )
         )
     )
     assert page._dedicate_gpu_action.isVisible() is True
+
+    # DEC-445: a legacy card a pre-DEC-445 daemon calls writable is not one a
+    # profile can drive, so the action stays hidden even with every other flag set.
+    page._on_capabilities_updated(
+        Capabilities(
+            amd_gpu=AmdGpuCapability(
+                present=True,
+                fan_control_method="hwmon_pwm",
+                fan_write_supported=True,
+                gpu_zero_rpm_available=True,
+            )
+        )
+    )
+    assert page._dedicate_gpu_action.isVisible() is False
 
 
 # ---------------------------------------------------------------------------

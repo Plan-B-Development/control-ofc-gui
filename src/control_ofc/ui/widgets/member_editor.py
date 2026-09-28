@@ -157,6 +157,13 @@ class MemberEditorDialog(ModalDialog):
                         item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled
                     )
                     item.setToolTip(f"Already assigned to fan role: {role_name_for}")
+                elif out.get("selectable") is False:
+                    # DEC-445: a fan no profile can drive (a GPU without a PMFW
+                    # fan_curve). Listed so the reason is visible, never assignable.
+                    item.setFlags(
+                        item.flags() & ~Qt.ItemFlag.ItemIsSelectable & ~Qt.ItemFlag.ItemIsEnabled
+                    )
+                    item.setToolTip(out.get("tooltip", ""))
                 elif note is not None:
                     # Deliberately still enabled and selectable — the block is
                     # soft, and `_confirm_reserved` is what enforces it.

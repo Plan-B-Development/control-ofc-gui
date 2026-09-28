@@ -97,3 +97,38 @@ class TestMemberEditorRestyle:
         dlg._on_add()
         assert dlg._available_count.text() == "2 found"
         assert dlg._selected_count.text() == "1 assigned"
+
+
+class TestUnselectableRows:
+    """DEC-445: a row the builder marks ``selectable: False`` (a GPU fan no
+    profile can drive) is shown, disabled, with its reason as the tooltip —
+    and cannot be moved across by selecting everything and pressing Add."""
+
+    def test_an_unselectable_row_is_disabled_and_cannot_be_added(self, qtbot):
+        available = [
+            {"id": "openfan:ch00", "source": "openfan", "label": "Front Intake 1"},
+            {
+                "id": "amd_gpu:0000:0a:00.0",
+                "source": "amd_gpu",
+                "label": "RX 6800 XT Fan (verify only)",
+                "selectable": False,
+                "tooltip": "no profile drives it",
+            },
+        ]
+        dlg = MemberEditorDialog([], available)
+        qtbot.addWidget(dlg)
+        items = {
+            dlg._available_list.item(i).data(Qt.ItemDataRole.UserRole)["id"]: (
+                dlg._available_list.item(i)
+            )
+            for i in range(dlg._available_list.count())
+        }
+        gpu = items["amd_gpu:0000:0a:00.0"]
+        assert not gpu.flags() & Qt.ItemFlag.ItemIsEnabled
+        assert gpu.toolTip() == "no profile drives it"
+        # The opposite arm: an ordinary row stays enabled.
+        assert items["openfan:ch00"].flags() & Qt.ItemFlag.ItemIsEnabled
+
+        dlg._available_list.selectAll()
+        dlg._on_add()
+        assert [m.member_id for m in dlg.get_members()] == ["openfan:ch00"]

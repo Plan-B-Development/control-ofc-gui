@@ -321,8 +321,10 @@ A shared curve can't be authored below its chassis member's floor, and a bare
 0% curve value alone still spins at the card's OD_RANGE minimum (often ~15%): the kernel
 rejects a point below it, so the daemon clamps up to it. To make a
 writable AMD GPU fan idle at **true 0 RPM** when the GPU is cool, the Controls
-page offers a one-click **Dedicate GPU Fan** action (shown only when the daemon
-reports `amd_gpu.present`, `fan_write_supported`, and `gpu_zero_rpm_available`).
+page offers a one-click **Dedicate GPU Fan** action (shown only when a profile can
+drive the GPU fan — `AmdGpuCapability.profile_writable`: present, `fan_write_supported`
+and `fan_control_method: "pmfw_curve"`, DEC-445 — and the daemon reports
+`gpu_zero_rpm_available`).
 It:
 - pulls the GPU fan out of any control that currently drives it (no double-writer);
 - creates a **GPU-only** `LogicalControl` (role floor 0%, so its curve is
@@ -438,8 +440,12 @@ The Edit Fan Role dialog offers only fans a role can drive:
 - a hwmon header the daemon reports `is_writable: false` is **not listed** (DEC-102) — it
   stays visible on the hardware surfaces;
 - Intel and NVIDIA GPU fans are not listed (no kernel write path, DEC-121/DEC-204);
-- an AMD GPU fan without a write path is listed as `(read-only)`, because that state is
-  fixable (`amdgpu.ppfeaturemask`);
+- an AMD GPU fan no profile can drive is listed, **disabled**, with its reason
+  (DEC-445): `(read-only)` for an RX 7000/9000 without its PMFW `fan_curve` (fixable,
+  `amdgpu.ppfeaturemask`), `(verify only)` for an RX 6000 or older, whose legacy `pwm1`
+  only the GPU fan verify and reset write. Its tooltip says why. The gate is
+  `AmdGpuCapability.profile_writable`, which also reads the method, because daemons
+  before DEC-445 report a legacy card `fan_write_supported: true`;
 - a fan already in another role is shown disabled;
 - a sensor the daemon marks `control_eligible: false` is dropped from the curve's sensor
   picker (DEC-193, above).

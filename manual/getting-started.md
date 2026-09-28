@@ -21,7 +21,7 @@ exposes.
 | **OpenFan Controller** (USB) | Full control of every channel — [OpenFan Controller](openfan-controller.md) |
 | **Motherboard fan headers** — ITE and Nuvoton Super-I/O chips | Full control on most boards; some need an out-of-tree driver or a BIOS setting first — [Driver Setup](driver-setup.md) |
 | **Dell laptops and some Dell desktops** (`dell_smm`) | Control on models the kernel driver allows; many share one BIOS switch across every fan — [Driver Setup](driver-setup.md) |
-| **AMD discrete GPUs** | Full control. RX 6000 and older through the fan's PWM; RX 7000/9000 through the firmware fan curve, which needs a one-time kernel setting — [Driver Setup](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
+| **AMD discrete GPUs** | RX 7000/9000: full control through the firmware fan curve, which needs a one-time kernel setting — [Driver Setup](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3). RX 6000 and older: monitored, and the fan can be tested and reset, but a profile does not drive it — the card's own fan curve stays in charge |
 | **Intel Arc and NVIDIA GPUs** | Monitor only: temperature and fan speed |
 | **NZXT Kraken X53/X63/X73, Z53/Z63/Z73, Kraken 2023, 2023 Elite and 2024 Elite** (`nzxt-kraken3`; the 2024 Elite needs kernel 7.3 or newer) | Pump and fans controllable, coolant temperature read |
 | **NZXT Kraken X42/X52/X62/X72** (`nzxt-kraken2`) | Monitor only: the driver cannot set its speeds |

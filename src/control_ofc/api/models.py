@@ -87,6 +87,28 @@ class AmdGpuCapability:
     # without the field also yield an empty list (parser-tolerant).
     kernel_warnings: list[KernelWarning] = field(default_factory=list)
 
+    @property
+    def profile_writable(self) -> bool:
+        """True when a daemon profile can drive this GPU's fan (DEC-445).
+
+        PMFW ``fan_curve`` only — the daemon engine writes nothing else on a GPU.
+        A pre-RDNA3 card reports ``"hwmon_pwm"``: verify and reset write its
+        legacy ``pwm1``, and no engine ever has. Daemons before DEC-445 also
+        report ``fan_write_supported: true`` for it, so this is keyed on the
+        method as well as the flag, which makes it right against every daemon.
+        The one gate for "can a profile drive it" — read it, never the flag.
+        """
+        return self.present and self.fan_write_supported and self.fan_control_method == "pmfw_curve"
+
+    def describes_fan(self, fan_id: str) -> bool:
+        """True when this capability is about ``fan_id``'s card.
+
+        ``devices.amd_gpu`` describes ONE card, the daemon's primary (`GPU-b`), so
+        on a machine with two AMD GPUs its answers say nothing about the other.
+        A payload without ``pci_id`` is taken to describe every card, as before.
+        """
+        return self.present and (not self.pci_id or fan_id == f"amd_gpu:{self.pci_id}")
+
 
 @dataclass
 class IntelGpuCapability:

@@ -1713,9 +1713,12 @@ class ControlsPage(QWidget):
             available = build_member_candidates(
                 self._state.fans,
                 self._state.hwmon_headers,
-                gpu_writable=(
-                    self._state.capabilities is not None
-                    and self._state.capabilities.amd_gpu.fan_write_supported
+                # None until capabilities arrive: nothing is judged unwritable
+                # on a guess.
+                amd_gpu=(
+                    self._state.capabilities.amd_gpu
+                    if self._state.capabilities is not None
+                    else None
                 ),
                 display_name=self._state.fan_display_name,
                 fallback_name=self._state.fan_fallback_name,
@@ -2294,11 +2297,11 @@ class ControlsPage(QWidget):
         )
         # DEC-221/233: surface "Dedicate GPU Fan" only for a present, writable,
         # zero-RPM-capable AMD GPU (idempotent — capabilities re-fire on refresh).
+        # "Writable" is DEC-445's one gate — a profile can drive it (PMFW only).
         gpu = getattr(caps, "amd_gpu", None)
         self._dedicate_gpu_action.setVisible(
             bool(gpu)
-            and bool(getattr(gpu, "present", False))
-            and bool(getattr(gpu, "fan_write_supported", False))
+            and bool(getattr(gpu, "profile_writable", False))
             and bool(getattr(gpu, "gpu_zero_rpm_available", False))
         )
         if not hasattr(caps, "features") or caps.features is None:
