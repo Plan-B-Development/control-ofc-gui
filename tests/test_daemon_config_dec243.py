@@ -75,6 +75,8 @@ def _default_config(**overrides):
         # DEC-388: the second key that applies live. Placed BEFORE the search dirs,
         # which must stay last — see the note below.
         _key("shutdown.exit_floor_pct", 50, running_value=50, mutable=True),
+        # DEC-443: the third live key, placed with the exit floor for the same reason.
+        _key("safety.coolant_limit_c", 60, running_value=60, mutable=True),
         # Appended last on purpose: several tests below replace a key by index,
         # so anything inserted ahead of them would silently retarget those edits.
         # `requires_restart` is False — one of the two keys that apply live.
@@ -148,6 +150,17 @@ class _ConfigClient:
                 "key": "shutdown.exit_floor_pct",
                 "value": pct,
                 "note": "In force now; applies at the daemon's next stop",
+            }
+        )
+
+    def set_coolant_limit(self, limit_c):
+        self.writes.append(("safety.coolant_limit_c", limit_c))
+        return parse_config_write(
+            {
+                "updated": True,
+                "key": "safety.coolant_limit_c",
+                "value": limit_c,
+                "note": "In force from the next engine tick",
             }
         )
 

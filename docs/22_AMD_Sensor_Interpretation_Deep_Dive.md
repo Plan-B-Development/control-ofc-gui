@@ -392,9 +392,10 @@ specific board features.
 All readings are `high` confidence because the EC provides the identity
 mapping. The driver only loads on boards in an explicit kernel allowlist.
 
-The water readings are coolant temperatures, and **coolant carries no safety
-meaning**: the daemon's thermal emergency and no-sensor floor read CPU sensors only,
-so a hot loop never trips them. Bind a curve to the coolant sensor to cool the loop.
+The water readings are coolant temperatures, and since DEC-443 (daemon ≥ 2.57.0)
+**a coolant reading is a safety input**: at or above the coolant limit (default
+60 °C) the daemon forces every fan and pump to 100 %. Bind a curve to the coolant
+sensor to cool the loop in normal running.
 
 #### ACPI mutex
 

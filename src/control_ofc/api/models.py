@@ -291,6 +291,13 @@ class ControlCapability:
     #: the POST and leaves its OpenFan channels at their last duty whatever the
     #: control says.
     exit_floor: bool = False
+    #: DEC-443 (`W-SAFE`): the daemon forces a coolant emergency at the
+    #: configurable ``safety.coolant_limit_c`` (``POST /config/coolant-limit``),
+    #: answers a stalled pump, floors a DC-mode pump at 70 %, raises the
+    #: cooling advisory, and publishes ``emergency_causes`` / ``pump_stalls`` /
+    #: ``advisories`` on ``/status``. Gate the Settings control on this: an older
+    #: daemon 404s the POST and has no coolant rung at all.
+    cooling_failure_detection: bool = False
     #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
     #: coalesce and rewrites a duty that moved, giving up after three
     #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then
@@ -622,6 +629,48 @@ THERMAL_STATE_VALUES: tuple[str, ...] = (
 )
 
 
+# DEC-443 (`W-SAFE`): the wire vocabularies of the cooling-failure watch. Like
+# `THERMAL_STATE_VALUES` they belong with the model, and every presentation map
+# keyed off them is pinned against them by a test. A client must still render a
+# token it does not know — each surface falls back rather than dropping it.
+EMERGENCY_CAUSE_VALUES: tuple[str, ...] = ("cpu", "coolant")
+PUMP_STALL_STATE_VALUES: tuple[str, ...] = ("stall_response", "not_turning", "held")
+ADVISORY_CODE_VALUES: tuple[str, ...] = ("cpu_at_ceiling_low_cooling",)
+
+
+@dataclass
+class PumpStall:
+    """A pump under the daemon's stall response (DEC-443, `TS-e`).
+
+    ``state`` is one of `PUMP_STALL_STATE_VALUES`: ``stall_response`` (driven to
+    100 % for the response window after reading 0 RPM while commanded to run),
+    ``not_turning`` (still 0 RPM at 100 %), or ``held`` (a second stall this
+    run — held at 100 % until a daemon restart or a profile activation).
+    """
+
+    header_id: str = ""
+    state: str = ""
+    since_ms: int = 0
+    stall_count: int = 0
+
+
+@dataclass
+class CoolingAdvisory:
+    """A daemon advisory about cooling (DEC-443, `TS-m`). Forces nothing.
+
+    ``cpu_at_ceiling_low_cooling``: the hottest fresh CPU reading has sat at or
+    above ``ceiling_c`` for a minute while no non-GPU output is commanded at
+    50 % or more — the shape of a dead pump under a throttling CPU, which the
+    CPU emergency (a backstop above the ceiling) practically never sees.
+    """
+
+    code: str = ""
+    since_ms: int = 0
+    cpu_temp_c: float = 0.0
+    ceiling_c: float = 0.0
+    max_duty_pct: int = 0
+
+
 @dataclass
 class DaemonStatus:
     api_version: int = 1
@@ -703,6 +752,16 @@ class DaemonStatus:
     # banner on this field would hide a live emergency. It qualifies the
     # COMMANDED DUTY and nothing else.
     verify_active: bool = False
+    # DEC-443: WHY `thermal_state` is "emergency" — tokens from
+    # `EMERGENCY_CAUSE_VALUES`, "cpu" before "coolant". Omitted when empty and
+    # absent before daemon 2.57.0 → []. An older daemon's only emergency is the
+    # CPU one, so an empty list reads as the CPU's (`cooling_watch`); a newer
+    # daemon in emergency always names at least one cause.
+    emergency_causes: list[str] = field(default_factory=list)
+    # DEC-443: pumps under the stall response, and cooling advisories. Omitted
+    # when empty and absent before daemon 2.57.0 → [] either way.
+    pump_stalls: list[PumpStall] = field(default_factory=list)
+    advisories: list[CoolingAdvisory] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1344,6 +1403,10 @@ class ThermalSafetyInfo:
     # reported value; do not compare it to a literal.
     emergency_threshold_c: float = 105.0
     release_threshold_c: float = 80.0
+    # DEC-443: the coolant emergency's limit and release point, as the engine
+    # acted on them. `None` on a daemon before 2.57.0, which has no coolant rung.
+    coolant_limit_c: float | None = None
+    coolant_release_c: float | None = None
 
 
 @dataclass
@@ -2169,7 +2232,26 @@ def parse_status(data: dict) -> DaemonStatus:
         # writing", the state that shows the daemon's figures rather than
         # suppressing them, so a bad payload cannot blank a live Controls page.
         verify_active=data.get("verify_active") is True,
+        # DEC-443: omitted when empty, absent before daemon 2.57.0 → [].
+        emergency_causes=[c for c in _wire_list(data, "emergency_causes") if isinstance(c, str)],
+        pump_stalls=[
+            PumpStall(**_filter_fields(PumpStall, e))
+            for e in _wire_list(data, "pump_stalls")
+            if isinstance(e, dict)
+        ],
+        advisories=[
+            CoolingAdvisory(**_filter_fields(CoolingAdvisory, e))
+            for e in _wire_list(data, "advisories")
+            if isinstance(e, dict)
+        ],
     )
+
+
+def _wire_list(data: dict, key: str) -> list:
+    """``data[key]`` when it is a list, else ``[]`` — a malformed value (a bare
+    string would iterate as characters) reads as absent."""
+    value = data.get(key)
+    return value if isinstance(value, list) else []
 
 
 def _parse_readiness_rollup(raw: object) -> ReadinessRollup | None:

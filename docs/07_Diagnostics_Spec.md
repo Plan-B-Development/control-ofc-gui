@@ -541,7 +541,7 @@ production services at *state transitions only*, never per cycle:
 | `polling` | First connection established; disconnected (after a prior connect); daemon-reported active profile detected |
 | `profile` | Activated/deactivated; profile load error |
 | `hwmon` / `openfan` / `gpu` | Hardware rescan result; OpenFan adoption; GPU fan restore |
-| `sensor` / `fan` / `api` | Alert onsets and recoveries, via `attach_alert_source` |
+| `sensor` / `fan` / `cooling` / `api` | Alert onsets and recoveries, via `attach_alert_source` (`cooling`: a pump stall or cooling advisory the daemon publishes on `/status`, DEC-443) |
 
 `fields` (DEC-314) is optional structured metadata, carried **only where the emitter
 genuinely holds it** and would otherwise flatten it into the sentence — the alert

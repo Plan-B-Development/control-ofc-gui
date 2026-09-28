@@ -106,7 +106,9 @@ def _immutable() -> set[str]:
 @pytest.fixture()
 def page(qapp, app_state, settings_service):
     app_state.capabilities = Capabilities(
-        control=ControlCapability(profile_search_dir_remove=True, exit_floor=True)
+        control=ControlCapability(
+            profile_search_dir_remove=True, exit_floor=True, cooling_failure_detection=True
+        )
     )
     client = _ConfigClient()
     p = SettingsPage(state=app_state, settings_service=settings_service, client=client)

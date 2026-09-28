@@ -2358,6 +2358,8 @@ class TestAccessibleNames:
             # DEC-388's Exit minimum row. Announces "Exit minimum" — measured through
             # the accessibility interface, the same way the runtime sweep reads it.
             "ui/pages/settings_page.py:_exit_floor_spin",
+            # DEC-443's Coolant limit row, named the same way.
+            "ui/pages/settings_page.py:_coolant_limit_spin",
         }
 
         def bound_name(node):

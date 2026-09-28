@@ -633,6 +633,30 @@ class TestThermalBanner:
             assert state in text, "presence: this is the banner for this state"
             assert text.endswith(f"Your profile resumes fully {resume}.")
 
+    def test_a_coolant_emergency_banner_names_the_coolant(self, qtbot, window, app_state):
+        """DEC-443 (contract review P2): a coolant emergency ends when the
+        coolant cools, so the banner must not send the user to the CPU — and a
+        cause change inside one emergency rebuilds it, though `thermal_state`
+        never left "emergency"."""
+        from control_ofc.services.cooling_watch import emergency_resume
+
+        dash = window.dashboard_page
+        app_state.set_status(DaemonStatus(thermal_state="normal"))
+        app_state.set_status(DaemonStatus(thermal_state="emergency", emergency_causes=["coolant"]))
+        direct = dash._thermal_banner._message_label.text()
+        assert direct.endswith(f"Your profile resumes fully {emergency_resume(['coolant'])}.")
+
+        app_state.set_status(DaemonStatus(thermal_state="normal"))
+        app_state.set_status(DaemonStatus(thermal_state="emergency", emergency_causes=["cpu"]))
+        cpu_text = dash._thermal_banner._message_label.text()
+        assert cpu_text.endswith(f"Your profile resumes fully {emergency_resume(['cpu'])}.")
+
+        app_state.set_status(DaemonStatus(thermal_state="emergency", emergency_causes=["coolant"]))
+        text = dash._thermal_banner._message_label.text()
+        assert text != cpu_text, "precondition: the cause changed, so the banner must"
+        assert text.endswith(f"Your profile resumes fully {emergency_resume(['coolant'])}.")
+        assert "CPU" not in text
+
     def test_recovery_state_shows_banner(self, qtbot, window, app_state):
         # "recovery" (the two 60% cooldown cycles after release) is a
         # non-"normal" state: the banner must stay up and name it.

@@ -176,3 +176,20 @@ def test_the_hedge_survives_a_daemon_that_reports_no_thermal_state(window):
     text = window._safety_detail_text()
 
     assert "Last known CPU sensor: 70.0" in text
+
+
+def test_a_coolant_emergency_is_explained_as_one_through_the_real_window(window):
+    """DEC-443, at the call site: the window must pass the daemon's
+    `emergency_causes` through, or a coolant emergency reads as a CPU one — the
+    helper alone proves the wording, never that the window supplies the cause."""
+    from control_ofc.services.cooling_watch import EMERGENCY_CAUSE_PHRASES
+
+    window._state.sensors = [_cpu(55.0, age_ms=100)]
+    window._state.daemon_status = DaemonStatus(
+        thermal_state="emergency", emergency_causes=["coolant"]
+    )
+
+    text = window._safety_detail_text()
+
+    assert EMERGENCY_CAUSE_PHRASES["coolant"] in text
+    assert EMERGENCY_CAUSE_PHRASES["cpu"] not in text

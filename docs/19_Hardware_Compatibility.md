@@ -743,7 +743,8 @@ Phase 1 (DEC-156, daemon ≥ 1.18.0 / GUI ≥ 1.40.0 — built as 1.39.0, which 
 Coolers ride the ordinary hwmon path; the daemon classifies coolant sensors as `coolant_temp`,
 flags pump/fan headers `is_aio`, and reports a dynamic `aio_hwmon` capability. **Per-driver pump
 writability is asymmetric** — the GUI reflects the kernel's per-channel `is_writable` and never
-fakes control. There is **no coolant safety rule** (CPU-only thermal safety is unchanged).
+fakes control. **A coolant sensor is a safety input since DEC-443** (daemon ≥ 2.57.0): at or above
+the coolant limit (default 60 °C, settable 40–70) the daemon forces every fan and pump to 100 %.
 
 | Driver (hwmon `name`) | Devices | Coolant temp | Pump/fan control |
 |---|---|---|---|

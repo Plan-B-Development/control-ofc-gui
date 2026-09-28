@@ -83,6 +83,11 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # it87 v2.0 board-suffix rename. The version is the release that ships
         # DEC-442; `/ofc:release` confirms it.
         "canonical_chip_names": "2.57.0",
+        # DEC-443, control.cooling_failure_detection. The coolant emergency, the
+        # pump stall response, the DC pump floor, the cooling advisory and
+        # `POST /config/coolant-limit`. The version is the release that ships
+        # DEC-443; `/ofc:release` confirms it.
+        "cooling_failure_detection": "2.57.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -135,6 +140,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "duty_reconciliation": "duty_reconciliation",
         "stall_probe": "stall_probe",
         "canonical_chip_names": "canonical_chip_names",
+        "cooling_failure_detection": "cooling_failure_detection",
     }
 )
 
@@ -161,6 +167,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "stall_probe": "the stall/restart probe below 20 %",
         "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
+        "cooling_failure_detection": "the coolant limit and pump stall protection",
     }
 )
 

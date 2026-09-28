@@ -1404,8 +1404,9 @@ def detect_aio_setup(
     # and publishes no telemetry — so the curves bind to CPU package temperature
     # instead. That is the normal configuration for this hardware, not a
     # degradation, and nothing downstream may present it as an error. It is also
-    # not a safety change: coolant temperature has never been a safety input
-    # (the thermal emergency is CPU-only, by design).
+    # not a safety change here: the daemon's coolant emergency (DEC-443) keys on a
+    # coolant sensor the machine has, whatever sensor a curve binds to, and this
+    # machine has none — so the CPU emergency is its only thermal rung.
     control_sensor_id = coolant_sensor_id or _pick_cpu_sensor_id(sensors)
 
     # `monitor_only` keeps its exact original meaning: a real liquid cooler is

@@ -248,6 +248,11 @@ class TestDaemonConfigRoutes:
         client.set_exit_floor(60)
         client._post.assert_called_once_with("/config/exit-floor", json={"exit_floor_pct": 60})
 
+    def test_set_coolant_limit_payload(self):
+        client = self._client()
+        client.set_coolant_limit(55)
+        client._post.assert_called_once_with("/config/coolant-limit", json={"coolant_limit_c": 55})
+
     def test_set_allow_port_probe_payload(self):
         client = self._client()
         client.set_allow_port_probe(True)

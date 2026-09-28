@@ -251,17 +251,22 @@ Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip na
 was what reached `coolant`. The daemon reports these as
 the `coolant_temp` sensor kind.
 
-**Coolant has no safety meaning.** The daemon's thermal ladder reads CPU sensors
-only. A coolant sensor — however hot — never trips the emergency or the no-sensor
-floor, and there is no coolant over-temperature protection. Cool the loop with a
-curve bound to the coolant sensor; the CPU emergency still protects the CPU.
+**Coolant is a safety input (DEC-443, daemon ≥ 2.57.0).** The hottest fresh
+coolant reading at or above the coolant limit — Settings ▸ Daemon Configuration,
+40–70 °C, default 60 — forces every fan and pump to 100 % until the coolant is 5 °C
+cooler. Only a sensor **the daemon** classifies as `coolant_temp` triggers it — the
+rules above — so the GUI's "Treat as coolant" override below does **not** make a
+sensor a safety input. A coolant sensor never drives the CPU's no-sensor floor.
+Older daemons have no coolant rule at all. Cool the loop in normal running with a
+curve bound to the coolant sensor; the emergency is the backstop.
 
 **"Treat as coolant" (user override).** Right-click a sensor on the Overview page's
 sensor table and choose **Treat as coolant** to classify it as coolant when the rules
 above miss it; on a sensor already overridden the same menu offers **Reset
 classification to auto**, and Settings → Sensors & Chart Series → **Clear overrides**
 removes them all. The override is the GUI's alone: the daemon's `kind` for the sensor
-does not change, and it has no effect on thermal safety. What it drives is the GUI's
+does not change, and it has no effect on thermal safety — including the coolant
+emergency (DEC-443), which keys on the daemon's `kind`. What it drives is the GUI's
 own coolant view — the sensor's class everywhere it is shown, the coolant marking in
 the curve sensor picker, which sensor the AIO setup takes as the coolant sensor, and so
 which calibration (coolant or CPU) **Configure AIO** seeds the radiator-fan curve with.

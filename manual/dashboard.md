@@ -35,8 +35,9 @@ Below it, five banners appear only when they apply:
   misbehave
 - **Thermal protection active** — the daemon is applying a minimum fan speed under your
   profile, which still applies wherever it asks for more. The banner says when your
-  profile resumes fully: once the CPU cools after an emergency, or once a current CPU
-  temperature reading returns when there was none. It reports the daemon's state; on a
+  profile resumes fully: once whatever tripped the emergency cools — the CPU, or the
+  coolant on a machine with a coolant sensor — or once a current CPU temperature reading
+  returns when there was none. It reports the daemon's state; on a
   machine with no fan the daemon can drive, the state can be active while no fan was
   written
 - **Fan control engine** — how the daemon's control loop itself is doing. It is the
@@ -207,11 +208,13 @@ profile keeps running. The banner goes away on your next successful **Apply**.
 
 The daemon has two thermal safety states, and it drives both itself:
 
-- **Emergency** — the hottest CPU sensor reached the emergency limit. Every OpenFan fan and
+- **Emergency** — the hottest CPU sensor reached the emergency limit, or (daemon 2.57.0 and
+  later) a coolant sensor reached the **coolant limit** set under **Settings**; the chip's
+  detail says which. Every OpenFan fan and
   every writable fan header runs at full speed, including fans no profile controls. The
-  daemon holds it until a *current* CPU reading is back at or below 80 °C — a CPU sensor that
-  stops updating or disappears keeps it at full speed — then hands control straight back
-  to your profile.
+  daemon holds it until a *current* reading is back down — the CPU at or below 80 °C, the
+  coolant 5 °C below its limit; a sensor that stops updating or disappears keeps it at full
+  speed — then hands control straight back to your profile.
 - **No CPU sensor** — no current CPU temperature for five seconds, with no emergency in
   force. The fans your active profile controls get at least 40 %. Fans no profile controls
   are not touched, and with no profile active nothing is forced.
@@ -223,6 +226,12 @@ as a banner across the top of the Dashboard, and as a marker on the chart. It is
 counted as a warning and does not appear in the Logs page's alert bar. See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
+
+Two cooling checks sit beside these states and **are** counted as alerts (daemon 2.57.0 and
+later): a **pump stall** — a pump in your profile reading 0 RPM while it should run, which the
+daemon answers by running it at full speed — is an error alert naming the pump, and the
+**cooling advisory** — the CPU held at its ceiling for a minute with every fan and pump running
+slowly — is a warning that forces nothing. Both appear in the Logs page's alert bar.
 
 ## Disconnected / No Hardware States
 

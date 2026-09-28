@@ -1276,6 +1276,54 @@
         "observation"
       ],
       "note": "Enrolled by DEC-404 Stage 4 (PTR-u). Every field is a column of the report's probe table (services/pwm_report/view.py::probe_rows)."
+    },
+    {
+      "daemon": "PumpStallEntry",
+      "gui": "PumpStall",
+      "endpoints": [
+        "GET /status .pump_stalls[]",
+        "GET /poll .status.pump_stalls[]"
+      ],
+      "fields": [
+        "header_id",
+        "state",
+        "since_ms",
+        "stall_count"
+      ],
+      "not_assertable": {
+        "header_id": "Shared with another declared struct (StallProbeRun, PreflightReport, ControlPathRun, ControlPathRecord, VerifyEvidence), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The alert resolves the pump's display name from it (services/app_state.py::_current_conditions).",
+        "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "inert": {
+        "since_ms": "parsed and never read: the alert ledger timestamps its own occurrence (DEC-282), so a second clock would only disagree with it",
+        "stall_count": "parsed and never read: the state token already distinguishes a second stall (`held`), which is the only count that changes what the daemon does"
+      },
+      "note": "Enrolled by DEC-443 (W-SAFE): the pump stall response. The GUI raises an error-level alert per entry (services/cooling_watch.py::pump_stall_alert); the tray renders the state too."
+    },
+    {
+      "daemon": "CoolingAdvisoryEntry",
+      "gui": "CoolingAdvisory",
+      "endpoints": [
+        "GET /status .advisories[]",
+        "GET /poll .status.advisories[]"
+      ],
+      "fields": [
+        "code",
+        "since_ms",
+        "cpu_temp_c",
+        "ceiling_c",
+        "max_duty_pct"
+      ],
+      "must_be_read": [
+        "code",
+        "cpu_temp_c",
+        "ceiling_c",
+        "max_duty_pct"
+      ],
+      "inert": {
+        "since_ms": "parsed and never read: the alert ledger timestamps its own occurrence (DEC-282), so a second clock would only disagree with it"
+      },
+      "note": "Enrolled by DEC-443 (W-SAFE, TS-m): the cooling advisory. The GUI raises a warning-level alert from its figures (services/cooling_watch.py::advisory_alert)."
     }
   ]
 }

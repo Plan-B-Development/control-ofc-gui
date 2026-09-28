@@ -111,9 +111,10 @@ needs root or the `systemd-journal` group). The ranges the file accepts:
 | `serial.timeout_ms` | 50 or more | 500 |
 | `startup.delay_secs` | 0–30 | 0 |
 | `shutdown.exit_floor_pct` | 0–100 | 50 |
+| `safety.coolant_limit_c` | 40–70 (whole °C) | 60 |
 
 After an edit, `sudo systemctl reload control-ofc-daemon` applies the profile search
-directories and the exit floor at once; every other key needs
+directories, the exit floor and the coolant limit at once; every other key needs
 `sudo systemctl restart control-ofc-daemon`. A reload that finds the file invalid logs
 the error and keeps the running values.
 
@@ -144,6 +145,11 @@ record_startup = false  # record a short validation session at every start (DEC-
 exit_floor_pct = 50  # the lowest speed a clean stop leaves a fan it cannot give
                      # back to firmware at — an OpenFan channel, or a header with
                      # no mode switch (DEC-388). 0 turns it off
+
+[safety]
+coolant_limit_c = 60  # a coolant sensor at or above this forces every fan and pump
+                      # to 100 % until it is 5 °C cooler (DEC-443). 40-70, whole
+                      # °C, no off switch; machines with no coolant sensor are unaffected
 
 [profiles]
 # Default: /etc/control-ofc/profiles plus a home-relative dir —
@@ -220,6 +226,7 @@ persisted change is not yet in effect (`restart_pending`). The GUI's
 | `detection.allow_port_probe` | `POST /config/allow-port-probe` | **Also needs the drop-in** |
 | `detection.enable_nvidia_telemetry` | `POST /config/nvidia-telemetry` | **Also needs the drop-in** |
 | `shutdown.exit_floor_pct` | `POST /config/exit-floor` | 0–100 (DEC-388): the lowest speed a clean stop leaves an OpenFan fan, or a header with no mode switch, at. **Applies immediately**; also re-applied on SIGHUP. `0` turns it off |
+| `safety.coolant_limit_c` | `POST /config/coolant-limit` | 40–70 °C, whole degrees (DEC-443): a coolant sensor at or above this forces every fan and pump to 100 % until it is 5 °C cooler. **Applies immediately**; also re-applied on SIGHUP. No off switch |
 | `ipc.socket_path` | **No — read-only** | A bad value locks every client out of the daemon |
 | `state.state_dir` | **No — read-only** | Moving it orphans `runtime.toml` and the profile store |
 

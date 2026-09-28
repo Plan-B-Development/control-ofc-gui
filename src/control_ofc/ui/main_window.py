@@ -622,7 +622,14 @@ class MainWindow(QWidget):
             (s.value_c, s.age_ms < CPU_HEDGE_STALE_AFTER_MS) for s in cpu_sensors
         )
         n = len(ds.overrides) if ds and ds.overrides else 0
-        return safety_detail_text(thermal, label, cpu_vals, n, cpu_reading_is_stale=cpu_stale)
+        return safety_detail_text(
+            thermal,
+            label,
+            cpu_vals,
+            n,
+            cpu_reading_is_stale=cpu_stale,
+            emergency_causes=ds.emergency_causes if ds else (),
+        )
 
     def _open_safety_detail(self) -> None:
         """Show the read-only thermal-safety detail (footer thermal chip, DEC-185)."""

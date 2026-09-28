@@ -14,7 +14,7 @@ without constructing widgets, mirroring the S2-S5 ``services/*_view`` modules.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from control_ofc.api.models import (
@@ -22,6 +22,7 @@ from control_ofc.api.models import (
     RuntimeConfigDegraded,
 )
 from control_ofc.constants import EXPECTED_API_VERSION
+from control_ofc.services.cooling_watch import emergency_opening
 
 # Plain-language rendering of the DEC-321 `runtime_config_degraded.reason`
 # token. An unrecognised token renders as itself rather than being dropped —
@@ -116,6 +117,14 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     )
 
 
+# What an emergency does, after the clause naming its trigger (DEC-443).
+_EMERGENCY_REACH = (
+    ", so the daemon's thermal protection is "
+    "active: it runs every OpenFan fan and every writable fan header it can drive — on "
+    "the motherboard, or on a USB fan controller or AIO cooler — at full speed until "
+    "temperatures fall. GPU fans are not included; the GPU protects itself."
+)
+
 # Plain-language reason per daemon thermal_state, for the Safety detail. Kept
 # qualitative (no hardcoded thresholds) so it can't drift from the daemon.
 _THERMAL_REASONS: dict[str, str] = {
@@ -129,12 +138,10 @@ _THERMAL_REASONS: dict[str, str] = {
     # curve (DEC-399), and DEC-371 says a thermal state is never proof a fan
     # was written. This names the state and its reach, not an outcome. The reach
     # is every OpenFan channel and writable hwmon header, AIO/USB devices included.
-    "emergency": (
-        "A critical CPU temperature was reached, so the daemon's thermal protection is "
-        "active: it runs every OpenFan fan and every writable fan header it can drive — on "
-        "the motherboard, or on a USB fan controller or AIO cooler — at full speed until "
-        "temperatures fall. GPU fans are not included; the GPU protects itself."
-    ),
+    # DEC-443: the opening clause names the trigger and follows
+    # `emergency_causes` (see `_emergency_reason`); this entry is the CPU one,
+    # which is also what a daemon before 2.57.0 means by "emergency".
+    "emergency": emergency_opening(()) + _EMERGENCY_REACH,
     "no_sensor_fallback": (
         # DEC-269: "reachable" was true when the only trigger was a sensor that
         # had vanished. Since DEC-267 a sensor that is still listed but has
@@ -265,6 +272,12 @@ def cpu_values_for_display(
     return stale, bool(stale)
 
 
+def _emergency_reason(causes: Sequence[str]) -> str:
+    """The emergency reason with its trigger named (DEC-443): a coolant
+    emergency must not be explained as a CPU one."""
+    return emergency_opening(causes) + _EMERGENCY_REACH
+
+
 def safety_detail_text(
     thermal: str,
     state_label: str,
@@ -272,6 +285,7 @@ def safety_detail_text(
     override_count: int,
     *,
     cpu_reading_is_stale: bool,
+    emergency_causes: Sequence[str] = (),
 ) -> str:
     """Read-only thermal-safety summary for the thermal chip's click detail.
 
@@ -283,7 +297,9 @@ def safety_detail_text(
     lines = [
         f"State: {state_label}",
         "",
-        _THERMAL_REASONS.get(thermal, "Current daemon thermal state."),
+        _emergency_reason(emergency_causes)
+        if thermal == "emergency"
+        else _THERMAL_REASONS.get(thermal, "Current daemon thermal state."),
     ]
     if cpu_values:
         # DEC-269: hedge on the READING'S OWN AGE, not on `thermal_state`.

@@ -65,7 +65,8 @@ The daemon's `FanController` is `Option<Arc<parking_lot::Mutex<FanController>>>`
 Phase 1 (DEC-156, GUI 1.40.0 — merged as 1.39.0, which was never published — / daemon 1.18.0) ships **hwmon** liquid-cooler support: coolant
 classification (`CoolantTemp`), an `is_aio` header flag, a dynamic `aio_hwmon` capability, and
 `AioPumpState` wired into the poll loop. Coolers ride the existing hwmon write/lease path — no new
-control plumbing and **no coolant safety rule** (CPU-only `safety.rs` is unchanged). **USB-only
+control plumbing. (That phase added no coolant safety rule; DEC-443 later made a hwmon coolant
+sensor a safety input — the coolant emergency.) **USB-only
 coolers** (liquidctl/USB-HID, e.g. much Corsair iCUE/Commander Core) remain **out of scope** — the
 daemon never opens USB-HID, so they read as not-detected, never faked. Phase 2 (guided AIO UX — one-click "Configure AIO" on the Controls page,
 dashboard liquid-cooler grouping) shipped in GUI 1.40.0 (DEC-157).

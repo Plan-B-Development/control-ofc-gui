@@ -238,7 +238,7 @@ wired. Two keys moved under that rule:
 0-100 % spin box, default 50 % — is the second key that applies live. It is the lowest speed
 a clean daemon stop leaves an OpenFan channel, or a header with no automatic mode to hand
 back to, at; a channel whose duty the daemon had lost track of goes to 100 %, and 0 turns it
-off. It is the only row on the
+off. It was the first row on the
 card **gated on a capability** (`control.exit_floor`): the other rows treat a key the
 daemon does not report as "predates reporting it" and stay editable, but for this
 one absence means "this daemon cannot", so the row is disabled with the
@@ -250,6 +250,14 @@ only after a hand-edit of `daemon.toml`/`runtime.toml` the daemon has not reload
 row's note then gives the files' value and advises `systemctl reload`. (Before daemon
 2.55.0 a SIGHUP reload racing `POST /config/exit-floor` could also leave them apart; the
 reload now takes the setters' lock.)
+
+**Extended by DEC-443.** `safety.coolant_limit_c` — the **Coolant limit** row, a 40-70 °C
+spin box in whole degrees, default 60 °C — is the third key that applies live. At that coolant
+temperature the daemon forces every fan and pump to 100 % until the coolant is 5 °C cooler; the
+range is the daemon's own and there is no off switch. It follows the Exit minimum row exactly:
+gated on `control.cooling_failure_detection` with the key's absence read as "this daemon cannot"
+(one shared gate, `SettingsPage._apply_live_key_support`, keyed per row), shows the daemon's
+`running_value`, guards writes against the shown value, and notes a files/running divergence.
 
 Still **not** editable, and not merely for want of daemon support:
 

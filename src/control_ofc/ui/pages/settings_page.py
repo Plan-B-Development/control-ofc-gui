@@ -149,6 +149,7 @@ DAEMON_CONFIG_WIDGETS: dict[str, str] = {
     "detection.allow_port_probe": "Settings_Check_allowPortProbe",
     "detection.enable_nvidia_telemetry": "Settings_Check_nvidiaTelemetry",
     "shutdown.exit_floor_pct": "Settings_Spin_exitFloor",
+    "safety.coolant_limit_c": "Settings_Spin_coolantLimit",
 }
 
 # Keys the daemon reports as ``mutable: false`` **by design** (DEC-243): a bad
@@ -935,6 +936,12 @@ class SettingsPage(QWidget):
             "back — keep their last speed, raised to at least this. Applies at once; "
             "0 leaves them as they are",
         ),
+        (
+            "safety.coolant_limit_c",
+            "Coolant limit",
+            "If a coolant sensor reaches this, every fan and pump runs at full speed "
+            "until the coolant is 5 °C cooler. Applies at once",
+        ),
     )
 
     #: Sentence appended to a row's sublabel while the daemon reports no OpenFan
@@ -1051,6 +1058,26 @@ class SettingsPage(QWidget):
             )
         )
 
+        # DEC-443: the coolant emergency's limit, in whole °C. The range is the
+        # daemon's own (40-70); there is no off switch by the user's decision.
+        self._coolant_limit_spin = QSpinBox()
+        self._coolant_limit_spin.setObjectName("Settings_Spin_coolantLimit")
+        self._coolant_limit_spin.setRange(40, 70)
+        self._coolant_limit_spin.setSingleStep(1)
+        self._coolant_limit_spin.setSuffix(" °C")
+        self._coolant_limit_spin.setToolTip(
+            "Coolant temperature at which the daemon runs every fan and pump at full "
+            "speed, released 5 °C below — only machines with a coolant sensor are "
+            "affected (applies at once)"
+        )
+        self._coolant_limit_spin.editingFinished.connect(
+            lambda: self._write_daemon_key(
+                "safety.coolant_limit_c",
+                self._coolant_limit_spin.value(),
+                lambda c: c.set_coolant_limit(self._coolant_limit_spin.value()),
+            )
+        )
+
         self._port_probe_toggle = ToggleSwitch()
         self._port_probe_toggle.setObjectName("Settings_Check_allowPortProbe")
         self._port_probe_toggle.toggled.connect(
@@ -1078,6 +1105,7 @@ class SettingsPage(QWidget):
             "detection.allow_port_probe": self._port_probe_toggle,
             "detection.enable_nvidia_telemetry": self._nvidia_toggle,
             "shutdown.exit_floor_pct": self._exit_floor_spin,
+            "safety.coolant_limit_c": self._coolant_limit_spin,
         }
         self._daemon_key_widgets: dict[str, QWidget] = dict(controls)
         #: Each editor's tooltip as authored, so `_apply_daemon_key_mutability`
@@ -1230,6 +1258,7 @@ class SettingsPage(QWidget):
             self._port_probe_toggle,
             self._nvidia_toggle,
             self._exit_floor_spin,
+            self._coolant_limit_spin,
             self._search_dirs_list,
             self._add_search_dir_btn,
             self._remove_search_dir_btn,
@@ -1308,15 +1337,19 @@ class SettingsPage(QWidget):
             nvidia = cfg.get("detection.enable_nvidia_telemetry")
             if nvidia is not None:
                 self._nvidia_toggle.setChecked(bool(nvidia.value))
-            exit_floor = self._exit_floor_in_force(cfg.get("shutdown.exit_floor_pct"))
+            exit_floor = self._live_int_in_force(cfg.get("shutdown.exit_floor_pct"))
             if exit_floor is not None:
                 self._show_spin_value(self._exit_floor_spin, exit_floor)
+            coolant_limit = self._live_int_in_force(cfg.get("safety.coolant_limit_c"))
+            if coolant_limit is not None:
+                self._show_spin_value(self._coolant_limit_spin, coolant_limit)
 
             self._render_search_dirs(cfg.get("profiles.search_dirs"))
 
             # Snapshot what the daemon reported for the editable keys, so the
             # write guard can tell a real edit from a focus-out. The exit
-            # minimum's is the value the row SHOWS — the one in force — or a
+            # minimum's and the coolant limit's are the value the row SHOWS — the
+            # one in force — or a
             # focus-out on a diverged row would compare against a number that is
             # not on screen and write the displayed one back (`TS-aq`).
             self._daemon_cfg_rendered = {
@@ -1326,6 +1359,8 @@ class SettingsPage(QWidget):
             }
             if exit_floor is not None:
                 self._daemon_cfg_rendered["shutdown.exit_floor_pct"] = exit_floor
+            if coolant_limit is not None:
+                self._daemon_cfg_rendered["safety.coolant_limit_c"] = coolant_limit
         finally:
             self._populating_daemon_cfg = False
 
@@ -1334,11 +1369,13 @@ class SettingsPage(QWidget):
         divergence = {
             "profiles.search_dirs": self._search_dir_divergence,
             "shutdown.exit_floor_pct": self._exit_floor_divergence,
+            "safety.coolant_limit_c": self._coolant_limit_divergence,
         }
         for key, label in self._daemon_row_notes.items():
             note = divergence.get(key)
             self._render_daemon_row_note(cfg.get(key), label, extra=note(cfg) if note else "")
-        self._apply_exit_floor_support(cfg)
+        self._apply_live_key_support(cfg, "exit_floor", "shutdown.exit_floor_pct")
+        self._apply_live_key_support(cfg, "cooling_failure_detection", "safety.coolant_limit_c")
 
         if cfg.restart_pending:
             # Name the keys rather than showing a bare count: a count alone reads
@@ -1359,27 +1396,27 @@ class SettingsPage(QWidget):
             f"State directory: {self._daemon_value(cfg, 'state.state_dir')}"
         )
 
-    def _apply_exit_floor_support(self, cfg) -> None:
-        """Stand the exit-minimum control down on a daemon that cannot honour it.
+    def _apply_live_key_support(self, cfg, feature_id: str, key: str) -> None:
+        """Stand a capability-gated control down on a daemon that cannot honour it.
 
-        Gated on the daemon's own ``control.exit_floor`` (DEC-388), never probed:
-        an older daemon 404s the write and leaves its OpenFan fans at their last
-        speed on stop, so an editable control there would promise something that
-        does not happen. Unlike the other rows, absence of the key does NOT leave
-        the control enabled — for this key absence means "this daemon cannot",
-        not "this daemon predates reporting it". Runs after the row notes, which
-        would otherwise hide the explanation this writes.
+        The exit minimum (``control.exit_floor``, DEC-388) and the coolant limit
+        (``control.cooling_failure_detection``, DEC-443) are gated on the daemon's
+        own flag, never probed: an older daemon 404s the write and does not do
+        what the control says — it leaves its OpenFan fans at their last speed on
+        stop, or has no coolant emergency at all — so an editable control there
+        would promise something that does not happen. Unlike the other rows,
+        absence of the key does NOT leave the control enabled — for these keys
+        absence means "this daemon cannot", not "this daemon predates reporting
+        it". Runs after the row notes, which would otherwise hide the
+        explanation this writes.
         """
         caps = self._state.capabilities if self._state else None
-        if (
-            daemon_supports("exit_floor", caps) is True
-            and cfg.get("shutdown.exit_floor_pct") is not None
-        ):
+        if daemon_supports(feature_id, caps) is True and cfg.get(key) is not None:
             return
-        self._exit_floor_spin.setEnabled(False)
-        note = self._daemon_row_notes.get("shutdown.exit_floor_pct")
+        self._daemon_key_widgets[key].setEnabled(False)
+        note = self._daemon_row_notes.get(key)
         if note is not None:
-            note.setText(unsupported_feature_message("exit_floor"))
+            note.setText(unsupported_feature_message(feature_id))
             note.setVisible(True)
 
     @staticmethod
@@ -1483,16 +1520,18 @@ class SettingsPage(QWidget):
             f"restart the daemon to apply that"
         )
 
-    # ── Exit minimum (DEC-388, `TS-aq`) ───────────────────────────────
+    # ── Live integer keys: exit minimum (DEC-388, `TS-aq`), coolant limit (DEC-443)
 
     @staticmethod
-    def _exit_floor_in_force(entry) -> int | None:
-        """The exit minimum the next stop will use: ``running_value``.
+    def _live_int_in_force(entry) -> int | None:
+        """The value a live key is in force at: ``running_value``.
 
-        This key applies live, like the search dirs, so the running value IS the
-        answer to "what will a stop leave my fans at?" — the daemon reports it
-        from the value in force, not from the files. ``value`` (the files) is the
-        fallback for a daemon that does not report the running one.
+        The exit minimum and the coolant limit apply live, like the search dirs,
+        so the running value IS the answer to "what will a stop leave my fans
+        at?" or "at what coolant temperature will the daemon force them?" — the
+        daemon reports it from the value in force, not from the files. ``value``
+        (the files) is the fallback for a daemon that does not report the
+        running one.
         """
         if entry is None:
             return None
@@ -1511,7 +1550,16 @@ class SettingsPage(QWidget):
         ``runtime.toml`` that no reload has picked up leaves the files and the
         process disagreeing, with the row showing the one in force.
         """
-        entry = cfg.get("shutdown.exit_floor_pct")
+        return SettingsPage._live_int_divergence(cfg, "shutdown.exit_floor_pct", " %")
+
+    @staticmethod
+    def _coolant_limit_divergence(cfg) -> str:
+        """The coolant limit's twin of ``_exit_floor_divergence`` (DEC-443)."""
+        return SettingsPage._live_int_divergence(cfg, "safety.coolant_limit_c", " °C")
+
+    @staticmethod
+    def _live_int_divergence(cfg, key: str, unit: str) -> str:
+        entry = cfg.get(key)
         if entry is None:
             return ""
         on_disk, running = entry.value, entry.running_value
@@ -1520,7 +1568,7 @@ class SettingsPage(QWidget):
         if on_disk == running:
             return ""
         return (
-            f"the configuration files say {on_disk} % — reload the daemon to apply "
+            f"the configuration files say {on_disk}{unit} — reload the daemon to apply "
             f"that (sudo systemctl reload control-ofc-daemon)"
         )
 

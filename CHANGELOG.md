@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Coolant limit setting** (DEC-443). Settings ▸ Daemon Configuration has a **Coolant limit** row
+  (40–70 °C, default 60 °C). With control-ofc-daemon 2.57.0 or newer, a coolant sensor at or above
+  it makes the daemon run every fan and pump at full speed until the coolant is 5 °C cooler. It
+  applies at once. On an older daemon the row is disabled and says which version it needs.
+- **Pump stall and cooling alerts** (DEC-443). With daemon 2.57.0 or newer, a pump the daemon is
+  running at full speed because it stopped turning is an **error** alert naming the pump, and a
+  CPU held at its ceiling while every fan and pump runs slowly is a **warning** alert. Both
+  appear in the alert bar and the event log.
+- **The thermal-safety detail and the Dashboard banner say what caused an emergency** (DEC-443).
+  A coolant emergency is no longer explained as a CPU one, and the banner says your profile
+  resumes once the coolant cools rather than the CPU.
+- **The Hardware page explains a DC pump's higher floor** (DEC-443). A pump on a DC-mode header
+  shows the 70 % floor the daemon enforces, with a note saying why.
+
 - **Fan names, profiles and settings survive the it87 v2.0 driver rename** (DEC-442). With
   control-ofc-daemon 2.57.0 or newer, an `it87-dkms-git` rebuild that renames Gigabyte chips (for
   example `it8696_a008090a`) no longer changes any fan header's id. The app also reads back

@@ -23,7 +23,9 @@ Two consequences worth stating here rather than only in the ADR:
   GUI. `thermal_state` in particular: the tray shows a warning line for any
   value other than `normal`, and — like the GUI's `skipped_controls` handling —
   renders an unrecognised token rather than dropping it, so a new state is
-  surfaced by an old tray rather than silently ignored.
+  surfaced by an old tray rather than silently ignored. Since DEC-443 the tray
+  also renders `pump_stalls[]` — one line per distinct `state`, an unrecognised
+  one included.
 
 ## General rules
 1. All I/O goes through the API client layer.
@@ -306,6 +308,18 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `canonical_chip_names`; `AppState.set_capabilities` records it, and the "a driver rebuild
   changes your ids" caution and the dual-chip warning's false-alarm paragraph render only
   where it is not `True` — on an older daemon both remain true.
+- `cooling_failure_detection` (bool, DEC-443, daemon ≥ 2.57.0) — the daemon runs the coolant
+  emergency at `safety.coolant_limit_c` (settable with `POST /config/coolant-limit`), answers a
+  stalled pump, floors a DC-mode pump at 70 %, raises the cooling advisory, and publishes
+  `emergency_causes`, `pump_stalls[]` and `advisories[]` on `/status` and `coolant_limit_c` /
+  `coolant_release_c` on `/diagnostics/hardware` — see
+  [Coolant emergency, pump stall response, cooling advisory](#coolant-emergency-pump-stall-response-cooling-advisory-dec-443-daemon--2570).
+  Absent → `false`. **Gate the Settings control on this, and treat the key's absence the same
+  way** (the `exit_floor` shape): an older daemon `404`s the write and has no coolant rung at all.
+  The `/status` fields need no gate — an older daemon omits them and a client reads that as quiet.
+  **GUI use (DEC-443, GUI ≥ 2.84.0):** registered in `daemon_features` as
+  `cooling_failure_detection`; gates the Settings ▸ Daemon Configuration "Coolant limit" row and
+  the Hardware page's DC-pump note.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -738,6 +752,63 @@ release: it used to answer *"is a CpuTemp sensor present?"* and now answers *"is
 there a **current** reading?"*, so it is `false` for a sensor that is listed but
 no longer updating. Clients rendering it as "found / not found" should reword —
 `{"state": "emergency", "cpu_sensor_found": false}` is a normal pairing now.
+
+#### Coolant emergency, pump stall response, cooling advisory (DEC-443, daemon ≥ 2.57.0)
+
+**Contract change in both repos** (capability `control.cooling_failure_detection`). The three
+`/status` fields below are additive (`api_version` unchanged) and **omitted when empty**; an older
+daemon never sends them, and a client defaults each to `[]`.
+
+**`emergency_causes`** (string[]) — why `thermal_state` is `"emergency"`: `"cpu"` and/or
+`"coolant"`, in that order, present only while it is. The state is still one token — an emergency
+is the same force with the same reach whichever rule tripped it — so a client reading
+`thermal_state` alone stays correct; the causes let it *explain* the emergency truthfully. Render
+an unrecognised token. `emergency` with no causes means a daemon older than 2.57.0, whose only
+emergency is the CPU one.
+
+**The coolant rung.** The hottest FRESH reading of kind `coolant_temp` at or above
+`safety.coolant_limit_c` (whole °C; default 60, settable 40–70, no off switch — `GET`/`POST
+/config`) latches the same 100 % force as the CPU emergency — the same reach (every OpenFan channel
+and writable hwmon header the machine has, GPU fans excluded, DEC-130/382) and the same floor
+semantics (DEC-307) — and releases at a FRESH reading at or below the limit − 5 °C. **Only a
+`coolant_temp` sensor triggers it**: a CPU or board sensor above the coolant limit does not. It keeps
+the CPU table's freshness discipline but has no no-sensor floor, because most machines have no
+coolant sensor and that absence is their healthy state:
+
+| Coolant reading | Daemon response |
+| --- | --- |
+| fresh, at or above the limit | emergency (latches) |
+| fresh, below the limit, nothing latched | nothing |
+| fresh, at or below limit − 5 °C, latched | released |
+| fresh, inside the band, latched | emergency held |
+| stale or absent, latched | emergency held |
+| stale or absent, nothing latched | nothing — however hot the last stale value was |
+
+The two rungs combine by maximum: the coolant rule can raise what the CPU ladder forces, never
+lower it, and a CPU `no_sensor_fallback` stands exactly while the coolant rung is not forcing.
+`/diagnostics/hardware` reports the limit and release point the engine acted on.
+
+**`pump_stalls[]`** — `{header_id, state, since_ms, stall_count}` per pump under the stall response.
+The daemon watches the active profile's hwmon pump members (the pump-protection union) that it
+has **seen spinning this run**. One that reads 0 RPM for 10 s while commanded at 30 % or more is
+driven to 100 % for 30 s (`"stall_response"`); if it turns, it returns to its curve; if it still
+reads 0 RPM it stays at 100 % (`"not_turning"`) until the tach returns. **A second stall in one run
+holds it at 100 % (`"held"`) until the daemon restarts or a profile is activated.** The response is
+raise-only — a floor like every other safety duty — and the watch pauses while a diagnostic owns
+the write pause. `stall_count` counts this run's stalls; `since_ms` is the age of the current state.
+Nothing is listed with no profile active. Render an unrecognised `state`.
+
+**`advisories[]`** — `{code, since_ms, cpu_temp_c, ceiling_c, max_duty_pct}`. The one code,
+`"cpu_at_ceiling_low_cooling"`: the hottest FRESH CPU reading has been at or above `ceiling_c` for
+60 s while the highest duty the engine commands to any non-GPU output is below 50 %
+(`max_duty_pct`). `ceiling_c` is the CPU's own `tempN_crit` where an authoritative CPU chip
+publishes one, else 85 °C. **It forces nothing**: it names the shape of a dead pump under a
+self-throttling CPU, which the CPU emergency — a backstop above the ceiling — practically never
+sees. Quiet without a fresh CPU reading or with nothing commanded. Render an unrecognised `code`.
+
+**GUI use (GUI ≥ 2.84.0):** a pump stall is an error-level alert naming the pump by its display
+name, an advisory is a warning-level alert, and the thermal-safety detail names the emergency's
+cause. None of the three is capability-gated: absence reads as quiet.
 
 `overrides` and `fan_identify` (daemon ≥ 1.21.0, additive — `api_version`
 unchanged, omitted when empty) make `/status` the poll-authoritative source for
@@ -1262,7 +1333,12 @@ Use to discover:
     enforce** for this header: its resolved device policy, clamped by the absolute pump
     backstop (20%). Prefer this over re-deriving a floor from labels and chip names. With the
     generic-only policy table shipped in 2.31.0 it is `30` for every pump-protected header and
-    `0` for every other header — identical to what the engine already enforces.
+    `0` for every other header — identical to what the engine already enforces. **Since daemon
+    2.57.0 (DEC-443) a pump-protected header whose `pwm_mode` is `0` (DC) reports `70`** — the DC
+    pump floor, which the engine, identify, verify, characterisation, discovery and the stall probe
+    all apply to it: a voltage-driven pump stalls much higher in its range than a PWM one. A
+    non-pump header in DC mode is unaffected, and a driver that publishes no `pwmN_mode` (it87)
+    keeps the 30 % floor.
 
     **Daemons 2.31.0 – 2.35.3 over-claimed for one case (`WIRE-b`, fixed in 2.35.4).** A
     *radiator or auxiliary member of a cooling device* resolved that device's policy —
@@ -1399,6 +1475,11 @@ reports the value the engine **actually acted on** — published in the same wri
 as `thermal_state`, so the two cannot disagree by a tick. Render it; never
 compare it to a literal and never assume 105. `release_threshold_c` is still the
 fixed 80 °C. Older daemons report the constant, which remains a correct floor.
+
+**`thermal_safety.coolant_limit_c` / `coolant_release_c` (DEC-443, daemon ≥ 2.57.0)** — the
+coolant emergency's limit and release point (limit − 5 °C) as the engine acted on them, published
+in the same write as `thermal_state`; before the engine's first tick, the configured limit. Absent
+on an older daemon, which has no coolant rung.
 
 **Environment facts (DEC-405, daemon ≥ 2.53.0 — merged as 2.52.0, which was never
 published; `PTR-f`).** The facts that tell
@@ -3033,7 +3114,8 @@ According to the provided daemon notes:
   toward `duty_not_holding`. Diagnostics are never reconciled; the thermal force never
   coalesces.
 - the daemon holds the hwmon lease internally (the GUI holds none — DEC-165)
-- no diagnostic commands below 20 % (a pump never below 30 %) **except the stall probe**
+- no diagnostic commands below 20 % (a pump never below its pump floor — 30 %, or 70 % on a
+  DC-mode header since daemon 2.57.0, DEC-443) **except the stall probe**
   (DEC-407, capability `control.stall_probe`), which is opt-in per header, refuses every
   pump-protected, `cpu_fan` and `unknown`-role header, re-checks that before every write and on
   every sample, and ends every abort and cancel with a 100 % kick — except while shutting down
@@ -3294,10 +3376,11 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   displayed 0 s. Older daemons answer `404`; the GUI stands the card down for the
   session rather than showing invented values (the DEC-200 precedent).
 
-  Two keys apply **live**, so they report `requires_restart: false` and a `running_value`
+  Three keys apply **live**, so they report `requires_restart: false` and a `running_value`
   read from the running daemon rather than from its startup config:
-  `profiles.search_dirs`, and `shutdown.exit_floor_pct` (DEC-388) — the value in force at
-  the moment of a stop is the one used, and a `SIGHUP` re-applies both from the files.
+  `profiles.search_dirs`, `shutdown.exit_floor_pct` (DEC-388) — the value in force at
+  the moment of a stop is the one used — and `safety.coolant_limit_c` (DEC-443), read by the
+  engine every tick. A `SIGHUP` re-applies all three from the files.
 
   `ipc.socket_path` and `state.state_dir` are reported with `mutable: false` **by
   design** — a bad socket path permanently locks out every client, and moving the
@@ -3361,6 +3444,15 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
   only raise a speed. The reply is the shared setter shape; out-of-range, wrong-typed and
   missing values are `400 validation_error`. A crash cannot apply it: `ExecStopPost` has no
   way to reach the OpenFan controller.
+- `POST /config/coolant-limit` — `{"coolant_limit_c": 40..70}`, whole °C (DEC-443, daemon ≥
+  2.57.0; capability `control.cooling_failure_detection`; **default 60**, from `[safety]
+  coolant_limit_c` in `daemon.toml` when no `runtime.toml` value overrides it). The coolant
+  temperature at which the daemon forces every fan and pump to 100 %, released 5 °C below. **Applies
+  live**: persisted to `runtime.toml` first, then put in force from the next engine tick, so a failed
+  persist (`503 persistence_failed`) changes nothing. There is no off switch — a value outside
+  40–70, a fraction, a string or a missing key is `400 validation_error`. The reply is the shared
+  setter shape. A hand-edited `runtime.toml` outside the range is clamped into it at load, and
+  `GET /config` reports the clamped value — the one in force.
 - `POST /config/startup-delay` — `{"delay_secs": 0..30}`; persisted to `runtime.toml`, takes effect on next restart. Daemon ≥ 2.23.0 answers with the **shared DEC-243 setter shape** (`{"updated", "key", "value", "note"}`) as well as the original `delay_secs`, so one client-side parser covers every `POST /config/*`; older daemons send `delay_secs` and `note` only, which parses fine because the caller supplies the key and reads only `note`.
   - **The GUI no longer pushes this on Settings → Save or Settings → Import (DEC-285).** It is an ordinary row on the Daemon Configuration card, written only by its own control and only when the value actually changed. The old best-effort push bypassed the no-op-write guard, so pressing Save once wrote the key into `runtime.toml`, flipped its `source` to `runtime`, and permanently shadowed the operator's `daemon.toml` with a value nobody had chosen. `AppSettings.daemon_startup_delay_secs` was deleted with it (settings schema v4), so an imported/shared config can no longer carry one machine's daemon setting onto another's.
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.

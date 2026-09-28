@@ -397,6 +397,7 @@ def build_header_inspector_view(
             # profile's own `minimum_pct`/`stop_pct`.
             "Device safety floor",
             _fmt_pct(floor),
+            note=_dc_pump_floor_note(header, protected=protected, capabilities=capabilities),
         ),
         InfoRow(
             "Fan stop",
@@ -483,6 +484,26 @@ def build_header_inspector_view(
 # shape hides the broken one and a rename desynchronises them silently. `is
 # True` because `daemon_supports` is tri-state and "the daemon did not say" must
 # not enable a hardware-perturbing action.
+def _dc_pump_floor_note(
+    header: HwmonHeader, *, protected: bool, capabilities: Capabilities | None
+) -> str:
+    """Why a pump on a DC-mode header shows a higher floor (DEC-443, `TS-e`).
+
+    Gated on the daemon that enforces it: an older daemon floors every pump at
+    30 % whatever the signal mode, and the note would explain a number it does
+    not report. The number itself is never restated here — the row shows the
+    daemon's own ``effective_min_pwm_pct``.
+    """
+    if not protected or header.pwm_mode != 0:
+        return ""
+    if daemon_supports("cooling_failure_detection", capabilities) is not True:
+        return ""
+    return (
+        "DC mode: a pump driven by voltage rather than PWM stalls higher in its range, "
+        "so the daemon holds it at a higher floor than a PWM pump."
+    )
+
+
 def _supports_characterization(capabilities: Capabilities | None) -> bool:
     return daemon_supports("pwm_characterization", capabilities) is True
 

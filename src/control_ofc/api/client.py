@@ -447,6 +447,18 @@ class DaemonClient:
             self._post("/config/exit-floor", json={"exit_floor_pct": exit_floor_pct})
         )
 
+    def set_coolant_limit(self, coolant_limit_c: int) -> ConfigWriteResult:
+        """POST /config/coolant-limit — whole °C, 40..70 (DEC-443). Applies at once.
+
+        The coolant temperature at which the daemon forces every fan and pump to
+        100 %, released 5 °C below. Gate on
+        ``capabilities.control.cooling_failure_detection`` — an older daemon 404s
+        this and has no coolant emergency at all.
+        """
+        return parse_config_write(
+            self._post("/config/coolant-limit", json={"coolant_limit_c": coolant_limit_c})
+        )
+
     def set_allow_port_probe(self, enabled: bool) -> ConfigWriteResult:
         """POST /config/allow-port-probe — the DEC-203 opt-in.
 

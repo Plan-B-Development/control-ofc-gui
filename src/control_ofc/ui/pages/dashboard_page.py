@@ -36,6 +36,7 @@ from control_ofc.constants import (
 )
 from control_ofc.services.app_settings_service import AppSettingsService
 from control_ofc.services.app_state import AppState
+from control_ofc.services.cooling_watch import emergency_resume
 from control_ofc.services.daemon_service_check import (
     ENABLE_COMMAND,
     check_daemon_service_state,
@@ -78,8 +79,9 @@ _CHART_MODE_BY_VALUE = {m.value: m for m in ChartMode}
 
 #: When each thermal state hands back to the profile (G159). `recovery` (older
 #: daemons) and any unrecognised state fall back to "once temperatures recover".
+#: `emergency` is not here: since DEC-443 it can be the CPU's or the coolant's,
+#: so its clause follows `emergency_causes` (`cooling_watch.emergency_resume`).
 _THERMAL_RESUME: dict[str, str] = {
-    "emergency": "once the CPU cools",
     "no_sensor_fallback": "once a current CPU temperature reading returns",
 }
 
@@ -484,6 +486,10 @@ class DashboardPage(QWidget):
         self._thermal_banner.setObjectName("Dashboard_Banner_thermal")
         content_layout.addWidget(self._thermal_banner)
         self._last_thermal_state = "normal"
+        # DEC-443: the emergency's causes the banner was last built for — a
+        # cpu → coolant change keeps `thermal_state` at "emergency", and the
+        # resume clause must still follow it.
+        self._last_emergency_causes: tuple[str, ...] = ()
 
         # Engine liveness (DEC-249), surfaced the same way and for the same
         # reason as the thermal banner above: poll is the authoritative source,
@@ -808,11 +814,15 @@ class DashboardPage(QWidget):
         # emergency / recovery overrides fan control. Surface it the moment
         # thermal_state leaves "normal", and clear it on the return.
         thermal = status.thermal_state or "normal"
+        causes = tuple(status.emergency_causes) if thermal == "emergency" else ()
         # The thermal chip + cooling-readiness chip live on the footer now
         # (DEC-222); this page keeps only the transition banner + annotation.
-        if thermal != self._last_thermal_state:
+        thermal_changed = thermal != self._last_thermal_state
+        if thermal_changed or causes != self._last_emergency_causes:
             self._last_thermal_state = thermal
-            self._annotate(f"Thermal: {thermal}")
+            self._last_emergency_causes = causes
+            if thermal_changed:
+                self._annotate(f"Thermal: {thermal}")
             if thermal == "normal":
                 self._thermal_banner.hide_banner()
             else:
@@ -823,7 +833,11 @@ class DashboardPage(QWidget):
                 # what the daemon applies, not what the fans do. Each state ends
                 # on its own condition: no_sensor_fallback clears when a fresh
                 # CPU reading returns, not when anything cools.
-                resume = _THERMAL_RESUME.get(thermal, "once temperatures recover")
+                resume = (
+                    emergency_resume(causes)
+                    if thermal == "emergency"
+                    else _THERMAL_RESUME.get(thermal, "once temperatures recover")
+                )
                 self._thermal_banner.show_error(
                     f"Thermal protection active ({thermal}) — the daemon is applying a "
                     "minimum fan speed under your profile, which still applies wherever "
