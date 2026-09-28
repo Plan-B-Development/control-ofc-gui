@@ -17,6 +17,23 @@
   resumes once the coolant cools rather than the CPU.
 - **The Hardware page explains a DC pump's higher floor** (DEC-443). A pump on a DC-mode header
   shows the 70 % floor the daemon enforces, with a note saying why.
+- **Set a header's role from the Hardware page** (DEC-444). Each PWM header card has **Set role…**:
+  Pump, Chassis fan, Radiator fan, CPU fan, or Not set to remove your assignment. The PWM Test
+  Report's Role column offers the same choice, so a header the board publishes no name for can now
+  be given the chassis- or radiator-fan role that the stall/restart probe needs. Removing a pump
+  you assigned asks first, and the message afterwards reports what the daemon actually did —
+  including when it still protects a header as a pump because of its label or the active profile.
+  An assigned CPU-fan role changes the name shown only; it adds no floor.
+- **nct6687d's MSI fan names are marked unverified on other vendors' boards** (DEC-444). On a
+  non-MSI board, a header named `Pump Fan`, `CPU Fan` or `System Fan #N` by the nct6687d driver
+  says **Label unverified**, and the Hardware page asks you to name the header your pump is
+  really on. Choose **Labels are correct** to stop asking on this machine; Settings ▸ Prompts &
+  Dismissals can restore it.
+- **Removing a role in the Fan Wizard** (DEC-444). Choosing **— none —** as the pump clears a pump
+  you assigned (after the same confirmation), and unticking a radiator fan you assigned clears its
+  role. Ticking a pump you named as a radiator fan asks the same question before it removes the
+  pump role. A change the daemon did not take is named in the status line instead of "Saved.", and
+  the pump picker starts on the pump you chose rather than one a header label names.
 
 - **Fan names, profiles and settings survive the it87 v2.0 driver rename** (DEC-442). With
   control-ofc-daemon 2.57.0 or newer, an `it87-dkms-git` rebuild that renames Gigabyte chips (for
@@ -31,6 +48,16 @@
 
 ### Changed
 
+- **Configure AIO asks before removing a pump you assigned** (DEC-444). Moving the pump to another
+  header, or choosing no pump, used to clear the old pump's role silently; it now asks the same
+  question as the Fan Wizard, and declining keeps the old pump protected.
+- **The Gigabyte X870E AORUS MASTER's `SYS_FAN5_PUMP`, `SYS_FAN6_PUMP` and `SYS_FAN4` labels are
+  verified** (DEC-444). A test on the board confirmed the channel order, so they no longer show
+  `(unverified)`. Which headers get the pump floor does not change.
+- **The Controls page's note on a radiator fan you assigned says how to release it** (DEC-444):
+  **Set role… ▸ Not set** on the Hardware page, or untick it in the Fan Wizard.
+- **The stall/restart probe's tooltip points to where a role can be set** (DEC-444). It used to
+  send you to the Controls page, which cannot set a header's role.
 - **The app now requires control-ofc-daemon 2.57.0 or newer** (DEC-442). The package depends on it from this release.
   The app stores fan ids under the canonical chip name, which an older daemon on a renamed it87
   chip does not publish. If the app meets such a daemon anyway (for example, one not yet restarted

@@ -54,6 +54,7 @@ class PwmHeaderCard(ContentSizedCard):
     test_requested = Signal(str)  # header_id
     characterize_requested = Signal(str)  # header_id
     discover_requested = Signal(str)  # header_id — AIO Phase 8 Batch 1 §6.2
+    role_change_requested = Signal(str)  # header_id — DEC-444
 
     def __init__(self, view: HeaderInspectorView, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -88,12 +89,33 @@ class PwmHeaderCard(ContentSizedCard):
         )
         self._role_pill.setAccessibleName(f"Role: {view.role_label}")
         title_row.addWidget(self._role_pill)
+        # DEC-444: set the role where it is shown. NOT one of the three tests —
+        # a PWM Test Report run does not stand it down (the user's Q4), because
+        # the daemon re-checks a header's role at every step of a run.
+        self._role_btn = make_button(
+            "Set role…",
+            "ghost",
+            object_name=f"HeaderCard_Btn_role_{slug}",
+            accessible_name=f"Set the role of {view.title}",
+            parent=self,
+        )
+        self._role_btn.clicked.connect(lambda: self.role_change_requested.emit(self._header_id))
+        title_row.addWidget(self._role_btn)
         root.addLayout(title_row)
 
         self._subtitle = QLabel(view.subtitle, self)
         self._subtitle.setObjectName(f"HeaderCard_Subtitle_{slug}")
         self._subtitle.setProperty("class", "CardMeta")
         root.addWidget(self._subtitle)
+
+        # DEC-444 (`BRD-h`): an nct6687d MSI label on another vendor's board.
+        # Hidden (not empty) when there is nothing to say.
+        self._caveat_lbl = QLabel("", self)
+        self._caveat_lbl.setObjectName(f"HeaderCard_Label_caveat_{slug}")
+        self._caveat_lbl.setProperty("class", "CardMeta")
+        self._caveat_lbl.setWordWrap(True)
+        self._caveat_lbl.setVisible(False)
+        root.addWidget(self._caveat_lbl)
 
         # ── Live values ──────────────────────────────────────────────────────
         self._live_grid = QGridLayout()
@@ -192,6 +214,11 @@ class PwmHeaderCard(ContentSizedCard):
         ):
             button.setEnabled(allowed and not blocked)
             button.setToolTip(blocked if (allowed and blocked) else why)
+        # The role picker ignores `blocked` by design — see `__init__`.
+        self._role_btn.setEnabled(view.can_set_role)
+        self._role_btn.setToolTip(
+            "Choose what this header drives" if view.can_set_role else view.set_role_disabled_reason
+        )
 
     def set_view(self, view: HeaderInspectorView) -> None:
         """Re-render from a fresh view-model. **Called on every 1 Hz poll tick.**
@@ -214,6 +241,9 @@ class PwmHeaderCard(ContentSizedCard):
         self._role_pill.set_text(view.role_label)
         self._role_pill.set_state("warn" if view.pump_protected else "neutral")
         self._role_pill.setAccessibleName(f"Role: {view.role_label}")
+        self._role_btn.setAccessibleName(f"Set the role of {view.title}")
+        self._caveat_lbl.setText(view.label_caveat)
+        self._caveat_lbl.setVisible(bool(view.label_caveat))
 
         self._live_state = _fill_grid(
             self._live_grid,

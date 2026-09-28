@@ -999,8 +999,10 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    `ui/cooling_readiness.py`.
 3. **Cooling Hardware** (`Hardware_Card_cooling`) — the configured cooling devices, then one
    card per PWM header (`pwm_header_card`, rendered from `header_inspector_view`) with its
-   **Test Control**, **Characterise** and **Discover Control Path** buttons and a *Details*
-   disclosure. See the per-header diagnostics below.
+   **Test Control**, **Characterise** and **Discover Control Path** buttons, a **Set role…**
+   button beside the role pill (DEC-444, below) and a *Details* disclosure. See the per-header
+   diagnostics below. Above the header cards, a note (`Hardware_Box_labelPrompt`) asks for the
+   real pump on a non-MSI board whose nct668x chip carries nct6687d's MSI labels (`BRD-h`).
 4. **Hardware Diagnostics** (`Hardware_Card_diagnostics`) — **PWM Test Report…** (the
    whole-machine assessment, DEC-404), **Startup / Lifecycle Recording**, **Thermal
    Observation** (capability-gated, DEC-335), **AIO Validation**, and **Advanced (System
@@ -1011,6 +1013,32 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    the opt-in **Probe ports (advanced)** button behind an explicit confirmation. Its
    prerequisites are in [Session and probe prerequisites](#session-and-probe-prerequisites).
 6. **Voltages** (`Hardware_Card_voltages`, `WIRE-ag`) — display-only reference readings.
+
+### Setting a header's role (DEC-444)
+**Set role…** on each header card opens `HeaderRoleDialog` (`ui/widgets/header_role_dialog.py`)
+over the Qt-free `services/header_role_view.py`: *Pump*, *Chassis fan*, *Radiator fan*,
+*CPU fan* or *Not set* (a `null` clear — never an explicit `unknown`), each with its effect,
+Apply enabled only when the choice changes the stored assignment. The PWM Test Report's scope
+page offers the same picker as **Set…** in its Role column. Both route through
+`HardwarePage.change_header_role` — one write path: plan (no-op / removes a user pump) →
+`confirm_remove_pump_protection` when a pump the user assigned is being removed (the same
+confirmation the Fan Wizard and Configure AIO ask) → `POST /config/header-role` → re-read
+`/hwmon/headers` into AppState → a message built from the daemon's `effective_role` and the
+re-read header's protection (the union can keep a label- or profile-derived pump protected
+whatever the user chose). Synchronous on the UI thread, like the Controls page's role writes.
+
+- **Enablement:** capability `control.header_roles` and a writable header. A running PWM Test
+  Report does **not** disable it (the daemon re-checks roles at every step).
+- **CPU fan** is display-only when assigned: only `pump` feeds a floor daemon-side.
+- **A failure** says "nothing was changed" only on a daemon error envelope (it persists first).
+  A timeout or dropped connection says the daemon did not confirm; the page re-reads the
+  headers, and says the card may lag when that re-read fails too.
+- **`BRD-h`:** on a non-MSI board (DMI vendor known and not Micro-Star), a header on an
+  `nct668x` chip whose label is one of nct6687d's fixed MSI strings (`CPU Fan`, `Pump Fan`,
+  `Pump Fan #2`, `System Fan #1`…`#6`) shows a *Label unverified* line on the card and on the
+  Kernel label / Role source rows. The page's note hides once any header carries a
+  user-assigned pump, or after **Labels are correct**, stored in `confirmed_label_prompts`
+  (machine-specific, keyed on the flagged chips' device ids).
 
 ### Per-header diagnostics (Hardware page)
 Each PWM header card (`pwm_header_card`) carries three buttons, all stood down with the reason

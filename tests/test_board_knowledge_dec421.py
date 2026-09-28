@@ -162,12 +162,10 @@ class TestLabelTableMatchesRealDmiNames:
     def test_neighbouring_boards_do_not_inherit_a_mapping(self, no_libsensors, vendor, board, chip):
         assert _label(no_libsensors, vendor, board, chip, 1) == "pwm1"
 
-    def test_x870e_master_pump_labels_stay_unverified(self, no_libsensors):
-        # The it87952 channel order has a conflicting source (it87 PR #100), so
-        # the PUMP labels stay flagged until a per-channel test settles it.
+    def test_x870e_master_pump_labels_are_verified(self, no_libsensors):
+        # DEC-444 settled the it87952 order on the reference host (BRD-i).
         text = _label(no_libsensors, GIGABYTE, "X870E AORUS MASTER", "it87952", 1)
-        assert text.startswith("SYS_FAN5_PUMP")
-        assert "unverified" in text
+        assert text == "SYS_FAN5_PUMP"
 
 
 class TestFixedKeysReachThePumpFloor:
@@ -205,6 +203,10 @@ class TestFixedKeysReachThePumpFloor:
             (GIGABYTE, "X470 AORUS ULTRA GAMING-CF", "it8792", 1, "cpu_or_pump"),  # SYS_FAN5_PUMP
             (GIGABYTE, "X470 AORUS ULTRA GAMING-CF", "it8792", 3, "chassis"),  # SYS_FAN4
             (GIGABYTE, "B550 VISION D-CF", "it8792", 2, "cpu_or_pump"),  # SYS_FAN6_PUMP
+            # DEC-444: dropping "(unverified)" must not move either floor role.
+            (GIGABYTE, "X870E AORUS MASTER", "it87952", 1, "cpu_or_pump"),  # SYS_FAN5_PUMP
+            (GIGABYTE, "X870E AORUS MASTER", "it87952", 2, "cpu_or_pump"),  # SYS_FAN6_PUMP
+            (GIGABYTE, "X870E AORUS MASTER", "it87952", 3, "chassis"),  # SYS_FAN4
             ("ASRock", "B450 Gaming-ITX/ac", "nct6792", 2, "cpu_or_pump"),  # CPU_FAN1
             ("ASRock", "B450 Gaming-ITX/ac", "nct6792", 1, "chassis"),  # CHA_FAN1
         ],

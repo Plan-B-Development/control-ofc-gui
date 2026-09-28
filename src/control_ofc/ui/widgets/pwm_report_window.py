@@ -31,7 +31,7 @@ from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 from PySide6 import __version__ as pyside_version
-from PySide6.QtCore import Qt, qVersion
+from PySide6.QtCore import QRect, Qt, qVersion
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -45,6 +45,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
+    QStyle,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -54,6 +56,7 @@ from PySide6.QtWidgets import (
 from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.constants import APP_VERSION
 from control_ofc.services.diagnostic_estimates import duration_words
+from control_ofc.services.header_role_view import role_cell_text, role_editable
 from control_ofc.services.pwm_report import catalog as cat
 from control_ofc.services.pwm_report import document as d
 from control_ofc.services.pwm_report import setup_facts as sf
@@ -109,6 +112,9 @@ REOPENED_REAPPLY_NOTE = (
     "report to check the machine now."
 )
 
+#: Any width wider than the item padding; cancels out of the inset measurement.
+_INSET_PROBE_WIDTH = 200
+
 _SCOPE_FIXED_COLS = ("Channel", "Role", "Writable", "Fan detected", "In profile")
 
 _TONE_TO_STATE = {"ok": "ok", "warn": "warn", "bad": "crit", "info": "info", "muted": "neutral"}
@@ -157,6 +163,7 @@ class PwmReportWindow(ModalDialog):
         *,
         profile_member_ids: Callable[[], frozenset[str]] = frozenset,
         local_verify_pages: Callable[[], Sequence[str]] = tuple,
+        set_header_role: Callable[[str, QWidget | None], str | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__("PWM Test Report", parent, modal=False)
@@ -170,6 +177,9 @@ class PwmReportWindow(ModalDialog):
         #: GUI started is still running. Asked at every refusal check, never
         #: cached, so the Start click itself reads the live answer.
         self._local_verify_pages = local_verify_pages
+        #: DEC-444: the Hardware page's one role-write path (dialog, confirmation,
+        #: POST, header re-read). `None` hides nothing but disables "Set…".
+        self._set_header_role = set_header_role
         self._channels: list[cat.Channel] = []
         self._checks: dict[tuple[str, str], QCheckBox] = {}
         self._probe_consents: dict[str, QCheckBox] = {}
@@ -293,6 +303,10 @@ class PwmReportWindow(ModalDialog):
         self._scope_refusals.setProperty("class", "WarningChip")
         self._scope_refusals.setVisible(False)
         v.addWidget(self._scope_refusals)
+        # DEC-444: what the last "Set…" in the Role column did.
+        self._scope_role_msg = _plain("", "PwmReport_Label_scopeRoleMessage", meta=True)
+        self._scope_role_msg.setVisible(False)
+        v.addWidget(self._scope_role_msg)
         self._scope_table = QTableWidget(0, len(_SCOPE_FIXED_COLS) + len(cat.TEST_ORDER))
         self._scope_table.setObjectName("PwmReport_Table_scope")
         self._scope_table.setHorizontalHeaderLabels(
@@ -307,9 +321,14 @@ class PwmReportWindow(ModalDialog):
         v.addWidget(self._estimate_lbl)
         return page
 
-    def _populate_scope(self) -> None:
+    def _populate_scope(self, keep: dict[tuple[str, str], bool] | None = None) -> None:
+        """Build the scope table. ``keep`` maps ``(channel, test)`` to the tick a
+        box had before a rebuild (DEC-444, after a role change): an offered box
+        keeps it, and only a box that was not offered before takes the default."""
         state = self._state
         caps = state.capabilities if state is not None else None
+        headers = {h.id: h for h in (state.hwmon_headers if state is not None else [])}
+        role_holders: list[QWidget] = []
         name_of = state.fan_display_name if state is not None else (lambda cid: cid)
         self._channels = cat.build_channels(
             state.hwmon_headers if state is not None else [],
@@ -319,11 +338,16 @@ class PwmReportWindow(ModalDialog):
             profile_member_ids=self._profile_member_ids(),
         )
         defaults = cat.default_selection(self._channels, caps)
+        if keep is None:
+            # A fresh scope page (a new report): the last role change's message
+            # belongs to the report it was made in.
+            self._scope_role_msg.clear()
+            self._scope_role_msg.setVisible(False)
         table = self._scope_table
         table.setRowCount(len(self._channels))
         self._checks.clear()
         for row, ch in enumerate(self._channels):
-            role = f"{ch.role} ({ch.role_source})" if ch.is_hwmon else ch.source
+            role = role_cell_text(ch.role, ch.role_source) if ch.is_hwmon else ch.source
             cells = (
                 ch.name,
                 role,
@@ -336,6 +360,13 @@ class PwmReportWindow(ModalDialog):
                 if col == 0:
                     item.setToolTip(ch.channel_id)
                 table.setItem(row, col, item)
+            header = headers.get(ch.channel_id) if ch.is_hwmon else None
+            if header is not None:
+                holder = self._role_cell(ch, header, role, caps)
+                table.item(row, 1).setText("")
+                table.item(row, 1).setToolTip(role)
+                table.setCellWidget(row, 1, holder)
+                role_holders.append(holder)
             for offset, test in enumerate(cat.TEST_ORDER):
                 col = len(_SCOPE_FIXED_COLS) + offset
                 avail = cat.availability(ch, test, caps)
@@ -343,7 +374,11 @@ class PwmReportWindow(ModalDialog):
                 box.setObjectName(f"PwmReport_Check_{test}_{_slug(ch.channel_id)}")
                 box.setAccessibleName(f"{cat.SPECS[test].title} on {ch.name}")
                 box.setEnabled(avail.available)
-                box.setChecked(avail.available and test in defaults.get(ch.channel_id, ()))
+                prior = (keep or {}).get((ch.channel_id, test))
+                box.setChecked(
+                    avail.available
+                    and (prior if prior is not None else test in defaults.get(ch.channel_id, ()))
+                )
                 box.setToolTip(avail.reason)
                 box.toggled.connect(self._on_selection_changed)
                 holder = QWidget()
@@ -353,7 +388,61 @@ class PwmReportWindow(ModalDialog):
                 table.setCellWidget(row, col, holder)
                 self._checks[(ch.channel_id, test)] = box
         table.resizeColumnsToContents()
+        # A cell widget's size never reaches `ResizeToContents` (DEC-363), so the
+        # Role column is widened to its widest holder (whose hint includes its
+        # margins) plus the item inset the style applies, measured from
+        # `SE_ItemViewItemText` as `system_state_cards` does. No literal.
+        if role_holders:
+            option = QStyleOptionViewItem()
+            option.rect = QRect(0, 0, _INSET_PROBE_WIDTH, 0)
+            text_rect = table.style().subElementRect(
+                QStyle.SubElement.SE_ItemViewItemText, option, table
+            )
+            inset = _INSET_PROBE_WIDTH - text_rect.width()
+            need = max(h.sizeHint().width() for h in role_holders) + inset
+            if table.columnWidth(1) < need:
+                table.setColumnWidth(1, need)
         self._on_selection_changed()
+
+    def _role_cell(self, ch, header, role_text: str, caps) -> QWidget:
+        """The Role cell of a motherboard header: the role, and "Set…" (DEC-444)."""
+        holder = QWidget()
+        holder.setObjectName(f"PwmReport_Box_role_{_slug(ch.channel_id)}")
+        lay = QHBoxLayout(holder)
+        lay.setContentsMargins(6, 0, 6, 0)
+        lay.setSpacing(6)
+        label = QLabel(role_text, holder)
+        label.setObjectName(f"PwmReport_Label_role_{_slug(ch.channel_id)}")
+        lay.addWidget(label)
+        button = make_button(
+            "Set…",
+            "ghost",
+            object_name=f"PwmReport_Btn_role_{_slug(ch.channel_id)}",
+            accessible_name=f"Set the role of {ch.name}",
+            parent=holder,
+        )
+        editable, reason = role_editable(header, caps)
+        if self._set_header_role is None:
+            editable, reason = False, "Open this report from the Hardware page to set a role."
+        button.setEnabled(editable)
+        button.setToolTip("Choose what this header drives" if editable else reason)
+        button.clicked.connect(lambda _=False, cid=ch.channel_id: self._on_set_role(cid))
+        lay.addWidget(button)
+        lay.addStretch(1)
+        return holder
+
+    def _on_set_role(self, channel_id: str) -> None:
+        """Set a role from the scope page, then rebuild it keeping the ticks —
+        a header that just became a chassis or radiator fan offers its probe."""
+        if self._set_header_role is None:
+            return
+        message = self._set_header_role(channel_id, self)
+        if not message:
+            return
+        keep = {key: box.isChecked() for key, box in self._checks.items() if box.isEnabled()}
+        self._populate_scope(keep)
+        self._scope_role_msg.setText(message)
+        self._scope_role_msg.setVisible(True)
 
     def selection(self) -> dict[str, set[str]]:
         out: dict[str, set[str]] = {}

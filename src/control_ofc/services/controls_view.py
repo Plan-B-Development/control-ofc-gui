@@ -582,16 +582,19 @@ def cooling_device_reservations(
                 title="Assign the pump to this curve?",
             )
         elif membership.role == "radiator":
-            # `TS-ai`: no GUI route clears a `radiator_fan` role — Configure AIO
-            # and the wizard clear only a user-assigned PUMP — so neither shape
-            # offers a remedy, as the pump branch above does not. Keyed on
-            # `assigned`: a liquid cooler's non-pump channel is `radiator_fan` by
-            # chip mapping with nothing assigned, and must not be told it was.
+            # `TS-ai`, narrowed by DEC-444: an ASSIGNED radiator role can now be
+            # removed (Set role… ▸ Not set, or unticking it in the Fan Wizard),
+            # so that shape names the remedy. A role from the hardware has none —
+            # a clear only drops an assignment — so that shape still offers
+            # nothing. Keyed on `assigned`: a liquid cooler's non-pump channel is
+            # `radiator_fan` by chip mapping with nothing assigned, and must not
+            # be told it was.
             if membership.assigned:
                 text = f"({membership.role_label} role assigned)"
-                why = (
-                    f"You assigned this header the {membership.role_label.lower()} "
-                    "role in the Fan Wizard"
+                why = f"You assigned this header the {membership.role_label.lower()} role"
+                remedy = (
+                    " To release it, choose Set role… ▸ Not set on its card on the "
+                    "Hardware page, or untick it in the Fan Wizard."
                 )
             else:
                 text = f"({membership.role_label})"
@@ -599,11 +602,12 @@ def cooling_device_reservations(
                     "The daemon treats this header as a liquid cooler's "
                     f"{membership.role_label.lower()} because of its hardware"
                 )
+                remedy = ""
             notes[member_id] = ReservationNote(
                 text=text,
                 tooltip=(
                     f"{why}. Assigning it to an unrelated curve is allowed, but it "
-                    "is usually not what you want."
+                    f"is usually not what you want.{remedy}"
                 ),
                 title=f"Assign the {membership.role_label.lower()} to this curve?",
             )
@@ -614,8 +618,9 @@ def cooling_device_reservations(
                     f"This header is assigned the {membership.role_label.lower()} "
                     "role, so the daemon treats it as part of the cooling stack. "
                     "Assigning it to an unrelated curve is allowed, but it is "
-                    "usually not what you want. Clear the role in Configure AIO to "
-                    "release it."
+                    "usually not what you want. To release it, choose Set role… ▸ "
+                    "Not set on its card on the Hardware page, or clear it in "
+                    "Configure AIO."
                 ),
                 title=f"Assign the {membership.role_label.lower()} to this curve?",
             )

@@ -69,6 +69,14 @@ from control_ofc.services.hardware_view import (
     build_voltage_panel,
 )
 from control_ofc.services.header_inspector_view import build_header_inspector_views
+from control_ofc.services.header_role_view import (
+    failure_message,
+    nct6687_label_note,
+    nct6687_label_prompt,
+    outcome_message,
+    plan_role_change,
+    role_editable,
+)
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
@@ -92,6 +100,10 @@ from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 from control_ofc.ui.widgets.control_path_dialog import ControlPathDiscoveryDialog
 from control_ofc.ui.widgets.cooling_device_card import CoolingDeviceCard
 from control_ofc.ui.widgets.flow_layout import FlowLayout
+from control_ofc.ui.widgets.header_role_dialog import (
+    HeaderRoleDialog,
+    confirm_remove_pump_protection,
+)
 from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.pwm_header_card import PwmHeaderCard
 from control_ofc.ui.widgets.pwm_report_window import PwmReportWindow
@@ -456,6 +468,35 @@ class HardwarePage(QWidget):
         headers_label.setProperty("class", "CardMeta")
         v.addWidget(headers_label)
 
+        # DEC-444 (`BRD-h`): ask for the real pump where nct6687d's MSI labels
+        # sit on another vendor's board. Hidden unless `nct6687_label_prompt`
+        # returns something.
+        self._label_prompt = QWidget(card)
+        self._label_prompt.setObjectName("Hardware_Box_labelPrompt")
+        prompt_layout = QVBoxLayout(self._label_prompt)
+        prompt_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_layout.setSpacing(6)
+        self._label_prompt_text = QLabel("", self._label_prompt)
+        self._label_prompt_text.setObjectName("Hardware_Label_labelPrompt")
+        self._label_prompt_text.setProperty("class", "WarningChip")
+        self._label_prompt_text.setWordWrap(True)
+        prompt_layout.addWidget(self._label_prompt_text)
+        prompt_actions = QHBoxLayout()
+        self._label_prompt_btn = make_button(
+            "Labels are correct",
+            "secondary",
+            object_name="Hardware_Btn_labelsCorrect",
+            accessible_name="The header labels are correct; do not ask again on this machine",
+            parent=self._label_prompt,
+        )
+        self._label_prompt_btn.clicked.connect(self._confirm_labels)
+        prompt_actions.addWidget(self._label_prompt_btn)
+        prompt_actions.addStretch(1)
+        prompt_layout.addLayout(prompt_actions)
+        self._label_prompt_key = ""
+        self._label_prompt.setVisible(False)
+        v.addWidget(self._label_prompt)
+
         # A flow layout, not a splitter: cards wrap to the available width, so
         # the section never forces the window wider. DEC-315 made the app's
         # minimum track its widest page, and a fixed multi-column grid here
@@ -642,8 +683,10 @@ class HardwarePage(QWidget):
             # §6.3: the persisted relationship, so the card can carry a "Last
             # validated" row that survives a GUI restart.
             control_paths=self._control_paths,
+            board_vendor=self._board_vendor(),
         )
         self._sync_header_cards(header_views)
+        self._refresh_label_prompt(headers)
 
         self._cooling_count.setText(
             f"{len(device_views)} device(s) · {len(header_views)} PWM header(s)"
@@ -727,6 +770,7 @@ class HardwarePage(QWidget):
                 card.test_requested.connect(self._run_pwm_verify)
                 card.characterize_requested.connect(self._open_characterization)
                 card.discover_requested.connect(self._open_control_path_discovery)
+                card.role_change_requested.connect(self._on_role_change_requested)
                 # A header that appears mid-run stands down like the others.
                 card.set_diagnostics_blocked(RUN_ACTIVE_REASON if self._report_active else "")
                 self._header_cards[view.header_id] = card
@@ -1775,6 +1819,103 @@ class HardwarePage(QWidget):
         if not pushed:
             self._refresh_cooling_section()
 
+    # ── DEC-444: header roles and the `BRD-h` label prompt ────────────
+
+    def _board_vendor(self) -> str:
+        info = getattr(self._state, "board_info", None) if self._state else None
+        return getattr(info, "vendor", "") or ""
+
+    def _on_role_change_requested(self, header_id: str) -> None:
+        message = self.change_header_role(header_id, self)
+        if message:
+            self._show_diag_message(message)
+
+    def change_header_role(self, header_id: str, parent: QWidget | None) -> str | None:
+        """Pick, confirm and write one header's role; return what happened.
+
+        The ONE write path for the Hardware card and the PWM Test Report's scope
+        page. ``None`` means the user cancelled or nothing would change, so the
+        caller shows nothing. Synchronous on the UI thread, like the Controls
+        page's role writes (the user's Q9): one small POST and one GET.
+        """
+        state = self._state
+        header = next(
+            (h for h in (state.hwmon_headers if state else []) if h.id == header_id), None
+        )
+        if header is None:
+            return "That header is no longer reported by the daemon."
+        caps = self._capabilities()
+        editable, reason = role_editable(header, caps)
+        if not editable:
+            return reason
+        if self._client is None:
+            return "Cannot set a role: no daemon connection."
+        name = state.member_display_name(header_id) if state else header_id
+        dialog = HeaderRoleDialog(
+            header,
+            name,
+            label_caveat=nct6687_label_note(header, self._board_vendor()),
+            parent=parent,
+        )
+        if not dialog.exec():
+            return None
+        plan = plan_role_change(header, dialog.chosen_role())
+        if plan.noop:
+            return None
+        if plan.removes_user_pump and not confirm_remove_pump_protection(parent, [name]):
+            return f"{name} kept its pump role."
+        try:
+            result = self._client.set_header_role(header_id, plan.new_role)
+        except Exception as exc:
+            log.warning("Failed to set role %s on %s: %s", plan.new_role, header_id, exc)
+            reread = self._reread_headers() is not None
+            return failure_message(name, plan.new_role, exc, reread=reread)
+        refreshed = self._reread_headers()
+        header_after = next((h for h in refreshed or [] if h.id == header_id), None)
+        return outcome_message(name, result, header_after, caps)
+
+    def _reread_headers(self):
+        """Push the daemon's headers into AppState (they otherwise refresh on the
+        ~300 s capability interval), so every page shows the new role. Returns
+        the headers, or ``None`` if the read failed."""
+        if self._client is None or self._state is None:
+            return None
+        try:
+            headers = self._client.hwmon_headers()
+        except Exception as exc:
+            log.warning("Header re-fetch after a role change failed: %s", exc)
+            return None
+        # Emits `headers_updated`, which re-renders this page's cards.
+        self._state.set_hwmon_headers(headers)
+        return headers
+
+    def _confirmed_label_prompts(self) -> frozenset[str]:
+        svc = self._settings_service
+        return frozenset(svc.settings.confirmed_label_prompts) if svc is not None else frozenset()
+
+    def _refresh_label_prompt(self, headers) -> None:
+        prompt = nct6687_label_prompt(
+            list(headers), self._board_vendor(), self._confirmed_label_prompts()
+        )
+        self._label_prompt_key = prompt.key if prompt else ""
+        if prompt is not None:
+            self._label_prompt_text.setText(prompt.text)
+        self._label_prompt.setVisible(prompt is not None)
+        # Nowhere to remember the answer, so do not offer to.
+        self._label_prompt_btn.setVisible(self._settings_service is not None)
+
+    def _confirm_labels(self) -> None:
+        """Remember "labels are correct" for these chips on this machine only
+        (`confirmed_label_prompts` is in MACHINE_SPECIFIC_KEYS)."""
+        svc = self._settings_service
+        key = self._label_prompt_key
+        if svc is None or not key:
+            return
+        stored = list(svc.settings.confirmed_label_prompts)
+        if key not in stored:
+            svc.update(confirmed_label_prompts=[*stored, key])
+        self._refresh_label_prompt(self._state.hwmon_headers if self._state else [])
+
     def _show_diag_message(self, text: str) -> None:
         self._diag_result.setText(text)
         self._diag_result.setVisible(bool(text))
@@ -1960,6 +2101,7 @@ class HardwarePage(QWidget):
             self._settings_service,
             profile_member_ids=self._profile_member_ids,
             local_verify_pages=self._local_verify_pages,
+            set_header_role=self.change_header_role,
             parent=self,
         )
         self._report_window = window

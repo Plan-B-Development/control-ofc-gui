@@ -38,7 +38,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -71,6 +70,7 @@ from control_ofc.services.pump_protection import (
     pump_identify_warning,
 )
 from control_ofc.ui.components.a11y import name_value_control
+from control_ofc.ui.widgets.header_role_dialog import confirm_remove_pump_protection
 
 if TYPE_CHECKING:
     from control_ofc.api.client import DaemonClient
@@ -636,10 +636,13 @@ class CoolingDevicePage(QWizardPage):
         current_pump = self._pump_combo.currentData()
         self._pump_combo.clear()
         self._pump_combo.addItem("— none —", "")
-        detected_pump = next(
-            (mid for mid, m in membership.items() if m.role == "pump"),
-            "",
-        )
+        # The pump the user chose outranks one the daemon inferred: a device's
+        # pump member first, then a header the user assigned, then any. On a
+        # board where nct6687d labels a case-fan header "Pump Fan" (BRD-h), the
+        # inferred one is the wrong default.
+        pumps = [m for m in membership.values() if m.role == "pump"]
+        pumps.sort(key=lambda m: (not m.from_device, not m.assigned))
+        detected_pump = pumps[0].member_id if pumps else ""
         for row in build_pump_role_candidates(headers, display_name=display):
             self._pump_combo.addItem(row["label"], row["id"])
         wanted = current_pump or detected_pump
@@ -710,34 +713,49 @@ class CoolingDevicePage(QWizardPage):
         not remove it anyway — a clear only drops the stored assignment and falls
         back to exactly that inference.
         """
+        offered = self._offered_pumps()
         return [
             h.id
             for h in self._wizard._state.hwmon_headers
-            if h.role == "pump" and h.role_source == "user_assigned" and h.id != pump_id
+            if h.role == "pump"
+            and h.role_source == "user_assigned"
+            and h.id != pump_id
+            and h.id in offered
+        ]
+
+    def _offered_pumps(self) -> set[str]:
+        """Every header the pump picker listed. A pump it did not list (a header
+        that is read-only right now) was never deselected, so it is neither
+        cleared nor dropped from the device — ``_offered_radiators``' rule."""
+        combo = self._pump_combo
+        return {combo.itemData(i) for i in range(combo.count())} - {""}
+
+    def _stale_user_radiators(self, pump_id: str, radiators: list[str]) -> list[str]:
+        """Headers the USER named a radiator fan that were offered and left unticked.
+
+        DEC-444 (the user's Q3): unticking removes the role. Only rows the picker
+        actually showed count — an absent row cannot have been unticked
+        (``_offered_radiators``) — and only a role the user assigned, for the
+        reason ``_stale_user_pumps`` gives. No confirmation: a radiator-fan role
+        carries no floor, so clearing it lowers nothing.
+        """
+        offered = self._offered_radiators()
+        keep = set(radiators) | {pump_id}
+        return [
+            h.id
+            for h in self._wizard._state.hwmon_headers
+            if h.role == "radiator_fan"
+            and h.role_source == "user_assigned"
+            and h.id in offered
+            and h.id not in keep
         ]
 
     def _confirm_clear(self, header_ids: list[str]) -> bool:
         """Confirm removing pump protection (Decision 11) — the ONLY operation on
-        this page that can lower a floor, so it is the only one that asks.
-
-        The copy names the protection being removed rather than implying it: a
-        user who reads "clear the pump role" does not necessarily know that this
-        is what stops the fan wizard driving it to 0.
-        """
-        names = "\n".join(f"• {self._wizard._state.fan_display_name(h) or h}" for h in header_ids)
-        answer = QMessageBox.question(
-            self,
-            "Remove pump protection from a header?",
-            "You previously named this as the pump:\n\n"
-            f"{names}\n\n"
-            "Clearing that role removes its pump protection — the daemon will no "
-            "longer hold it above the 30% pump floor, and it may be stopped "
-            "during fan identification.\n\n"
-            "Clear it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        this page that can lower a floor, so it is the only one that asks. The
+        copy is shared with the header-role picker and Configure AIO (DEC-444)."""
+        names = [self._wizard._state.fan_display_name(h) or h for h in header_ids]
+        return confirm_remove_pump_protection(self, names)
 
     def _apply_nomination(self) -> None:
         client = self._wizard._client
@@ -747,7 +765,11 @@ class CoolingDevicePage(QWizardPage):
 
         pump_id = self._pump_combo.currentData() or ""
         radiators = self._selected_radiators()
-        if not pump_id and not radiators:
+        # DEC-444: "— none —" removes a pump the user named, and an unticked
+        # radiator loses its role, so an empty selection is not always nothing.
+        stale = self._stale_user_pumps(pump_id)
+        stale_radiators = self._stale_user_radiators(pump_id, radiators)
+        if not pump_id and not radiators and not stale and not stale_radiators:
             self._status.setText("Nothing selected — choose a pump or a radiator fan first.")
             return
 
@@ -755,9 +777,17 @@ class CoolingDevicePage(QWizardPage):
         assigns: list[tuple[str, str | None]] = []
         if pump_id:
             assigns.append((pump_id, "pump"))
+        # A pump the user named and has now ticked as a radiator: turning it into
+        # a radiator fan REMOVES its pump protection, so that write waits for the
+        # confirmation below rather than landing silently here (DEC-444's review).
+        downgrades = {r for r in radiators if r in stale}
         # OpenFan radiator members have no header and therefore no role to set;
         # they still belong to the device topology below.
-        assigns += [(r, "radiator_fan") for r in radiators if r in header_ids and r != pump_id]
+        assigns += [
+            (r, "radiator_fan")
+            for r in radiators
+            if r in header_ids and r != pump_id and r not in downgrades
+        ]
 
         # ASSIGN BEFORE CLEAR, and the order is the safety property, not an
         # artefact of iteration (DEC-312's review found this). No clear is ever
@@ -789,24 +819,58 @@ class CoolingDevicePage(QWizardPage):
                 self._populate()
                 return
 
-        stale = self._stale_user_pumps(pump_id) if pump_id else []
-        cleared_note = ""
+        # Every clear comes after every assign (above). A radiator clear lowers
+        # no floor, so it neither asks nor stops on a failure.
+        display = self._wizard._state.fan_display_name
+        notes: list[str] = []
+        radiator_failed = []
+        for header_id in stale_radiators:
+            try:
+                client.set_header_role(header_id, None)
+            except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+                log.warning("Wizard: could not clear radiator role on %s: %s", header_id, e)
+                radiator_failed.append(display(header_id) or header_id)
+        if radiator_failed:
+            notes.append(
+                f"Could not remove the radiator fan role from {', '.join(radiator_failed)}."
+            )
+
+        # Every stale pump is still a pump until its own write lands.
+        still_pumps = set(stale)
         if stale and self._confirm_clear(stale):
             for header_id in stale:
+                # A ticked former pump becomes the radiator fan it was ticked as;
+                # any other stale pump is cleared back to the hardware's role.
+                role = "radiator_fan" if header_id in downgrades else None
                 try:
-                    client.set_header_role(header_id, None)
+                    client.set_header_role(header_id, role)
+                    still_pumps.discard(header_id)
                 except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
                     # Tolerated: a stale pump role over-protects, never under.
-                    log.warning("Wizard: could not clear role on %s: %s", header_id, e)
+                    log.warning("Wizard: could not change role on %s: %s", header_id, e)
+            if still_pumps:
+                failed = ", ".join(display(h) or h for h in stale if h in still_pumps)
+                notes.append(f"Could not change the role of {failed}; it is still a pump.")
         elif stale:
-            cleared_note = " The previous pump header kept its role."
+            notes.append("The previous pump header kept its role.")
 
-        self._upsert_cooling_device(pump_id, radiators)
+        # A header that is still a pump is not also a radiator member, and one
+        # the user kept (declined, or a failed write) stays the device's pump when
+        # "— none —" was chosen: the topology must not disagree with the role
+        # that is still in force.
+        radiators = [r for r in radiators if r not in still_pumps]
+        self._upsert_cooling_device(pump_id, radiators, still_pumps=still_pumps)
         self._refresh_state()
         self._populate()
-        self._status.setText("Saved." + cleared_note)
+        self._status.setText(" ".join(["Saved.", *notes]))
 
-    def _upsert_cooling_device(self, pump_id: str, radiators: list[str]) -> None:
+    def _upsert_cooling_device(
+        self,
+        pump_id: str,
+        radiators: list[str],
+        *,
+        still_pumps: frozenset[str] | set[str] = frozenset(),
+    ) -> None:
         """Read-modify-write the cooling device (Decision 6).
 
         ``POST /config/cooling-device`` REPLACES by id, so posting only the
@@ -835,9 +899,19 @@ class CoolingDevicePage(QWizardPage):
                 for m in (existing.radiator_members if existing else [])
                 if m and m not in offered and m not in radiators and m != pump_id
             ]
+            pump_member = pump_id or None
+            previous = existing.pump_member if existing is not None else None
+            if (
+                not pump_id
+                and previous
+                and (previous in still_pumps or previous not in self._offered_pumps())
+            ):
+                pump_member = previous
+            if existing is None and pump_member is None and not radiators:
+                return  # nothing to describe, and no device to update
             payload = merge_cooling_device_payload(
                 existing,
-                pump_member=pump_id or None,
+                pump_member=pump_member,
                 radiator_members=radiators + kept,
             )
             client.set_cooling_device(DEFAULT_COOLING_DEVICE_ID, **payload)

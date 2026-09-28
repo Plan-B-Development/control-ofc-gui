@@ -191,6 +191,10 @@ control_ofc/
                                #   classification/safety and action enablement for one
                                #   header. Reads pump_protection for every safety
                                #   answer; never the wire `role` (DEC-312).
+    header_role_view.py        # The header-role picker's VM — DEC-444. Choices and
+                               #   their effect, no-op / removes-a-user-pump planning,
+                               #   the outcome message from the daemon's answer, and
+                               #   the nct6687d MSI-label caveat and prompt (`BRD-h`).
     verify_view.py             # PWM verify result wording — DEC-318. Extracted from
                                #   system_state_page so Hardware and System State
                                #   render ONE object rather than two copies.
@@ -342,6 +346,8 @@ control_ofc/
       collapsible_section.py
       cooling_device_card.py   # One cooling assembly, thin renderer — DEC-318
       pwm_header_card.py       # One PWM header, thin renderer — DEC-318
+      header_role_dialog.py    # "Set role…" — DEC-444; plus the one "Remove pump
+                               #   protection?" confirmation every role flow asks
       validation_session_dialog.py  # Validation AND lifecycle sessions — DEC-318;
                                #   one dialog, one engine, a `kind` discriminator
       pwm_report_window.py     # The PWM Test Report window — DEC-408/409. Reports →

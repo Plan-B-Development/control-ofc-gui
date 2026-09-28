@@ -351,23 +351,28 @@ class TestNewLabelFallbacks:
             is None
         )
 
-    def test_unverified_entry_gets_unverified_suffix(self):
-        # The X870E AORUS MASTER it87952 secondary-chip mapping ships
-        # with `verified=False` (silkscreen tracing not yet done). The
-        # resolver must append `(unverified)` so users can tell which
-        # labels are trustworthy. Without this test, an accidental edit
-        # that drops the suffix logic on `FallbackLabel.display()` would
-        # silently mislabel unverified headers as if they were verified.
+    def test_unverified_entry_gets_unverified_suffix(self, monkeypatch):
+        # No shipped entry is `verified=False` since DEC-444 settled the X870E
+        # AORUS MASTER it87952 order, so a synthetic entry keeps this guard:
+        # an edit that drops the suffix logic on `FallbackLabel.display()`
+        # would silently present an unverified label as fact.
+        from control_ofc.knowledge.hwmon_label_resolver import (
+            HWMON_LABEL_FALLBACK,
+            BoardKey,
+            FallbackLabel,
+        )
+
+        key = BoardKey(vendor="Test Vendor", board_glob="TEST BOARD", chip="it8999")
+        monkeypatch.setitem(
+            HWMON_LABEL_FALLBACK, key, {"pwm2": FallbackLabel("SYS_FAN2", verified=False)}
+        )
         label = resolve_label_from_fallback(
-            vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
-            chip_name="it87952",
+            vendor="Test Vendor",
+            board_name="TEST BOARD",
+            chip_name="it8999",
             sensor_name="pwm2",
         )
-        assert label is not None
-        assert label.endswith("(unverified)"), (
-            f"Unverified entries must surface the `(unverified)` suffix; got: {label!r}"
-        )
+        assert label == "SYS_FAN2 (unverified)"
 
 
 class TestModuleCollisionRefinementGuiSide:

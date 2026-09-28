@@ -228,18 +228,18 @@ class TestFallbackTable:
             )
             assert label == expected, f"{sensor}: got {label!r}"
 
-    def test_x870e_aorus_master_it87952_carries_unverified_suffix(self):
-        for sensor in ("pwm1", "pwm2", "pwm3"):
+    def test_x870e_aorus_master_it87952_is_verified(self):
+        # DEC-444 (BRD-i): the reference host's single fan on SYS_FAN4 reads on
+        # pwm3, refuting PR #100's order, so the catalogue order is verified.
+        expected = {"pwm1": "SYS_FAN5_PUMP", "pwm2": "SYS_FAN6_PUMP", "pwm3": "SYS_FAN4"}
+        for sensor, name in expected.items():
             label = resolve_label_from_fallback(
                 vendor="Gigabyte Technology Co., Ltd.",
                 board_name="X870E AORUS MASTER",
                 chip_name="it87952",
                 sensor_name=sensor,
             )
-            assert label is not None
-            assert label.endswith("(unverified)"), (
-                f"{sensor}: {label!r} should be marked unverified"
-            )
+            assert label == name, f"{sensor}: got {label!r}"
 
     def test_other_boards_return_none(self):
         # Different vendor.
@@ -340,28 +340,30 @@ class TestResolverPriority:
         )
         assert label == "CPU_FAN"
 
-    def test_fallback_unverified_carries_suffix(self):
+    def test_fallback_unverified_carries_suffix(self, monkeypatch):
+        # No shipped entry is unverified since DEC-444, so the suffix path is
+        # exercised through a synthetic one: an unverified label must reach the
+        # display name with its caveat attached, through the full resolver.
+        key = BoardKey(vendor="Test Vendor", board_glob="TEST BOARD", chip="it8999")
+        monkeypatch.setitem(
+            HWMON_LABEL_FALLBACK, key, {"pwm1": FallbackLabel("SYS_FAN9_PUMP", verified=False)}
+        )
         label = resolve_hwmon_header_label(
             sysfs_label="",
-            chip_name="it87952",
+            chip_name="it8999",
             sysfs_chip_name="",
             pwm_index=1,
-            board_vendor="Gigabyte Technology Co., Ltd.",
-            board_name="X870E AORUS MASTER",
+            board_vendor="Test Vendor",
+            board_name="TEST BOARD",
             sensors_paths=[],
         )
-        # DEC-144: pwm1 → SYS_FAN5_PUMP per the frankcrawford/it87
-        # issue #103 owner-posted config (same ordering as the upstream
-        # X470/B550 IT8792E configs); stays unverified until silkscreen
-        # tracing confirms.
-        assert label.startswith("SYS_FAN5_PUMP")
-        assert label.endswith("(unverified)")
+        assert label == "SYS_FAN9_PUMP (unverified)"
 
     def test_x870e_secondary_mapping_matches_issue_103_order(self):
         # DEC-144 regression lock: the full it87952 pwm→label ordering
         # from issue #103 (fan1=SYS_FAN5_PUMP, fan2=SYS_FAN6_PUMP,
         # fan3=SYS_FAN4). A silent re-shuffle back to the pre-DEC-144
-        # SYS_FAN4-first extrapolation must fail here.
+        # SYS_FAN4-first extrapolation must fail here. Verified by DEC-444.
         expected = {1: "SYS_FAN5_PUMP", 2: "SYS_FAN6_PUMP", 3: "SYS_FAN4"}
         for idx, name in expected.items():
             label = resolve_hwmon_header_label(
@@ -373,7 +375,7 @@ class TestResolverPriority:
                 board_name="X870E AORUS MASTER",
                 sensors_paths=[],
             )
-            assert label == f"{name} (unverified)"
+            assert label == name
 
     def test_unknown_board_returns_raw_pwm_name(self):
         label = resolve_hwmon_header_label(
@@ -557,7 +559,7 @@ class TestStructural:
         for entry in mapping.values():
             assert entry.verified, "IT8696E mappings on X870E MASTER are all verified"
 
-    def test_x870e_master_it87952_full_set_unverified(self):
+    def test_x870e_master_it87952_full_set_verified(self):
         key = BoardKey(
             vendor="Gigabyte Technology Co., Ltd.",
             board_glob="X870E AORUS MASTER",
@@ -566,4 +568,4 @@ class TestStructural:
         mapping = HWMON_LABEL_FALLBACK[key]
         assert set(mapping.keys()) == {"pwm1", "pwm2", "pwm3"}
         for entry in mapping.values():
-            assert not entry.verified, "IT87952E mappings are best-guess"
+            assert entry.verified, "IT87952E order settled on hardware (DEC-444, BRD-i)"

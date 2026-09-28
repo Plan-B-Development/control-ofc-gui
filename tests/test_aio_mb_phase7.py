@@ -1071,9 +1071,10 @@ class TestWizardRowsTellAssignedFromDetected:
 
 
 class TestRadiatorReservationOffersNoFalseRemedy:
-    """`TS-ai`: no GUI route clears a `radiator_fan` role, so neither radiator
-    note may send the user to Configure AIO — and an inferred one must not say
-    it was assigned."""
+    """`TS-ai`, narrowed by DEC-444: only an ASSIGNED radiator role can be
+    removed (Set role… or the Fan Wizard), so only that note names a remedy —
+    never Configure AIO, which clears only a pump — and an inferred one must
+    not say it was assigned."""
 
     def _notes(self):
         inferred = _header(KRAKEN_RAD_ID, role="radiator_fan", role_source="chip_mapping")
@@ -1089,13 +1090,290 @@ class TestRadiatorReservationOffersNoFalseRemedy:
         assert "assigned" not in note.text and "You assigned" not in note.tooltip
         assert "hardware" in note.tooltip
 
-    def test_an_assigned_radiator_says_where_it_was_assigned(self):
+    def test_an_assigned_radiator_names_the_routes_that_remove_it(self):
         note = self._notes()[RAD_HWMON_ID]
         assert note.text == "(Radiator fan role assigned)"
-        assert "Fan Wizard" in note.tooltip
+        assert "Set role… ▸ Not set" in note.tooltip and "Fan Wizard" in note.tooltip
+
+    def test_an_inferred_radiator_names_no_remedy(self):
+        """A clear only drops an assignment; the hardware's role stays."""
+        note = self._notes()[KRAKEN_RAD_ID]
+        assert "Set role" not in note.tooltip and "release" not in note.tooltip
 
     def test_neither_radiator_note_names_a_remedy_that_does_not_exist(self):
         for note in self._notes().values():
             assert "Configure AIO" not in note.tooltip
             assert "Clear" not in note.tooltip
             assert note.title == "Assign the radiator fan to this curve?"
+
+
+class TestRemovalInTheWizard:
+    """DEC-444 (the user's Q3): where a role is chosen, it can be removed."""
+
+    def _page(self, qtbot, wizard_state, client, headers):
+        wizard_state.hwmon_headers = headers
+        client.headers_to_return = list(headers)
+        wiz = FanConfigWizard(wizard_state, client=client)
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        return wiz, wiz._cooling_page
+
+    @staticmethod
+    def _untick_all(page):
+        for i in range(page._radiator_list.count()):
+            page._radiator_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+
+    def test_none_clears_a_user_pump_after_the_confirmation(self, qtbot, wizard_state, monkeypatch):
+        client = _WizardClient()
+        headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID),
+        ]
+        _wiz, page = self._page(qtbot, wizard_state, client, headers)
+        assert page._pump_combo.currentData() == PUMP_ID, "precondition: preselected"
+        page._pump_combo.setCurrentIndex(0)  # "— none —"
+        self._untick_all(page)
+        asked = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            lambda *a, **k: asked.append(a[1]) or QMessageBox.StandardButton.Yes,
+        )
+        page._apply_btn.click()
+        assert asked == ["Remove pump protection from a header?"]
+        assert client.role_calls == [(PUMP_ID, None)]
+        assert "Nothing selected" not in page._status.text()
+
+    def test_declining_keeps_the_pump_role_and_the_devices_pump(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        client = _WizardClient(devices=[_device(pump=PUMP_ID, radiators=[])])
+        headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID),
+        ]
+        _wiz, page = self._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(0)
+        self._untick_all(page)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+        page._apply_btn.click()
+        assert client.role_calls == []
+        assert "kept its role" in page._status.text()
+        assert client.device_calls and client.device_calls[0]["pump_member"] == PUMP_ID, (
+            "the topology must not drop a pump whose role is still in force"
+        )
+
+    def test_an_accepted_none_drops_the_devices_pump(self, qtbot, wizard_state, monkeypatch):
+        client = _WizardClient(devices=[_device(pump=PUMP_ID, radiators=[])])
+        headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID),
+        ]
+        _wiz, page = self._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(0)
+        self._untick_all(page)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        page._apply_btn.click()
+        assert client.device_calls[0]["pump_member"] is None
+
+    def test_unticking_a_user_radiator_clears_it_without_asking_after_the_assign(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        client = _WizardClient()
+        headers = [
+            _header(PUMP_ID),
+            _header(RAD_HWMON_ID, role="radiator_fan", role_source="user_assigned"),
+        ]
+        _wiz, page = self._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        rows = {
+            page._radiator_list.item(i).data(Qt.ItemDataRole.UserRole): page._radiator_list.item(i)
+            for i in range(page._radiator_list.count())
+        }
+        assert rows[RAD_HWMON_ID].checkState() == Qt.CheckState.Checked, "precondition"
+        rows[RAD_HWMON_ID].setCheckState(Qt.CheckState.Unchecked)
+        asked = []
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(1))
+        page._apply_btn.click()
+        assert asked == [], "a radiator role carries no floor, so nothing is asked"
+        assert client.role_calls == [(PUMP_ID, "pump"), (RAD_HWMON_ID, None)]
+
+    def test_a_label_derived_radiator_is_never_cleared(self, qtbot, wizard_state):
+        client = _WizardClient()
+        headers = [
+            _header(PUMP_ID),
+            _header(RAD_HWMON_ID, role="radiator_fan", role_source="label"),
+        ]
+        _wiz, page = self._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        self._untick_all(page)
+        page._apply_btn.click()
+        assert (RAD_HWMON_ID, None) not in client.role_calls
+        assert (PUMP_ID, "pump") in client.role_calls, "precondition: Apply ran"
+
+
+class TestAFormerPumpTickedAsARadiator:
+    """DEC-444 review: ticking a pump you named as a radiator removes its pump
+    protection, so it must wait for the confirmation — never land first.
+
+    Reachable with two pumps the user named (a dual-pump loop): the picker
+    preselects one, so the other is offered in the radiator list."""
+
+    def _page(self, qtbot, wizard_state, client):
+        headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID, role="pump", role_source="user_assigned"),
+        ]
+        wizard_state.hwmon_headers = headers
+        client.headers_to_return = list(headers)
+        wiz = FanConfigWizard(wizard_state, client=client)
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        page = wiz._cooling_page
+        rows = {
+            page._radiator_list.item(i).data(Qt.ItemDataRole.UserRole): page._radiator_list.item(i)
+            for i in range(page._radiator_list.count())
+        }
+        offered = [h for h in (PUMP_ID, RAD_HWMON_ID) if h in rows]
+        assert len(offered) == 1, "precondition: exactly one named pump is offered as a radiator"
+        other = offered[0]
+        kept = page._pump_combo.currentData()
+        assert kept and kept != other, "precondition: the other pump is preselected"
+        for rid, item in rows.items():
+            item.setCheckState(Qt.CheckState.Checked if rid == other else Qt.CheckState.Unchecked)
+        return page, other, kept
+
+    def test_accepting_makes_it_a_radiator_only_after_asking(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        client = _WizardClient()
+        page, other, kept = self._page(qtbot, wizard_state, client)
+        order = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            lambda *a, **k: order.append("asked") or QMessageBox.StandardButton.Yes,
+        )
+        original = client.set_header_role
+        client.set_header_role = lambda h, r: order.append((h, r)) or original(h, r)
+        page._apply_btn.click()
+        asked_at = order.index("asked")
+        assert not [w for w in order[:asked_at] if w[0] == other], "no downgrade before the answer"
+        assert order[asked_at + 1 :] == [(other, "radiator_fan")], "then it becomes the radiator"
+        assert (kept, None) not in order, "the preselected pump is never cleared"
+
+    def test_declining_leaves_it_a_pump_and_out_of_the_radiators(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        client = _WizardClient()
+        page, other, _kept = self._page(qtbot, wizard_state, client)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+        page._apply_btn.click()
+        assert (other, "radiator_fan") not in client.role_calls
+        assert (other, None) not in client.role_calls
+        assert "kept its role" in page._status.text()
+        assert other not in client.device_calls[0]["radiator_members"]
+
+
+class _FailingOn(_WizardClient):
+    """Fails exactly the named (header, role) writes; records the rest."""
+
+    def __init__(self, fail: set[tuple], **kw):
+        super().__init__(**kw)
+        self._fail = fail
+
+    def set_header_role(self, header_id, role):
+        if (header_id, role) in self._fail:
+            raise ConnectionError("daemon went away")
+        return super().set_header_role(header_id, role)
+
+
+class TestAFailedClearIsNotReportedAsSaved:
+    """DEC-444 review: a clear that fails leaves the role in force, so the
+    topology must not describe it otherwise and the status must say so."""
+
+    def test_a_failed_downgrade_stays_out_of_the_radiators(self, qtbot, wizard_state, monkeypatch):
+        # Either named pump may be the one offered as a radiator; fail both.
+        client = _FailingOn({(PUMP_ID, "radiator_fan"), (RAD_HWMON_ID, "radiator_fan")})
+        page, other, _kept = TestAFormerPumpTickedAsARadiator()._page(qtbot, wizard_state, client)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        page._apply_btn.click()
+        assert (other, "radiator_fan") not in client.role_calls, "precondition: the write failed"
+        assert other not in client.device_calls[0]["radiator_members"], (
+            "a header still protected as a pump must not be saved as a radiator member"
+        )
+        assert "still a pump" in page._status.text()
+
+    def test_only_the_pump_that_failed_keeps_its_place_in_the_device(
+        self, qtbot, wizard_state, monkeypatch
+    ):
+        headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID, role="pump", role_source="user_assigned"),
+        ]
+        # The device's pump clears; the OTHER named pump's clear fails.
+        client = _FailingOn({(RAD_HWMON_ID, None)}, devices=[_device(pump=PUMP_ID, radiators=[])])
+        _wiz, page = TestRemovalInTheWizard()._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(0)
+        TestRemovalInTheWizard._untick_all(page)
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+        page._apply_btn.click()
+        assert (PUMP_ID, None) in client.role_calls, "precondition: the device's pump cleared"
+        assert client.device_calls[0]["pump_member"] is None, (
+            "one failure must not keep a pump that was cleared as the device's pump"
+        )
+        assert "still a pump" in page._status.text()
+
+    def test_a_failed_radiator_clear_is_reported(self, qtbot, wizard_state):
+        headers = [
+            _header(PUMP_ID),
+            _header(RAD_HWMON_ID, role="radiator_fan", role_source="user_assigned"),
+        ]
+        client = _FailingOn({(RAD_HWMON_ID, None)})
+        _wiz, page = TestRemovalInTheWizard()._page(qtbot, wizard_state, client, headers)
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        TestRemovalInTheWizard._untick_all(page)
+        page._apply_btn.click()
+        assert (PUMP_ID, "pump") in client.role_calls, "precondition: Apply ran"
+        assert "Could not remove the radiator fan role" in page._status.text()
+
+
+class TestAPumpThePickerNeverListed:
+    """DEC-444 review: a pump the picker did not list cannot have been
+    deselected, so it is neither cleared nor dropped from the device."""
+
+    def test_none_leaves_an_unlisted_user_pump_alone(self, qtbot, wizard_state, monkeypatch):
+        unlisted = dataclasses.replace(
+            _header(PUMP_ID, role="pump", role_source="user_assigned"), is_writable=False
+        )
+        headers = [unlisted, _header(RAD_HWMON_ID)]
+        client = _WizardClient(devices=[_device(pump=PUMP_ID, radiators=[])])
+        _wiz, page = TestRemovalInTheWizard()._page(qtbot, wizard_state, client, headers)
+        assert page._pump_combo.findData(PUMP_ID) < 0, "precondition: not listed"
+        page._pump_combo.setCurrentIndex(0)
+        rows = {
+            page._radiator_list.item(i).data(Qt.ItemDataRole.UserRole): page._radiator_list.item(i)
+            for i in range(page._radiator_list.count())
+        }
+        rows[RAD_HWMON_ID].setCheckState(Qt.CheckState.Checked)
+        asked = []
+        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(1))
+        page._apply_btn.click()
+        assert (RAD_HWMON_ID, "radiator_fan") in client.role_calls, "precondition: Apply ran"
+        assert asked == [] and (PUMP_ID, None) not in client.role_calls
+        assert client.device_calls[0]["pump_member"] == PUMP_ID
+
+    def test_the_users_pump_is_preselected_over_an_inferred_one(self, qtbot, wizard_state):
+        """BRD-h: nct6687d labels a case-fan header "Pump Fan" on a non-MSI
+        board, so the inferred pump listed first is the wrong default."""
+        headers = [
+            _header(RAD_HWMON_ID, role="pump", role_source="label"),
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+        ]
+        _wiz, page = TestRemovalInTheWizard()._page(qtbot, wizard_state, _WizardClient(), headers)
+        assert page._pump_combo.findData(RAD_HWMON_ID) < page._pump_combo.findData(PUMP_ID), (
+            "precondition: the inferred pump is listed first"
+        )
+        assert page._pump_combo.currentData() == PUMP_ID

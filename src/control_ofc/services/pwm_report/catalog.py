@@ -335,8 +335,9 @@ def _probe_availability(channel: Channel) -> Availability:
     if channel.role not in PROBE_ROLES:
         return Availability(
             False,
-            "Only offered on a header assigned a chassis-fan or radiator-fan role. "
-            "Assign one on the Controls page if that is what this header drives.",
+            "Only offered on a header whose role is chassis fan or radiator fan. "
+            "Use “Set…” in the Role column, or Set role… on the Hardware page's "
+            "header card, if that is what this header drives.",
         )
     if not channel.rpm_available:
         return Availability(False, "This header has no tach, so a stall could not be seen.")

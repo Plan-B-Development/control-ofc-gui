@@ -106,6 +106,7 @@ SETTINGS_FIELD_WIDGETS: dict[str, str] = {
     "board_notes_allow_acknowledge": "Settings_Check_boardNoteAck",
     "board_notes_allow_dismiss": "Settings_Check_boardNoteDismiss",
     "dismissed_health_items": "Settings_Btn_restoreHealthItems",
+    "confirmed_label_prompts": "Settings_Btn_restoreLabelPrompts",
     "last_pwm_verify_effective": "Settings_Btn_clearPwmVerify",
     "daemon_import_prompted": "Settings_Btn_reofferImport",
     "fan_aliases_seeded": "Settings_Btn_reseedAliases",
@@ -1935,6 +1936,25 @@ class SettingsPage(QWidget):
             )
         )
 
+        self._restore_label_prompts_btn = make_button(
+            "Restore",
+            "ghost",
+            object_name="Settings_Btn_restoreLabelPrompts",
+            accessible_name="Ask again about header labels on the Hardware page",
+        )
+        self._restore_label_prompts_btn.setToolTip(
+            "Show the Hardware page's header-label prompt again where you answered "
+            "“Labels are correct”"
+        )
+        self._restore_label_prompts_btn.clicked.connect(self._restore_label_prompts)
+        v.addLayout(
+            self._setting_row(
+                "Confirmed header labels",
+                "Hardware-page label prompts you answered “Labels are correct”",
+                self._restore_label_prompts_btn,
+            )
+        )
+
         self._clear_pwm_verify_btn = make_button(
             "Forget result",
             "ghost",
@@ -2020,6 +2040,11 @@ class SettingsPage(QWidget):
         self._settings_svc.update(dismissed_health_items=[])
         self._refresh_reset_buttons()
         self._set_status("Dismissed health items restored")
+
+    def _restore_label_prompts(self) -> None:
+        self._settings_svc.update(confirmed_label_prompts=[])
+        self._refresh_reset_buttons()
+        self._set_status("Header-label prompts restored")
 
     def _clear_pwm_verify_result(self) -> None:
         self._settings_svc.update(last_pwm_verify_effective="")
@@ -2118,6 +2143,7 @@ class SettingsPage(QWidget):
                 "Clear dismissed",
             ),
             (self._restore_health_btn, len(s.dismissed_health_items), "Restore"),
+            (self._restore_label_prompts_btn, len(s.confirmed_label_prompts), "Restore"),
             (self._reset_card_sizes_btn, len(s.controls_card_sizes), "Reset all sizes"),
             (self._prune_orphans_btn, self._chart_orphans().total, "Remove"),
         ):

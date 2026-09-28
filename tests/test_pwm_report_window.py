@@ -18,7 +18,7 @@ import threading
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, Signal, Slot
-from PySide6.QtWidgets import QCheckBox, QLabel, QMessageBox, QPushButton
+from PySide6.QtWidgets import QCheckBox, QLabel, QMessageBox, QPushButton, QTableWidget
 
 from control_ofc.api.models import (
     ConnectionState,
@@ -274,6 +274,156 @@ def test_a_cpu_fan_is_never_offered_the_probe(rig):
     window, *_ = rig
     box = _box(window, "probe", CPU)
     assert not box.isEnabled() and "CPU fan" in box.toolTip()
+
+
+# ── DEC-444: setting a role from the scope page (Q1-C) ─────────────────────
+
+
+def _role_btn(window, cid: str) -> QPushButton:
+    slug = "".join(c if c.isalnum() else "_" for c in cid)
+    return _btn(window, f"PwmReport_Btn_role_{slug}")
+
+
+def test_setting_a_role_on_the_scope_page_offers_the_probe_and_keeps_ticks(
+    qtbot, tmp_path, settings_service, monkeypatch
+):
+    """`PTA-a`'s whole point: an unclassified header becomes probe-eligible from
+    the page that offers the probe, and the rebuild does not undo the user's
+    ticks."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+
+    def headers(sys_role: str, source: str):
+        return parse_hwmon_headers(
+            {
+                "headers": [
+                    header(CPU, role="cpu_fan"),
+                    header(SYS, role=sys_role, role_source=source),
+                ]
+            }
+        )
+
+    state.set_hwmon_headers(headers("unknown", "none"))
+    calls: list[str] = []
+
+    def set_role(header_id, parent):
+        calls.append(header_id)
+        state.set_hwmon_headers(headers("chassis_fan", "user_assigned"))
+        return "SYS_FAN1 is now set to Chassis fan."
+
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(controller, state, settings_service, set_header_role=set_role)
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    assert not _box(window, "probe", SYS).isEnabled(), "precondition: not offered yet"
+    _box(window, "verify", SYS).setChecked(False)  # the user's own choice
+    assert _box(window, "pairing", SYS).isChecked()
+
+    _role_btn(window, SYS).click()
+    # The rebuild replaced every cell widget; the old ones are only
+    # `deleteLater`ed, and `findChild` would still find them first.
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert calls == [SYS]
+    assert window.selection()[SYS] == {"pairing"}, "what a Start would run"
+    assert _box(window, "probe", SYS).isEnabled()
+    assert not _box(window, "probe", SYS).isChecked(), "the probe is never pre-selected"
+    assert not _box(window, "verify", SYS).isChecked(), "an untick survives the rebuild"
+    assert _box(window, "pairing", SYS).isChecked(), "a tick survives the rebuild"
+    msg = window.findChild(QLabel, "PwmReport_Label_scopeRoleMessage")
+    assert not msg.isHidden() and "Chassis fan" in msg.text()
+    role = window.findChild(
+        QLabel, "PwmReport_Label_role_" + "".join(c if c.isalnum() else "_" for c in SYS)
+    )
+    assert role.text().startswith("Chassis fan")
+    controller.shutdown()
+
+
+def test_a_cancelled_role_change_rebuilds_nothing(qtbot, tmp_path, settings_service, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(
+        controller, state, settings_service, set_header_role=lambda _h, _p: None
+    )
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    before = _box(window, "verify", SYS)
+    _role_btn(window, SYS).click()
+    assert _box(window, "verify", SYS) is before
+    assert window.findChild(QLabel, "PwmReport_Label_scopeRoleMessage").isHidden()
+    controller.shutdown()
+
+
+def test_without_the_hardware_page_route_set_is_disabled_and_says_why(rig):
+    window, *_ = rig
+    button = _role_btn(window, SYS)
+    assert not button.isEnabled() and "Hardware page" in button.toolTip()
+
+
+@pytest.fixture
+def restore_app_theme(qtbot):
+    """Save/restore everything ``apply_theme`` mutates (the fixture in
+    test_system_state_page.py, mirrored so the theme does not leak)."""
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    from control_ofc.ui import theme as theme_mod
+
+    app = QApplication.instance()
+    saved = (QPalette(app.palette()), app.styleSheet(), app.font(), theme_mod._active_theme)
+    try:
+        yield app
+    finally:
+        app.setPalette(saved[0])
+        app.setStyleSheet(saved[1])
+        app.setFont(saved[2])
+        theme_mod._active_theme = saved[3]
+
+
+def test_the_role_column_fits_its_set_button(rig, restore_app_theme):
+    """A cell widget never reaches `ResizeToContents`, and Qt insets it by the
+    theme's item padding on top (DEC-363). So the check is the REALISED holder
+    against what it asks for, on a shown, themed window."""
+    from PySide6.QtWidgets import QApplication
+
+    from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+    window, *_ = rig
+    apply_theme(default_dark_theme())
+    _btn(window, "PwmReport_Btn_new").click()  # rebuild under the theme
+    window.resize(1400, 800)
+    window.show()
+    QApplication.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    table = window.findChild(QTableWidget, "PwmReport_Table_scope")
+    holders = [table.cellWidget(r, 1) for r in range(table.rowCount())]
+    holders = [h for h in holders if h is not None]
+    assert holders, "precondition: hwmon rows carry a role holder"
+    assert max(h.sizeHint().width() for h in holders) > table.horizontalHeader().sectionSizeHint(
+        1
+    ), "precondition: the holder needs more than the 'Role' header, or the column fits by accident"
+    for h in holders:
+        assert h.width() >= h.sizeHint().width(), (h.objectName(), h.width(), h.sizeHint())
+
+
+def test_a_new_report_does_not_inherit_the_last_role_message(
+    qtbot, tmp_path, settings_service, monkeypatch
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(
+        controller, state, settings_service, set_header_role=lambda _h, _p: "Done."
+    )
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    _role_btn(window, SYS).click()
+    msg = window.findChild(QLabel, "PwmReport_Label_scopeRoleMessage")
+    assert not msg.isHidden() and msg.text() == "Done.", "precondition: the message was shown"
+    _btn(window, "PwmReport_Btn_new").click()
+    assert msg.isHidden() and msg.text() == ""
+    controller.shutdown()
 
 
 # ── The flow, by click ───────────────────────────────────────────────────────

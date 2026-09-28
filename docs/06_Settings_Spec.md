@@ -82,7 +82,11 @@ Added in DEC-237 — mirror and reset surfaces for settings authored elsewhere:
   *Acknowledge* / *Dismiss* affordances appear at all
   (`board_notes_allow_acknowledge`, `board_notes_allow_dismiss`), one **Restore**
   clearing `dismissed_health_items`, and one control forgetting
-  `last_pwm_verify_effective` so the notes read as unverified again.
+  `last_pwm_verify_effective` so the notes read as unverified again. And one
+  **Restore** clearing `confirmed_label_prompts` (DEC-444), the Hardware page's
+  *Labels are correct* answers to its nct6687d label note — a separate list
+  because System State prunes `dismissed_health_items` against the keys *it*
+  can raise, and would delete these.
 
   > **Updated 2026-09-11 (DEC-359).** This bullet was stale for DEC-357 — it
   > named none of the five keys that shipped in v2.71.0 (`ACK-l`) — and is
@@ -349,7 +353,8 @@ These belong to the daemon runtime/config:
   `acknowledged_kernel_warnings`, `dismissed_health_items` (DEC-359 — every
   silenced System State item; hardware-keyed, so meaningless on another machine
   and a shared export carrying it would quieten a warning on hardware that never
-  had it reviewed), the retired `acknowledged_board_notes` and `dismissed_board_notes`
+  had it reviewed), `confirmed_label_prompts` (DEC-444, keyed on this machine's
+  nct668x chips), the retired `acknowledged_board_notes` and `dismissed_board_notes`
   (kept in the set so an import cannot fold them back in), `last_pwm_verify_effective`,
   `fan_aliases_seeded`, `daemon_import_prompted`, the
   DEC-245 view-state keys `splitter_sizes`, `logs_level_filters`, `logs_search_text`

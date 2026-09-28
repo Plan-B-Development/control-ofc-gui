@@ -1735,7 +1735,8 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "X870E Taichi an owner measured its 'Pump Fan' channel driving a "
             "chassis header (CHA_FAN3/4), while the real AIO_PUMP is on the "
             "nct6799 chip (nct6687d #155). Assign the pump role to the real "
-            "pump header in the fan wizard so the pump floor covers it; the "
+            "pump header with Set role… on its Hardware-page card (or in the fan "
+            "wizard) so the pump floor covers it; the "
             "mislabelled chassis header may keep a floor it does not need, "
             "which is harmless.",
             "DEC-106 refines the daemon's collision detector so this "

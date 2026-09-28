@@ -332,9 +332,9 @@ this priority order:
 The fallback table currently covers the **Gigabyte X870E AORUS MASTER** as a worked example:
 
 - IT8696E primary chip — 5 verified silkscreen labels: `CPU_FAN`, `SYS_FAN1`, `SYS_FAN2`, `SYS_FAN3`, `CPU_OPT`
-- IT87952E secondary chip — 3 labels (`SYS_FAN5_PUMP`, `SYS_FAN6_PUMP`, `SYS_FAN4`) from two owners' configs in [frankcrawford/it87 issue #103](https://github.com/frankcrawford/it87/issues/103) and the it87 project's own Gigabyte sensor catalogue. They are still suffixed `(unverified)` because one other source orders them differently, and the order decides which header gets the pump floor — a per-channel test on a physical board will settle it
+- IT87952E secondary chip — 3 labels (`SYS_FAN5_PUMP`, `SYS_FAN6_PUMP`, `SYS_FAN4`) from two owners' configs in [frankcrawford/it87 issue #103](https://github.com/frankcrawford/it87/issues/103) and the it87 project's own Gigabyte sensor catalogue, confirmed on a physical board: a fan plugged into SYS_FAN4 reads on the third channel, which rules out the one source that ordered them differently
 
-If you see an `(unverified)` suffix on a header label, treat the assignment as a hint, not a fact. The Fan Wizard is the safe way to confirm — it stops one fan at a time so you can see exactly which physical fan corresponds to which header.
+If you see an `(unverified)` suffix on a header label (no entry in the table carries one today, but a newly added board may), treat the assignment as a hint, not a fact. The Fan Wizard is the safe way to confirm — it stops one fan at a time so you can see exactly which physical fan corresponds to which header.
 
 ## Sensors missing or fewer than expected
 

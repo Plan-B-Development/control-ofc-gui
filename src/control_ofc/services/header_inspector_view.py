@@ -92,6 +92,16 @@ _ROLE_SOURCE_LABELS = {
 }
 
 
+def role_label(token: str) -> str:
+    """The readable form of a wire ``role`` token (display only, DEC-312)."""
+    return _ROLE_LABELS.get(token, humanise_token(token))
+
+
+def role_source_label(token: str) -> str:
+    """The readable form of a wire ``role_source`` token."""
+    return _ROLE_SOURCE_LABELS.get(token, humanise_token(token))
+
+
 def humanise_token(token: str) -> str:
     """Render an unrecognised wire token readably rather than dropping it.
 
@@ -178,6 +188,12 @@ class HeaderInspectorView:
     requested_is_approximate: bool = False
     #: Cooling device this header belongs to, if any.
     cooling_device_id: str | None = None
+    #: DEC-444: may the user set this header's role, and why not when not.
+    can_set_role: bool = False
+    set_role_disabled_reason: str = ""
+    #: DEC-444 (`BRD-h`): the caveat on an nct6687d MSI label on another
+    #: vendor's board, or "".
+    label_caveat: str = ""
 
 
 def control_ownership(reading: FanReading | None) -> str:
@@ -253,6 +269,7 @@ def build_header_inspector_view(
     display_name: str = "",
     enable_revert_count: int = 0,
     control_path: ControlPathRecord | None = None,
+    board_vendor: str = "",
 ) -> HeaderInspectorView:
     """Build the render-ready inspection of one PWM header.
 
@@ -260,7 +277,11 @@ def build_header_inspector_view(
     ladder, so this module stays Qt-free and never reaches into app state).
     ``enable_revert_count`` comes from ``GET /diagnostics/hardware``, which the
     poll worker already fetches — no extra request is made for it.
+    ``board_vendor`` is the DMI vendor, read only for the `BRD-h` label caveat.
     """
+    # Local import: `header_role_view` imports this module's label helpers.
+    from .header_role_view import nct6687_label_note, role_editable
+
     raw_label = header.label or ""
     placeholder = is_placeholder_hwmon_label(raw_label, header.pwm_index)
     title = display_name or (raw_label if not placeholder else "") or header.id
@@ -268,6 +289,7 @@ def build_header_inspector_view(
     subtitle = f"{chip} · pwm{header.pwm_index}"
 
     protected = header_is_pump_protected(header, capabilities)
+    label_caveat = nct6687_label_note(header, board_vendor)
     floor = header_effective_floor_pct(header, capabilities)
     ownership = control_ownership(reading)
     requested, approximate = requested_pct(reading)
@@ -331,6 +353,7 @@ def build_header_inspector_view(
             # A synthesised `pwmN` is not a label the chip published (DEC-229);
             # showing it here would claim the driver said something it did not.
             UNKNOWN_TEXT if placeholder else (raw_label or UNKNOWN_TEXT),
+            note=label_caveat,
         ),
         InfoRow("Display name", title),
         InfoRow("Direct AIO device", "Yes" if header.is_aio else "No"),
@@ -386,11 +409,8 @@ def build_header_inspector_view(
 
     # ── Classification and safety (§5) ───────────────────────────────────────
     safety = [
-        InfoRow("Role", _ROLE_LABELS.get(header.role, humanise_token(header.role))),
-        InfoRow(
-            "Role source",
-            _ROLE_SOURCE_LABELS.get(header.role_source, humanise_token(header.role_source)),
-        ),
+        InfoRow("Role", role_label(header.role)),
+        InfoRow("Role source", role_source_label(header.role_source), note=label_caveat),
         InfoRow(
             # NOT "the floor for this control": `effective_min_pwm_pct` is
             # reconstructed from the device policy table and excludes the active
@@ -436,6 +456,8 @@ def build_header_inspector_view(
     else:
         discover_reason = ""
 
+    can_set_role, set_role_reason = role_editable(header, capabilities)
+
     relationship = ""
     confidence = ""
     validated = 0
@@ -453,10 +475,8 @@ def build_header_inspector_view(
         header_id=header.id,
         title=title,
         subtitle=subtitle,
-        role_label=_ROLE_LABELS.get(header.role, humanise_token(header.role)),
-        role_source_label=_ROLE_SOURCE_LABELS.get(
-            header.role_source, humanise_token(header.role_source)
-        ),
+        role_label=role_label(header.role),
+        role_source_label=role_source_label(header.role_source),
         pump_protected=protected,
         status=status,
         status_state=status_state,
@@ -475,6 +495,9 @@ def build_header_inspector_view(
         control_relationship_validated_unix_ms=validated,
         requested_is_approximate=approximate,
         cooling_device_id=header.cooling_device_id,
+        can_set_role=can_set_role,
+        set_role_disabled_reason=set_role_reason,
+        label_caveat=label_caveat,
     )
 
 
@@ -520,6 +543,7 @@ def build_header_inspector_views(
     display_names: dict[str, str] | None = None,
     enable_revert_counts: dict[str, int] | None = None,
     control_paths: dict[str, ControlPathRecord] | None = None,
+    board_vendor: str = "",
 ) -> list[HeaderInspectorView]:
     """Build views for every header, pumps first then daemon order.
 
@@ -538,6 +562,7 @@ def build_header_inspector_views(
             display_name=names.get(h.id, ""),
             enable_revert_count=reverts.get(h.id, 0),
             control_path=paths.get(h.id),
+            board_vendor=board_vendor,
         )
         for h in headers
     ]

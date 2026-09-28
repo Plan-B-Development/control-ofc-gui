@@ -133,7 +133,7 @@ def test_the_settled_evidence_gate_is_the_daemon_version_s4_5():
     [
         ({"pump_protected": True}, "pump-protected"),
         ({"role": "cpu_fan"}, "CPU fan"),
-        ({"role": "unknown"}, "chassis-fan or radiator-fan role"),
+        ({"role": "unknown"}, "chassis fan or radiator fan"),
         ({"rpm_available": False}, "no tach"),
     ],
 )

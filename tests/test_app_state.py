@@ -108,10 +108,9 @@ def test_fan_display_name_uses_label_resolver_when_sysfs_label_empty():
         clear_libsensors_cache()
 
 
-def test_fan_display_name_unverified_suffix_for_secondary_chip():
-    """X870E AORUS MASTER IT87952E mappings are community-reported
-    (frankcrawford/it87 issue #103, DEC-144) and must carry the
-    (unverified) suffix until silkscreen tracing confirms."""
+def test_fan_display_name_for_secondary_chip():
+    """X870E AORUS MASTER IT87952E mappings (frankcrawford/it87 issue #103,
+    DEC-144) were settled on hardware by DEC-444 and carry no suffix."""
     from control_ofc.api.models import BoardInfo
     from control_ofc.knowledge.hwmon_label_resolver import clear_libsensors_cache
 
@@ -135,8 +134,7 @@ def test_fan_display_name_unverified_suffix_for_secondary_chip():
         label = state.fan_display_name("hwmon:it87952:it87.2656:pwm1:pwm1")
         # DEC-144: pwm1 → SYS_FAN5_PUMP per the issue #103 owner config
         # (previously a SYS_FAN4-first extrapolation).
-        assert label.startswith("SYS_FAN5_PUMP")
-        assert label.endswith("(unverified)")
+        assert label == "SYS_FAN5_PUMP"
     finally:
         clear_libsensors_cache()
 

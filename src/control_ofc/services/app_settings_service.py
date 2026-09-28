@@ -42,6 +42,8 @@ MACHINE_SPECIFIC_KEYS = frozenset(
         # them would silence a note on hardware that never had it reviewed.
         "last_pwm_verify_effective",
         "dismissed_health_items",
+        # DEC-444: keyed on this machine's chips, like the two above.
+        "confirmed_label_prompts",
         # RETIRED as fields by DEC-359 and KEPT HERE deliberately. This set is
         # read by TWO consumers: `portable_dict` (what leaves) and
         # `SettingsPage._import_settings` (what is allowed in). Dropping these
@@ -193,6 +195,10 @@ def _as_sensor_overrides(value: object, default: dict[str, str]) -> dict[str, st
     if not isinstance(value, dict):
         return dict(default)
     return {k: v for k, v in value.items() if isinstance(k, str) and v in _SENSOR_OVERRIDE_VALUES}
+
+
+#: A machine has one or two nct668x chips; the cap only bounds a hand-edited file.
+_CONFIRMED_LABEL_PROMPTS_CAP = 16
 
 
 def _merge_unique(primary: list[str], extra: list[str]) -> list[str]:
@@ -421,6 +427,12 @@ class AppSettings:
     # advisories is what this replaced.
     board_notes_allow_acknowledge: bool = True
     board_notes_allow_dismiss: bool = True
+    # DEC-444 (`BRD-h`): the Hardware page's "Labels are correct" answers to its
+    # nct6687d label prompt, keyed `nct6687-labels:<device ids>` so different
+    # hardware asks again. NOT folded into `dismissed_health_items`: System State
+    # prunes that list against the keys IT can raise, and would delete these.
+    # Machine-specific (it describes this machine's headers), never exported.
+    confirmed_label_prompts: list[str] = field(default_factory=list)
     # Last PWM-verify outcome on this machine: "" (never run), "effective", or
     # "ineffective". The only thing that can settle a quirk whose mechanism is
     # "writes are accepted and silently ignored" — nothing on
@@ -544,6 +556,9 @@ class AppSettings:
                     _as_str_list(data.get("acknowledged_board_notes"), []),
                 ),
             ),
+            confirmed_label_prompts=list(
+                dict.fromkeys(_as_str_list(data.get("confirmed_label_prompts"), []))
+            )[:_CONFIRMED_LABEL_PROMPTS_CAP],
             board_notes_allow_acknowledge=_as_bool(data.get("board_notes_allow_acknowledge"), True),
             board_notes_allow_dismiss=_as_bool(data.get("board_notes_allow_dismiss"), True),
             last_pwm_verify_effective=_as_enum(

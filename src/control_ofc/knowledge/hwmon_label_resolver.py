@@ -133,21 +133,25 @@ HWMON_LABEL_FALLBACK: dict[BoardKey, dict[str, FallbackLabel]] = {
     # DEC-421 (2026-09-24): now corroborated by the it87 SIV catalogue (SIV
     # A008090A: it87952 pwm1 SYS_FAN5_PUMP, pwm2 SYS_FAN6_PUMP, pwm3 SYS_FAN4),
     # a second owner in #103, and LibreHardwareMonitor's same-SIV siblings.
-    # One source disagrees: an annotation in it87 PR #100's body orders them
+    # One source disagreed: an annotation in it87 PR #100's body orders them
     # SYS_FAN4 / FAN5_PUMP / FAN6_PUMP, read with three identical fans at
-    # near-identical RPM, so it does not isolate a channel. The order is
-    # safety-relevant — the PUMP labels feed the 30% pump floor — so these stay
-    # `verified=False` until a per-channel test on real hardware settles it
-    # (register row BRD-i). The silkscreen prints the pump headers as
-    # FAN5_PUMP / FAN6_PUMP.
+    # near-identical RPM, so it did not isolate a channel.
+    # DEC-444 (2026-09-28) settles it on the reference host: the only fan on
+    # this chip's headers is plugged into SYS_FAN4 (FAN5_PUMP and FAN6_PUMP
+    # are empty, owner-confirmed), and it reads on pwm3/fan3 (1038 RPM, the
+    # daemon driving pwm3) while pwm1 and pwm2 read 0 RPM. PR #100 puts
+    # FAN6_PUMP on pwm3, so it is refuted; every remaining source agrees. The
+    # pwm1/pwm2 order rests on those sources, not on this test (both headers
+    # were empty) — and both are PUMP labels, so the floor they earn is the
+    # same either way. Register row BRD-i, CLOSED.
     BoardKey(
         vendor="Gigabyte Technology Co., Ltd.",
         board_glob="X870E AORUS MASTER",
         chip="it87952",
     ): {
-        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=False),
-        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=False),
-        "pwm3": FallbackLabel("SYS_FAN4", verified=False),
+        "pwm1": FallbackLabel("SYS_FAN5_PUMP", verified=True),
+        "pwm2": FallbackLabel("SYS_FAN6_PUMP", verified=True),
+        "pwm3": FallbackLabel("SYS_FAN4", verified=True),
     },
     # ── DEC-105: AM4 400-series boards with upstream lm-sensors configs ─
     # Each entry below is taken VERBATIM from a config file in

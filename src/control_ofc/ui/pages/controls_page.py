@@ -83,6 +83,7 @@ from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
 from control_ofc.ui.widgets.curve_editor import CurveEditor
 from control_ofc.ui.widgets.draggable_flow import DraggableFlowContainer
+from control_ofc.ui.widgets.header_role_dialog import confirm_remove_pump_protection
 
 if TYPE_CHECKING:
     from control_ofc.services.app_settings_service import AppSettingsService
@@ -1246,6 +1247,22 @@ class ControlsPage(QWidget):
         caps = getattr(self._state, "capabilities", None) if self._state else None
         return daemon_supports("pump_protection", caps) is True
 
+    def _confirm_pump_clears(self, assignments):
+        """Ask before Configure AIO removes a pump the user named (DEC-444).
+
+        Every clear ``AioConfigDialog._role_assignments`` emits is a pump role the
+        user assigned — the only role write that can lower a floor — so it asks
+        the same question as the Fan Wizard and the header-role picker. Declining
+        keeps the old pump's role and the rest of the setup continues.
+        """
+        clears = [hid for hid, role in assignments if role is None]
+        if not clears:
+            return assignments
+        names = [self._state.fan_display_name(hid) or hid for hid in clears]
+        if confirm_remove_pump_protection(self, names):
+            return assignments
+        return [(hid, role) for hid, role in assignments if role is not None]
+
     def _apply_header_roles(self, assignments) -> bool:
         """POST each header-role change, refreshing headers on success (DEC-312).
 
@@ -1341,7 +1358,7 @@ class ControlsPage(QWidget):
         if not dlg.exec():
             return
         res = dlg.get_result()
-        if not self._apply_header_roles(res["role_assignments"]):
+        if not self._apply_header_roles(self._confirm_pump_clears(res["role_assignments"])):
             return
         # Rebuild the pump member from the refreshed header, so a role just
         # assigned is reflected in `member_label` — that label is the DEC-095/162

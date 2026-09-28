@@ -534,7 +534,9 @@ and AIO_PUMP on the `nct6799` chip and CHA_FAN3/4 on the NCT6686D
 ([nct6687d #155](https://github.com/Fred78290/nct6687d/issues/155)). `nct6687d`
 names the NCT6686D's channels with MSI's labels, so its "Pump Fan" is a chassis
 header there, while the real pump header is unlabelled. Assign the pump role to
-the real pump header in the fan wizard so the pump floor covers it.
+the real pump header — **Set role…** on its Hardware-page card, or the fan
+wizard — so the pump floor covers it. Since DEC-444 the GUI marks nct6687d's MSI
+labels *unverified* on any non-MSI board and asks for the real pump.
 
 The DEC-106 collision-detector refinement recognises this
 configuration and does NOT emit the CRITICAL banner for this board
@@ -941,7 +943,8 @@ Two community projects target ASRock boards specifically:
    ([#103](https://github.com/Fred78290/nct6687d/issues/103)) and the X870E
    Taichi Lite. It applies **MSI's register map and MSI's fan labels**, so
    voltages can be wrong and a channel labelled "Pump Fan" may be a chassis
-   header — check before trusting it. `nct6687d-dkms-git` on the AUR.
+   header — check before trusting it (the GUI marks such a label *unverified*
+   on a non-MSI board, DEC-444). `nct6687d-dkms-git` on the AUR.
 
 3. **nct6686d** — a kernel module for the NCT6686D based on the NCT6687D
    driver, tested only on the A620I Lightning WiFi; its author reports it
@@ -1159,10 +1162,12 @@ Reference: https://github.com/frankcrawford/it87
   [issue #103](https://github.com/frankcrawford/it87/issues/103) and the it87
   project's own Gigabyte sensor catalogue (SIV `A008090A`, which this board
   reports). An annotation in it87 PR #100 orders them SYS_FAN4 / FAN5_PUMP /
-  FAN6_PUMP instead, read with three identical fans, so it does not isolate a
-  channel. Because the order decides which header gets the pump floor, the GUI
-  keeps these labels marked `(unverified)` until a per-channel test settles it
-  (register row BRD-i).
+  FAN6_PUMP instead, read with three identical fans. DEC-444 (2026-09-28)
+  settled it on the reference host: with FAN5_PUMP and FAN6_PUMP empty, the one
+  fan, on SYS_FAN4, reads on pwm3 — PR #100 puts FAN6_PUMP there — so the GUI's
+  labels are now verified (register row BRD-i, closed). The pwm1/pwm2 order
+  rests on the agreeing sources; both are PUMP labels, so the floor is the same
+  either way.
 
   **Secondary chip enumeration:** on some boots only the IT8696E primary chip
   appears (5 of 8 headers). Keep `nct6775` / `w83627ehf` and `sensors-detect`
