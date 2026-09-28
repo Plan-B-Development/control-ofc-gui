@@ -10,6 +10,30 @@ Control-OFC requires:
 
 The GUI never accesses hardware directly. All reads and writes go through the daemon's API over a local Unix socket.
 
+### Supported coolers and controllers
+
+The daemon drives hardware only through Linux's own drivers — it never talks to a USB
+device directly and does not use `liquidctl` — so what it can reach is what the kernel
+exposes.
+
+| Hardware | What Control-OFC can do |
+|---|---|
+| **OpenFan Controller** (USB) | Full control of every channel — [OpenFan Controller](openfan-controller.md) |
+| **Motherboard fan headers** — ITE and Nuvoton Super-I/O chips | Full control on most boards; some need an out-of-tree driver or a BIOS setting first — [Driver Setup](driver-setup.md) |
+| **Dell laptops and some Dell desktops** (`dell_smm`) | Control on models the kernel driver allows; many share one BIOS switch across every fan — [Driver Setup](driver-setup.md) |
+| **AMD discrete GPUs** | Full control. RX 6000 and older through the fan's PWM; RX 7000/9000 through the firmware fan curve, which needs a one-time kernel setting — [Driver Setup](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
+| **Intel Arc and NVIDIA GPUs** | Monitor only: temperature and fan speed |
+| **NZXT Kraken X53/X63/X73, Z53/Z63/Z73, Kraken 2023, 2023 Elite and 2024 Elite** (`nzxt-kraken3`; the 2024 Elite needs kernel 7.3 or newer) | Pump and fans controllable, coolant temperature read |
+| **NZXT Kraken X42/X52/X62/X72** (`nzxt-kraken2`) | Monitor only: the driver cannot set its speeds |
+| **Aquacomputer D5 Next** (`aquacomputer_d5next`) | Pump and fan controllable, coolant temperature read |
+| **Aquacomputer High Flow Next and Leakshield** | Coolant temperature read; they drive no fan |
+| **Fan controllers:** Corsair Commander Pro, NZXT Smart Device V2 / RGB & Fan Controller, Aquacomputer Octo, Quadro and Aquaero | Fan channels controllable |
+| **Any AIO whose pump plugs into a motherboard header** | Controlled as a motherboard header; tell **Configure AIO** which header is the pump so it gets its protection — [Controls](controls.md#if-your-aio-is-plugged-into-the-motherboard) |
+
+A cooler with no mainline kernel driver — most USB coolers not listed here — is not
+visible to Control-OFC. Plugging its pump into a motherboard header, where the cooler
+allows it, is the usual way round that.
+
 ### Daemon prerequisites
 
 The daemon has its own prerequisites — kernel modules for your motherboard's
@@ -22,8 +46,9 @@ and per-bootloader steps for the kernel parameter.
 
 If you have already installed the daemon, the quickest way to discover
 what your specific system needs is to launch the GUI and open the
-**System State** page — its **Hardware Readiness** report inspects your hardware
-and recommends the exact AUR packages or kernel parameters required.
+**System State** page, which inspects your hardware and recommends the exact
+AUR packages or kernel parameters required; the **Hardware** page's readiness
+checklist gives the daemon's own go/no-go answer beside it.
 
 For the complete ordered path — install → verify sensors → readiness check →
 drivers/BIOS/GPU branch → verify control → first profile — follow the
@@ -123,8 +148,16 @@ repository above exists to remove.
 ```bash
 git clone https://github.com/Plan-B-Development/control-ofc-gui.git
 cd control-ofc-gui
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
+
+Arch and CachyOS refuse a `pip install` outside a virtual environment (their Python
+is "externally managed", PEP 668), so the venv is not optional there. The
+`control-ofc-gui` command then exists only inside it: activate the venv first, or
+run `.venv/bin/control-ofc-gui`. A source install does not include the daemon —
+install `control-ofc-daemon` as above.
 
 ## First Launch
 
@@ -134,7 +167,7 @@ control-ofc-gui
 
 On first launch, Control-OFC will:
 
-1. Attempt to connect to the daemon at `/run/control-ofc/control-ofc.sock`
+1. Attempt to connect to the daemon at `/run/control-ofc/control-ofc.sock` (`control-ofc-gui --socket <path>` points it elsewhere — for a daemon started with a non-default socket)
 2. If the daemon is reachable, fetch hardware capabilities and begin polling
 3. If the daemon is not reachable, show a "Disconnected" state (or enter demo mode if configured)
 4. Open the **Dashboard** page
@@ -147,7 +180,7 @@ If you want to explore the interface without hardware or a running daemon:
 control-ofc-gui --demo
 ```
 
-Demo mode generates synthetic sensor temperatures and fan speeds. You can create profiles, edit curves and explore the UI, but not everything works as it does against a real daemon: the PWM Test Report will not start, hardware advisories and some checks are skipped, and Import Config is unavailable. **Profiles you create or edit in demo are not saved** — they last until demo ends. A **DEMO** badge appears in the status banner so you always know when synthetic data is being shown.
+Demo mode generates synthetic sensor temperatures and fan speeds. You can create profiles, edit curves and explore the UI, but not everything works as it does against a real daemon: the PWM Test Report will not start, hardware advisories and some checks are skipped, and Import Config is unavailable. **Profiles you create or edit in demo are not saved** — they last until demo ends. A **DEMO** badge appears in the status banner, and the footer's mode reads *Demo mode*, so you always know when synthetic data is being shown.
 
 You can also enable "Start in demo mode when daemon is unavailable" in Settings so the GUI falls back to demo automatically.
 
@@ -179,17 +212,29 @@ application does. Closing it changes nothing about cooling.
 To turn it off: **System Settings → Autostart**. For anything more, see
 `man control-ofc-tray`.
 
-## The Status Banner
+## The Status Bars
 
-The horizontal banner at the top of every page shows:
+Three strips frame every page:
 
-| Element | Meaning |
-|---------|---------|
-| **Connection indicator** | Green "Connected", yellow "Degraded", or red "Disconnected" |
-| **Profile name** | The currently active fan profile, or "No profile" |
-| **Mode** | "Automatic" (connected — the daemon runs your fans), "Read-only" (the daemon is not connected; it clears on the next successful poll), or "Demo mode". An older daemon that needs upgrading is reported by a "Daemon upgrade required" banner, not by this field |
-| **Warning count** | Number of active warnings. Clickable on **every** page — click it to jump to the **Logs** page, the single surface that lists them |
-| **DEMO badge** | Visible only in demo mode |
+| Strip | What it shows |
+|-------|---------------|
+| **Top ribbon** (every page) | The daemon's connection state with a status light, the daemon's uptime, a thermal pill, and **Alerts** with a count — click it to jump to the **Logs** page, the single surface that lists them |
+| **Status banner** (under the ribbon, on every page except the Dashboard, which has its own status strip) | Connection — green "Connected", yellow "Degraded" or red "Disconnected" — the active profile (or "No profile"), the number of warnings (not clickable; use **Alerts**), and a **DEMO** badge in demo mode |
+| **Footer** (every page) | How long ago the last poll arrived, the mode — "Automatic" (the daemon runs your fans), "Read-only" (the daemon is not connected; it clears on the next successful poll) or "Demo mode" — the thermal state (click it for the detail), a hardware-readiness chip, a health light, **Rescan Hardware** and **Export Support Bundle** |
+
+Two banners can appear across the top of the window when the GUI and the daemon do not fit together:
+
+- **"Daemon upgrade required"** — the daemon is older than 2.0.0, which this GUI cannot control, so the GUI stands down. Upgrade `control-ofc-daemon`.
+- **"This GUI is older than the daemon supports"** — the daemon declares a minimum GUI version above this one. Fan control is unaffected — the daemon drives the fans itself — but some screens may not show everything the daemon can do. Upgrade `control-ofc-gui`.
+
+### Keyboard shortcuts
+
+| Where | Keys |
+|-------|------|
+| **Controls** page | `Ctrl+S` saves the profile; `Esc` closes the curve editor while it has focus |
+| Curve editor | `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo; `Delete` or `Backspace` removes the selected point |
+| **Logs** page (list focused) | `/` jumps to the search box; `f` toggles follow; `Esc` closes the inspector |
+| Dashboard **Sensors** panel | `F2` renames the selected fan |
 
 > If the daemon's API version does not match the version this GUI was built for (an out-of-lockstep package upgrade), the Dashboard shows a warning banner asking you to align the `control-ofc-daemon` and `control-ofc-gui` package versions. This is non-fatal — the GUI keeps working — but some features may misbehave until the versions match.
 
@@ -202,15 +247,15 @@ The left sidebar provides access to all of the application's pages:
 | **Dashboard** | At-a-glance monitoring: temperatures, fan speeds, charts |
 | **Overview** | Daemon health, device discovery, and live sensor and fan status |
 | **Controls** | Profile management, fan grouping, curve editing |
-| **System State** | Hardware Readiness report: chip and driver detection, PWM and GPU fan verification |
-| **Hardware** | Daemon readiness checklist and Super-I/O architecture |
+| **System State** | The health report: chip and driver detection, BIOS interference, thermal and GPU limits, and advanced fan and GPU tests |
+| **Hardware** | The daemon's readiness checklist, your coolers and every PWM header (**Cooling Hardware**), the fan tests and the **PWM Test Report** (**Hardware Diagnostics**), and the Super-I/O architecture |
 | **Settings** | Application preferences and backup/restore |
 | **Theme** | Fonts, sizes, and the colour-token editor |
-| **Logs** | Event log and support-bundle export |
+| **Logs** | Event log and current alerts (the support bundle is exported from the footer) |
 
 An **About** button at the bottom of the sidebar shows version and credit information:
 
-![About dialog](../screenshots/auto/09_about_dialog.png)
+![About dialog](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/09_about_dialog.png)
 
 ---
 

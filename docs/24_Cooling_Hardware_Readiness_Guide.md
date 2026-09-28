@@ -31,14 +31,28 @@ and kernel version first.
 
 ## No usable CPU temperature source
 
-The daemon's thermal safety relies on a CPU temperature sensor. If none is found,
-emergency fan protection cannot key off CPU temperature.
+The daemon's thermal safety reads the hottest CPU temperature sensor — `k10temp` on
+AMD, `coretemp` on Intel. With none, there is no thermal emergency to trip, and once
+no CPU reading has been fresh for five seconds the fans your **active profile**
+controls are held at 40 % or more. Fans no profile controls are not touched, and with
+no profile active nothing is forced.
 
-**What to do:** first check whether a CPU sensor exists but was not auto-selected —
-open the **Overview** page and look for a `k10temp`/`coretemp`/`Tctl`/`Tdie`
-reading. If one exists, set it as your preferred CPU sensor (see below). If none
-exists at all, your motherboard's Super-I/O driver may not be loaded — see *Loading
-an in-kernel Super-I/O driver*.
+**What to do:** both modules are mainline and load on their own on almost every
+system, so check that yours did:
+
+```bash
+lsmod | grep -E 'k10temp|coretemp'
+```
+
+If neither is listed, load the one for your CPU (`sudo modprobe k10temp` or
+`sudo modprobe coretemp`) and click **Rescan Hardware** in the footer. To load it at
+every boot, put its name on a line of its own in a file under `/etc/modules-load.d/`.
+If the module loads but reports no temperature, your kernel may predate your CPU —
+update the kernel. On a board with a Nuvoton chip, the chip's CPU channels (`PECI`,
+`TSI`, and `CPUTIN` except on ASUS boards, where it is often unconnected) count as
+CPU sensors too, so loading the board's driver can also supply one — see *Loading an
+in-kernel Super-I/O driver*. Picking a preferred CPU sensor (below) changes none of
+this: thermal safety always uses the hottest CPU sensor.
 
 ## Selecting a preferred sensor
 
@@ -86,8 +100,10 @@ ACPI can all override the chip. Use the fan-control verification workflow to con
 
 ## Fan-control verification
 
-The **Test PWM control** action opens the fan-control verification workflow
-(on the **System State** page). It briefly nudges a fan and observes the RPM
+The **Test PWM control** action scrolls to this page's own **Hardware Diagnostics**
+section, whose **PWM Test Report…** tests the headers you choose in one run. Each
+header's card under **Cooling Hardware** also has its own **Test Control** button, and
+the **System State** page keeps the same test as an advanced shortcut. It briefly nudges a fan and observes the RPM
 response to confirm the control path actually works — the honest way to turn
 "detected/writable" into "control verified". It is thermally guarded and reverts
 after the test.
@@ -104,10 +120,21 @@ sudo modprobe nct6775
 ```
 
 - **What it changes:** loads a kernel module so the chip's hwmon device appears. It
-  does not change fan speeds.
-- **Temporary vs. persistent:** `modprobe` lasts until reboot. To load at every boot,
-  add the module name to `/etc/modules-load.d/` (e.g.
-  `echo nct6775 | sudo tee /etc/modules-load.d/nct6775.conf`).
+  does not change fan speeds. Its temperatures and fan speeds appear after **Rescan
+  Hardware**, but the daemon controls a fan header only once it has been restarted
+  with that header present: `sudo systemctl restart control-ofc-daemon`. The same
+  applies after reloading a driver.
+- **On a Gigabyte board, `nct6775` and `w83627ehf` do not load.** The daemon
+  package's Super-I/O guard declines both there — Gigabyte boards use ITE chips,
+  which those drivers cannot bind, and their probe can hide a second chip — so the
+  command reports success and nothing appears. `sudo journalctl -b -t
+  control-ofc-superio-guard` shows each module it declined. You need `it87` there.
+- **Temporary vs. persistent:** `modprobe` lasts until reboot. The daemon package's
+  `/etc/modules-load.d/control-ofc.conf` already loads `nct6775`, `it87`,
+  `w83627ehf` and `drivetemp` at every boot. Any other module needs a file of its
+  own in `/etc/modules-load.d/` (e.g.
+  `echo nct6687 | sudo tee /etc/modules-load.d/nct6687.conf` for an out-of-tree
+  `nct6687d` build).
 - **Reboot:** usually not required to load the module; a reboot may be needed if the
   BIOS/ACPI is claiming the chip's I/O ports (see *ACPI I/O-port conflicts*).
 - **Compatibility:** confirm the recommended module matches your board and kernel.
@@ -163,7 +190,7 @@ access the chip's configuration I/O ports directly to identify it. This:
   `sudo systemctl daemon-reload` and restarts `control-ofc-daemon`;
 - **is not read-only.** Where no chip answers a plain read (`0xffff` or `0x0000`), the daemon writes a
   vendor unlock and exit sequence. The Nuvoton `0x87,0x87` unlock is the one
-  measured latching an ITE eSPI-to-LPC bridge until a full power cut, and it is
+  measured latching an ITE eSPI-to-LPC bridge until a power-down at the wall, and it is
   withheld only on boards the daemon lists as ITE-only. So the GUI asks for
   explicit confirmation first;
 - **refuses the whole probe while any recognised Super-I/O driver is bound**, not

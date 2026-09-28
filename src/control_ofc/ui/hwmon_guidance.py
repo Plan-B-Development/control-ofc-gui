@@ -875,8 +875,8 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/it87.html",
         known_issues=[
             "This is the fallback entry for older ITE parts that mainline has "
-            "long supported (IT8705/8712/8716/8718/8720/8721/8728/8732/8771/"
-            "8772/8781/8782/8783/8786/8790/8792). If your chip is NOT one of "
+            "long supported (IT8705/8712/8716/8718/8720/8721/8726/8728/8732/8758/"
+            "8771/8772/8781/8782/8783/8786/8790/8792/8795). If your chip is NOT one of "
             "those, do not read 'mainline' as settled: ITE ships new Super-I/O "
             "parts faster than the in-kernel driver adopts them, and several "
             "current ones need the out-of-tree it87-dkms-git build. Check your "
@@ -902,8 +902,29 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         in_mainline=True,
         driver_package="linux (built-in)",
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/f71882fg.html",
-        notes="Fintek F718xx series — mainline kernel support.",
+        notes=(
+            "Fintek F718xx series — mainline kernel support (F71805F, F71806F and "
+            "F71872F use the separate f71805f driver)."
+        ),
     ),
+    # `DC-bw` (d): the daemon's `expected_driver_for_chip` sends these three to
+    # `f71805f`, not `f71882fg`. Their prefixes are longer than "f718", so
+    # `lookup_chip_guidance` picks them first.
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="f71805f",
+            in_mainline=True,
+            driver_package="linux (built-in)",
+            driver_url="https://www.kernel.org/doc/html/latest/hwmon/f71805f.html",
+            notes=f"Fintek {label} — mainline kernel support, in the f71805f driver.",
+        )
+        for prefix, label in (
+            ("f71805", "F71805F"),
+            ("f71806", "F71806F"),
+            ("f71872", "F71872F"),
+        )
+    ],
     ChipGuidance(
         chip_prefix="sch5627",
         driver_name="sch5627",

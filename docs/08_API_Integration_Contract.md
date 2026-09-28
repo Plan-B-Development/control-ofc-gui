@@ -538,8 +538,14 @@ Two consequences for a client:
 
 On daemon ≥ 2.18.0 the engine task is **supervised** (DEC-266): if it ends —
 including by a panic inside a tick, which the runtime otherwise contains — the
-daemon restores every fan to firmware control and exits non-zero so systemd
-restarts it. So a *stopped* engine now presents to the GUI as a dropped socket,
+daemon runs its ordinary shutdown restore and exits non-zero so systemd restarts
+it. That restore is not "every fan back to firmware": each hwmon header the daemon
+took gets back the mode or duty it had before (DEC-382 — an NZXT Kraken's is fixed
+100 %, because its driver has no way back to the device's own behaviour), each GPU
+the daemon drove gets PMFW's automatic curve (DEC-435), and an output with no
+firmware to return to — an OpenFan channel, a header with no `pwmN_enable` — is
+left at `max(its last duty, [shutdown] exit_floor_pct)`, or full speed where that
+duty is unknown (DEC-388). So a *stopped* engine now presents to the GUI as a dropped socket,
 not as a green `/status`. Before 2.18.0 nothing supervised the task and a panic
 inside a tick ended fan control and thermal safety while every other signal
 stayed green and `/status` kept answering 200 — this field was the only client-
@@ -2061,7 +2067,11 @@ was true before the merge.
     across both — the GUI keys knowledge-base entries and acknowledgement state
     off it, so renaming it would be a breaking change — and the two states are
     distinguished in the human-readable `summary`/`detail` instead. A client must
-    not infer "the module is not loaded" from this code.
+    not infer "the module is not loaded" from this code. In the not-loaded state,
+    when an unbound chip's module is `nct6775` or `w83627ehf`, newer daemons (after
+    v2.56.4) add to `detail` that the package's Super-I/O guard declines those two
+    modules on Gigabyte boards, so a `modprobe` there loads nothing. This is text
+    only; no field changes.
   - `severity: str` — `ok | info | warning | critical`.
   - `component: str` — `cpu | pwm | hwmon | sensor`.
   - `summary`, `detail`, `recommended_action: str`.

@@ -39,14 +39,34 @@ _~/.config/control-ofc/profiles/_
 _~/.config/control-ofc/themes/_
 	Custom theme files (JSON).
 
+_~/.config/control-ofc/backups/_
+	Automatic backups of app_settings.json, one taken before every
+	settings import.
+
+_~/.local/share/control-ofc/reports/_
+	Saved PWM Test Reports (JSON).
+
+_~/.cache/control-ofc/_
+	Generated theme images. Safe to delete; it is recreated.
+
 _/run/control-ofc/control-ofc.sock_
 	Default daemon Unix socket path.
 
 # ENVIRONMENT
 
 *XDG_CONFIG_HOME*
-	Base directory for configuration. The GUI stores its data under
-	$XDG_CONFIG_HOME/control-ofc (default: ~/.config/control-ofc).
+	Base directory for configuration. The GUI stores its preferences,
+	profiles, themes and settings backups under $XDG_CONFIG_HOME/control-ofc
+	(default: ~/.config/control-ofc). The profiles and themes folders can be
+	moved in Settings.
+
+*XDG_DATA_HOME*
+	Base directory for data the GUI keeps: saved PWM Test Reports go in
+	$XDG_DATA_HOME/control-ofc/reports (default: ~/.local/share/control-ofc).
+
+*XDG_CACHE_HOME*
+	Base directory for the cache, $XDG_CACHE_HOME/control-ofc (default:
+	~/.cache/control-ofc).
 
 # SEE ALSO
 

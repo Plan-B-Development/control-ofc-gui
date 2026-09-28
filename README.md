@@ -4,7 +4,7 @@
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
 
-![Dashboard](screenshots/auto/01_dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/01_dashboard.png)
 
 ## What is Control-OFC?
 
@@ -30,6 +30,7 @@ Just curious, or have no hardware yet? Explore the whole app with **demo mode** 
 - **GPU monitoring** — AMD, Intel Arc, and NVIDIA discrete GPU temperatures and fan RPM (Intel Arc and NVIDIA fans are read-only — the GPU firmware owns them)
 - **Settings** — GUI preferences, daemon runtime config, full theme editor with contrast checking, import/export
 - **Overview · System State · Hardware · Logs** — connection health, subsystem status, 8-column sensor table, Test PWM Control / Test GPU Fan Control, Restore GPU Fan to Automatic, hardware rescan, hardware-readiness reporting, support bundle export
+- **PWM Test Report** — a guided test of every fan channel (control, tach pairing, a full PWM sweep, stall probing) that saves a shareable report of how your hardware responds
 - **Fan Wizard** — guided fan identification and labelling
 - **Demo mode** — full UI without hardware (`--demo`)
 
@@ -230,7 +231,7 @@ See the [architecture docs](https://github.com/Plan-B-Development/control-ofc-gu
 
 - **[User Manual](manual/README.md)** — installation, features, and usage guide
 - **[Setup Checklist](manual/setup-checklist.md)** — ordered path from fresh install to verified sensors and fan control
-- **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — Hardware Readiness, Test PWM Control, vendor quirks
+- **[Hardware Troubleshooting](manual/hardware-troubleshooting.md)** — the System State health report, fan tests, vendor quirks
 - **[OpenFan Controller](manual/openfan-controller.md)** — the OpenFan USB fan controller: detection, serial access, channels, profiles, and troubleshooting
 - **[Understanding Motherboard Fan Control](manual/understanding-fan-control.md)** — plain-English primer on hwmon, sysfs, Super I/O, and PWM, and why drivers/BIOS settings matter
 - **[Hardware Compatibility](docs/19_Hardware_Compatibility.md)** — chip support matrix, kernel drivers, ACPI conflicts
@@ -241,11 +242,11 @@ See the [architecture docs](https://github.com/Plan-B-Development/control-ofc-gu
 - **[Architecture](https://github.com/Plan-B-Development/control-ofc-gui/blob/main/docs/00_README_START_HERE.md)** — design docs and specs
 - **[API Contract](https://github.com/Plan-B-Development/control-ofc-gui/blob/main/docs/08_API_Integration_Contract.md)** — daemon endpoint reference
 - **[Changelog](CHANGELOG.md)** — version history
-- **[Contributing](CONTRIBUTING.md)** — build, test, and PR guidelines
+- **[Contributing](https://github.com/Plan-B-Development/control-ofc-gui/blob/main/CONTRIBUTING.md)** — build, test, and PR guidelines
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, quality gates, and PR guidelines.
+See [CONTRIBUTING.md](https://github.com/Plan-B-Development/control-ofc-gui/blob/main/CONTRIBUTING.md) for build instructions, quality gates, and PR guidelines.
 
 ## License
 

@@ -129,7 +129,7 @@ are unchanged.
 
 **Sensor Detail dialog** (DEC-117) — opens on a row double-click, Enter/Return, or
 right-click → "Open detail…". A `QTextBrowser` that mirrors
-the Hardware Readiness pop-out, surfacing:
+the System Health — Full Report pop-out, surfacing:
 - Identity block (Sensor ID, Source, Chip, Kind, Driver type)
 - Current state (Value, Age, Freshness, Trend)
 - Session range with "currently at X% of session range" marker
@@ -895,7 +895,9 @@ visibility-gated labels keep working unchanged inside the sections.
   as rich text with external links — sidestepping the DEC-106 escaping
   requirement.
 - **Pop-out report** — *Open Full Report ↗* opens `ReadinessReportDialog`, a
-  themed, resizable `QTextBrowser` window with the complete report (summary, an
+  themed, resizable `QTextBrowser` window titled *System Health — Full Report* (named
+  for the card it opens from, not the Hardware page's *Hardware Readiness Checklist*)
+  with the complete report (summary, an
   **Advisories** section, detected-hardware table, thermal/GPU, and the "To fix"
   block). The Advisories section (DEC-158) lists the same `advisory_rows(diag)`
   the page's board notes are built from (`board_notes` wraps it), in the same most-severe-first order and with the same

@@ -1,35 +1,31 @@
 # Hardware Troubleshooting
 
-This page covers the **Hardware Readiness** report on the **System State** page and the situations it helps diagnose: chip detection, kernel driver state, missing sensors, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
+This page covers the **System State** page's health report and the situations it helps diagnose: chip detection, kernel driver state, missing sensors, BIOS interference, ACPI conflicts, vendor quirks, and verifying that fan headers actually respond to PWM writes.
 
 > **Quick navigation**
-> - The Hardware Readiness report lives on the **System State** page.
+> - The health report is the **System State** page. **Open Full Report**, on its **System Health Overview** card, shows the same analysis in one scrollable window (*System Health — Full Report*).
+> - The **Hardware** page's **Hardware Readiness Checklist** is a different surface: the daemon's own go/no-go assessment of your fan-control hardware — see [Diagnostics](diagnostics.md#hardware-readiness-checklist).
 > - Click **Rescan Hardware** in the global footer to fetch current state from the daemon.
-> - Click **Test PWM Control** to run a ~6-second write test against a selected motherboard header.
-> - Click **Characterise PWM Response** for the deeper sweep — how a header responds across 30-100%, reported as three separate verdicts (daemon 2.29.0+).
-> - Click **Discover Control Path** to find out *which fan* a header actually controls (daemon 2.39.0+).
-> - Click **Test GPU Fan Control** to verify an AMD GPU fan actually responds (~6 s, no lease).
+> - Fan tests live on the **Hardware** page: each header's card has **Test Control** (a ~6-second write test), **Characterise** (how the header responds across 30-100%, reported as three separate verdicts — daemon 2.29.0+) and **Discover Control Path** (*which fan* the header actually controls — daemon 2.39.0+), and **PWM Test Report…** tests the headers you choose in one run.
+> - The **System State** page keeps **Test PWM Control**, **Characterise PWM Response**, **Test GPU Fan Control** (does an AMD GPU fan actually respond — ~6 s) and **Restore GPU Fan to Automatic** under **Advanced actions**.
 
 If the report tells you a **driver is missing**, the step-by-step install walkthrough (prerequisites, DKMS, verify, rollback) is on the [Driver Setup](driver-setup.md) page. For the chip and driver matrix, see [Hardware Compatibility](../docs/19_Hardware_Compatibility.md). For vendor-by-vendor BIOS notes, see the [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md). For sensor interpretation, see the [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) and the [AMD Sensor Interpretation Deep Dive](../docs/22_AMD_Sensor_Interpretation_Deep_Dive.md).
 
 New to the terms on this page — hwmon, Super I/O, `pwm_enable`, "read-only headers"? [Understanding Motherboard Fan Control](understanding-fan-control.md) explains them in plain English first, then points back here for the diagnosis.
 
-## What the Hardware Readiness report shows
+## What the System State page shows
 
-When you fetch hardware diagnostics, the report populates with:
+The page renders the daemon's hardware diagnostics — fetched in the background at startup, and again whenever you click **Rescan Hardware** or the page's own **Refresh**:
 
 | Section | What it tells you |
 |---------|-------------------|
-| **Summary** | One-line headline: chip count, writable header count, and overall readiness |
-| **Board info** | Vendor and board name reported by DMI (e.g., `Gigabyte X870E AORUS MASTER`) |
-| **Board note** | Listed under *Board notes for this hardware* when a known vendor + chip combination has documented BIOS-level workarounds (e.g., Gigabyte + IT8696E → Smart Fan 6 BIOS notes). Reference material with an evidence status, not an alarm — see [Vendor quirks](#vendor-quirks) |
-| **Chips table** | Each detected Super I/O / sensor chip with its expected driver, load status, mainline-or-not, and PWM header count |
-| **Kernel modules table** | Modules the daemon expects for your hardware: whether they are loaded and whether they ship in the mainline Linux kernel |
-| **ACPI conflicts** | Warnings if an ACPI region claims the same I/O ports as a hwmon driver (most common with `it87` on Gigabyte boards — for `it87` prefer the driver-local `options it87 ignore_resource_conflict=1`; the system-wide `acpi_enforce_resources=lax` is the fallback, and the only option for `nct6775`) |
-| **Module conflicts** | Warnings when two modules try to claim the same chip (e.g., both `it87` and `nct6775`) |
-| **BIOS interference** | Per-header `pwm_enable` reclaim count and severity colour |
-| **Thermal safety** | Whether the daemon found a CPU sensor it can use for the thermal emergency and its release. The panel shows the emergency limit this machine is actually using |
-| **GPU diagnostics** | AMD discrete GPU detection, fan control method, and the `amdgpu.ppfeaturemask` state required for PMFW fan curves |
+| **System Health Overview** | A pill reading *SYSTEM READY* or *N ACTION REQUIRED*, and a summary line: how many PWM headers were found and how many are writable, then your board's vendor, name and BIOS version as DMI reports them (e.g. `Gigabyte Technology Co., Ltd. — X870E AORUS MASTER — BIOS F14c`) |
+| **Condition cards** (under the summary) | One card per thing that needs a response now, each with its fix: a Super-I/O chip that did not appear (the dual-chip warning), a *Driver module collision* or *Conflicting driver modules loaded*, an *ACPI I/O port conflict* (for `it87` prefer the driver-local `options it87 ignore_resource_conflict=1`; the system-wide `acpi_enforce_resources=lax` is the fallback, and the only option for `nct6775`), *BIOS/EC reclaiming fan control*, every PWM header read-only, no hwmon chips at all, a GPU with fan control disabled or unavailable, a header whose duty will not hold |
+| **Board notes** (collapsed) | Known vendor + chip combinations with documented BIOS-level workarounds (e.g. Gigabyte + IT8696E → Smart Fan 6 BIOS notes). Reference material with an evidence status, not an alarm — see [Vendor quirks](#vendor-quirks) |
+| **Interference Monitor** | Per-header `pwm_enable` reclaim count with a severity colour, and any duty the daemon had to correct — see [Per-header pwm_enable reclaim count](#per-header-pwm_enable-reclaim-count) |
+| **Safety & GPU Limits** | The **CPU Thermal State** row — the daemon's current thermal state and the emergency limit this machine is actually using — plus a row per AMD discrete GPU (fan control method and the `amdgpu.ppfeaturemask` state PMFW fan curves need), any kernel advisories, and the firmware's fan speed range |
+| **Hardware Registry** | Each detected Super-I/O / sensor chip: Status, Chip / Component, Driver, Driver Status, whether the driver is in the mainline kernel, and its PWM header count. Hover a row for the chip's known issues |
+| **Advanced actions** (collapsed) | The fan and GPU tests listed under *Quick navigation* above |
 
 ## Test PWM Control
 
@@ -47,6 +43,7 @@ For motherboard hwmon headers it is often unclear whether a write actually reach
 | **PWM accepted but RPM did not change** | Write took effect at the sysfs level but the fan did not respond. Either the header has nothing connected, the fan is stalled, or there is no tachometer to confirm |
 | **PWM accepted; RPM readback unavailable** | Write looks fine but the board does not provide a `fan*_input` value for this header to confirm |
 | **PWM readback failed** | Reading the header back after the write did not return a value at all, so whether the duty held could not be confirmed — and there was no usable RPM reading to corroborate it either. **This is not evidence the write failed, and not a finding about your board.** It is almost always transient: re-run the test. If it repeats, check `dmesg` for the sensor chip's driver — a chip removed or unbound mid-test produces exactly this. Requires daemon v2.48.0 or newer; an older daemon reported this case as *PWM accepted; RPM readback unavailable*, which claimed more than it had checked |
+| **The header became pump-protected during the test** | Partway through the test the header became one the daemon protects as a pump — you assigned it the pump role, or a profile naming it as a pump was activated — so the daemon stopped the test before measuring anything and put the header back, never below the 30 % pump floor. Nothing was learned about the header; no RPM change is shown, because the fan never settled. Re-run the test if you still want the answer. Needs daemon v2.56.0 or newer |
 
 The result panel also shows the initial → final RPM and `pwm_enable` values, plus a **Next step** suggestion tailored to the result and your board vendor.
 
@@ -214,7 +211,7 @@ If the result says the telemetry update rate is **unknown**, that is a real answ
 
 ## Test GPU Fan Control
 
-AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), or a BIOS overdrive lock blocks it. The static **GPU diagnostics** row can show that the *configuration* looks right while fan control still does not work.
+AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), or a BIOS overdrive lock blocks it. The GPU rows on the **System State** page's **Safety & GPU Limits** card can show that the *configuration* looks right while fan control still does not work.
 
 **Test GPU Fan Control** (on the **System State** page — shown only when a writable AMD GPU is present and the daemon is ≥ 1.11.0) briefly drives the GPU fan to a test speed — always *upward*, so it never reduces cooling on a hot GPU — waits ~6 seconds, reads back the applied PMFW `fan_curve` (or legacy `pwm1`) and the `fan1_input` RPM, then restores the previous state. No lease is required. The result is one of:
 
@@ -261,7 +258,7 @@ Fan *write* control for NVIDIA is a possible future addition, deliberately defer
 
 Some boards (most commonly Gigabyte AM5 with Smart Fan 6) repeatedly reset `pwm_enable` from manual back to automatic. Each reset is a "reclaim" — the daemon sets it back, but the EC keeps stealing it.
 
-The Hardware Readiness report surfaces a per-header count with a severity ramp:
+The **Interference Monitor** on the **System State** page shows a per-header count with a severity ramp:
 
 | Reclaim count | Colour | Meaning |
 |---------------|--------|---------|
@@ -275,7 +272,7 @@ Since v2.74.0 the count is **dated**, not merely counted. The daemon reports how
 
 Since v2.56.0 each header's own card in **Cooling Hardware** shows this count too, in its **Details ▸ Capabilities** block — a header that has never been reclaimed reads *Not observed*. A header currently under firmware control **and** with reclaims on record shows a **Control reclaimed** status; a header that was reclaimed in the past but is back under the daemon's control does not, because that is contention the daemon won rather than a live problem.
 
-The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically, so control still works in the WARN/HIGH cases. The remedy is per vendor, and the board notes the report shows for your chip carry it. On Gigabyte boards, keep `it87-dkms-git` current — its 2026-08-24 fixes (PR #128) address the firmware logic that retakes headers. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: on some boards it locks Linux out of that header.
+The daemon includes a watchdog that re-asserts `pwm_enable=1` automatically, so control still works in the WARN/HIGH cases. The remedy is per vendor, and the board notes the report shows for your chip carry it. On Gigabyte boards, an `it87-dkms-git` build from 2026-08-24 on carries the fixes (PR #128) for the firmware logic that retakes headers; if yours is older, rebuild it — but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first, because a build from 2026-09-09 on changes every header id. Setting a header to *Full Speed* in BIOS is a fail-safe, not a fix: on some boards it locks Linux out of that header.
 
 ## Vendor quirks
 
@@ -343,14 +340,14 @@ If you see an `(unverified)` suffix on a header label, treat the assignment as a
 
 Fan control depends on sensors: curves need temperatures, and the daemon's thermal safety needs a CPU sensor. If the Dashboard or the **Overview** page shows nothing — or less than you expect — work down this list:
 
-- **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the readiness report's **Thermal safety** row says "no CPU sensor", try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** (on the **System State** page) — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
-- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a dual-chip Gigabyte board, where `nct6775` and `w83627ehf` can hide the secondary chip until a full power cut (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). With daemon 2.56.1 or later you do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on every Gigabyte board (Gigabyte boards use ITE chips, which those modules cannot drive) and leaves them alone everywhere else, so the entries above are safe as they stand. Daemon 2.56.0 and older ship a guard that covers only the Gigabyte boards it lists; on any other Gigabyte board, suppress the two modules yourself as step 2 of the recovery below describes. If you have a Gigabyte board that really does carry a Nuvoton chip, turn the guard off by creating an **empty** file of the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and rebooting. A same-named file in `/etc` masks the package's copy, and an empty one leaves no rule behind. A copy of the package's file would keep the guard, and a differently-named file does not reliably win. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
+- **No CPU temperature** — the CPU modules (`k10temp` for AMD, `coretemp` for Intel) are mainline and auto-load via device matching on essentially every distribution. If the **CPU Thermal State** row on the **System State** page reads *No_sensor_fallback*, try loading the module by hand (`sudo modprobe k10temp` or `sudo modprobe coretemp`) and check `sudo dmesg` for errors. Once the module loads, click **Rescan Hardware** in the footer — the daemon picks up the new sensor within a couple of poll cycles, no restart needed.
+- **No motherboard temperatures or fan RPMs** — Super-I/O chip modules cannot auto-load (the chips sit on ISA I/O ports with no bus-enumerable trigger), so the daemon package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf`, and `drivetemp` at boot. Loading a module for a chip that is not present is **usually** harmless — but not on a Gigabyte board, where `nct6775` and `w83627ehf` can hide a second chip until a reboot, or on some boards until the machine is powered down at the wall (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below). With daemon 2.56.1 or later you do not need to act on it: the daemon package ships a modprobe guard (`/usr/lib/modprobe.d/control-ofc-superio.conf`) that suppresses those two modules on every Gigabyte board (Gigabyte boards use ITE chips, which those modules cannot drive) and leaves them alone everywhere else, so the entries above are safe as they stand. Each module it declines is logged: `sudo journalctl -b -t control-ofc-superio-guard`. Daemon 2.56.0 and older ship a guard that covers only the Gigabyte boards it lists; on any other Gigabyte board, suppress the two modules yourself as step 2 of the recovery below describes. If you have a Gigabyte board that really does carry a Nuvoton chip, turn the guard off by creating an **empty** file of the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and rebooting. A same-named file in `/etc` masks the package's copy, and an empty one leaves no rule behind. A copy of the package's file would keep the guard, and a differently-named file does not reliably win. If your chip needs an out-of-tree driver instead, the readiness chips table says so — see [Driver Setup](driver-setup.md).
 - **No drive temperatures** — NVMe drives report temperatures through the kernel `nvme` driver automatically; SATA/SAS drives need `drivetemp` (already in the daemon's modules-load list above).
 - **`lm_sensors` is optional** — the daemon reads `/sys/class/hwmon` directly and does not use libsensors. Installing `lm_sensors` gives you the `sensors` CLI, which is handy for cross-checking what the kernel exposes.
 
 ### About `sensors-detect`
 
-Prefer the readiness report first — it identifies your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a dual-chip Gigabyte board** — it can wedge the Super-I/O bridge so the secondary chip vanishes, and **a reboot may not bring it back — power down at the wall**, because the bridge keeps standby power (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
+Prefer the **Hardware** page first — its readiness checklist and Super-I/O section identify your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a Gigabyte board** — it can wedge the Super-I/O bridge so a second chip vanishes, and the package's guard cannot stop it (it probes the ports itself rather than loading a module); and **a reboot may not bring it back — power down at the wall**, because the bridge keeps standby power (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
 
 ## Voltages, and why most of them have no name
 
@@ -393,16 +390,16 @@ they are not on the live poll.
 
 ### "All my hwmon headers show as read-only"
 
-Open the **System State** page, look at the **Hardware Readiness** report:
+Open the **System State** page:
 
-- If the chips table shows the expected chip but **status is "not loaded"**, the kernel module is missing. The chip column lists which module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
-- If the status is "loaded" but **writable_headers is 0**, the bound driver publishes the pwm files read-only. On MSI and ASRock Nuvoton boards that usually means the in-kernel `nct6683` is bound — it never makes PWM writable outside Mitac OEM systems — so the out-of-tree driver in the chips table is needed. See [Driver Setup](driver-setup.md).
-- If headers are writable but a **Test PWM Control** result is `pwm_enable_reverted`, the firmware is taking control back — see the board notes on that page. On Gigabyte boards, keep `it87-dkms-git` current; setting the header to *Full Speed* in BIOS Smart Fan is a fail-safe, not a fix, and on some boards it locks Linux out of that header.
-- If an ACPI resource conflict blocks the driver, the ACPI conflicts row says so. For `it87` prefer `options it87 ignore_resource_conflict=1`; `acpi_enforce_resources=lax` is the system-wide fallback.
+- If the **Hardware Registry** shows the expected chip but its **Driver Status is "not loaded"**, the kernel module is missing. The row names the module to install (e.g., `it87-dkms-git` on AUR for Gigabyte AM5 boards).
+- If the driver is loaded but the summary line says **0 writable**, the bound driver publishes the pwm files read-only. On MSI and ASRock Nuvoton boards that usually means the in-kernel `nct6683` is bound — it never makes PWM writable outside Mitac OEM systems — so the out-of-tree driver the registry names is needed. See [Driver Setup](driver-setup.md).
+- If headers are writable but a fan test's result is `pwm_enable_reverted`, the firmware is taking control back — see the board notes on that page. On Gigabyte IT8689E boards, an `it87-dkms-git` build from before 2026-08-24 is the usual cause: rebuild it, but read [it87 v2.0 renames your chips](driver-setup.md#it87-v20-renames-your-chips) first, because a build from 2026-09-09 on changes every header id. Setting the header to *Full Speed* in BIOS Smart Fan is a fail-safe, not a fix, and on some boards it locks Linux out of that header.
+- If an ACPI resource conflict blocks the driver, an *ACPI I/O port conflict* card says so. For `it87` prefer `options it87 ignore_resource_conflict=1`; `acpi_enforce_resources=lax` is the system-wide fallback.
 
 ### "Some of my fan headers are missing — only 5 of 8 show up"
 
-Open the **System State** page. If the **dual-chip warning banner** at the top of the Hardware Readiness report is visible, your motherboard is one of the Gigabyte boards with two ITE chips (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) and one of them did not appear.
+Open the **System State** page. If a *Super-I/O chip not enumerated* card (the dual-chip warning) is under the **System Health Overview**, your motherboard is one of the Gigabyte boards with two ITE chips (X870E AORUS MASTER, X670E AORUS MASTER, Z790 AORUS MASTER, etc.) and one of them did not appear.
 
 **First, rule out a false alarm (it87 builds from 2026-09-09).** From its v2.0 release the out-of-tree `it87` driver names Gigabyte chips with a suffix — `it8696_a008090a` instead of `it8696`. Control-OFC does not recognise the new names yet, so it reports both chips missing while they are working. Check:
 
@@ -464,14 +461,20 @@ If you see names like `it8696_a008090a` and `it87952_a008090a`, both chips are p
    Use `install`, **not** `blacklist`: `blacklist` is ignored by the explicit
    `modprobe` that systemd issues at boot, so it would silently do nothing here.
 
-3. **Confirm nothing else loads them.** Check
-   `/etc/modules-load.d/` for other files naming `nct6775` or `w83627ehf`, and
-   make sure `lm_sensors.service` is not running `sensors-detect` at boot:
+3. **Confirm nothing else loads them, and stop running `sensors-detect`.** Look
+   for other files naming `nct6775` or `w83627ehf`. `lm_sensors.service` loads
+   whatever `sensors-detect` once wrote to `/etc/conf.d/lm_sensors`, so check
+   that file too:
 
    ```
-   grep -rn 'nct6775\|w83627ehf' /etc/modules-load.d/
-   systemctl is-enabled lm_sensors.service
+   grep -rn 'nct6775\|w83627ehf' /etc/modules-load.d/ /etc/conf.d/lm_sensors
    ```
+
+   A module named there still goes through the guard (or your own file from
+   step 2), so it is only a trigger where neither is in place — but removing it
+   costs nothing on a Gigabyte board. `sensors-detect` itself is different: it
+   probes the ports directly, so no guard can stop it. Do not run it on this
+   board.
 
 4. **Reboot, then click Rescan Hardware.** If the missing chip is back, you are
    done.
@@ -512,9 +515,9 @@ This changes nothing about the fix — the ladder is the same either way.
 Then something else is still writing the unlock before `it87` reads. Check, in
 this order:
 
-- another `modules-load.d` file, or a distro default, loading `nct6775`;
-- `sensors-detect` running at boot via `lm_sensors.service`;
-- a Super-I/O module baked into your initramfs (`lsinitcpio /boot/initramfs-linux.img | grep -E 'nct6775|w83627|it87'`);
+- another `modules-load.d` file, `/etc/conf.d/lm_sensors`, or a distro default, loading `nct6775` where the guard has not acted;
+- `sensors-detect`, run by hand or by a script;
+- a Super-I/O module baked into your initramfs (`for i in /boot/initramfs-*.img; do echo "$i"; lsinitcpio "$i" | grep -E 'nct6775|w83627|it87'; done` — CachyOS names its images `initramfs-linux-cachyos*.img`, not `initramfs-linux.img`);
 - any other tool that probes Super-I/O ports.
 
 **Do not** reach for these — they are known not to help, and one of them makes
@@ -543,24 +546,26 @@ the bridge itself is in
 
 The daemon's thermal failsafe has two distinct triggers, with different fan speeds:
 
-- **Emergency (100%):** any CPU sensor reports at or above the emergency limit. That limit is at least 105°C, and where the kernel publishes the CPU's own design ceiling the daemon raises it to that ceiling **plus 5°C**, capped at 115°C. The margin matters: a modern Intel part is *meant* to run at its ceiling under load, so a limit set *at* the ceiling would trip on a perfectly healthy machine and then stay tripped, because release needs a reading at or below 80°C that a part holding its ceiling never produces. The Hardware page shows the limit in use. Every OpenFan channel and writable hwmon fan the machine has is forced to 100% and held there until the hottest CPU sensor reads 80°C or below — a sensor that stops updating or disappears keeps it at 100% — and then the active profile resumes at once. GPU fans are deliberately excluded — the GPU's own firmware handles GPU thermal protection.
-- **No-sensor fallback (40%):** no CPU sensor has been seen for 5 consecutive poll cycles, and no emergency is under way. The fans your active profile controls are held at 40% or more (a fan whose curve can no longer be read keeps the speed it had) — so profile fans sitting at a uniform ~40% (rather than 100%) usually mean a missing CPU sensor, not an overheat. Fans no profile controls are left to your motherboard's own fan curve, which reads its own CPU sensor; with no profile active, nothing is forced at all.
+- **Emergency (100%):** any CPU sensor reports at or above the emergency limit. That limit is at least 105°C, and where the kernel publishes the CPU's own design ceiling the daemon raises it to that ceiling **plus 5°C**, capped at 115°C. The margin matters: a modern Intel part is *meant* to run at its ceiling under load, so a limit set *at* the ceiling would trip on a perfectly healthy machine and then stay tripped, because release needs a reading at or below 80°C that a part holding its ceiling never produces. The **System State** page shows the limit in use, on the **CPU Thermal State** row. Every OpenFan channel and writable hwmon fan the machine has is forced to 100% — including fans no profile controls — and held there until a *current* reading from the hottest CPU sensor is 80°C or below. A sensor that stops updating or disappears keeps it at 100%. Then the active profile resumes at once.
+- **No-sensor fallback (40%):** no current CPU reading for 5 consecutive seconds, and no emergency under way. Either no CPU sensor is left, or the one there has stopped updating. The fans your active profile controls are held at 40% or more — so profile fans sitting at a uniform ~40% (rather than 100%) usually mean a missing or frozen CPU sensor, not an overheat. A fan whose curve can no longer be evaluated keeps the speed it had, if that is higher — except an OpenFan fan whose speed the daemon lost track of (after the controller reconnected, or after the machine resumed from sleep), which runs at 100%, because the daemon cannot tell whether 40% would slow it down. Fans no profile controls are left to your motherboard's own fan curve, which reads its own CPU sensor; with no profile active, nothing is forced at all. A sensor that stopped updating while it read 80°C or more does not trigger this: your curves keep running on that last reading instead.
+
+Both are minimums over your profile, not replacements: a fan your curve is already running faster keeps its speed. GPU fans are never forced — the GPU's own firmware handles GPU thermal protection — and they keep following their own curves throughout.
 
 **The emergency is a backstop, not a cooling-failure alarm.** A modern CPU protects itself by slowing down at its own temperature ceiling, and the emergency limit sits above that ceiling on purpose. So a stopped pump or stalled fans usually show up as a CPU pinned at its ceiling and running slower — not as an emergency. If the CPU sits at its ceiling under a load it used to handle comfortably, check the pump and the fan speeds.
 
-**A faulty CPU sensor stuck at or above the limit keeps the emergency on.** One reading at the limit is enough to start it. The daemon then waits for that sensor to read 80°C or below, and never decides on its own that the reading was wrong. This is deliberate (DEC-400): it follows the industrial safety standard IEC 61511, where a safety action that has fired stays in force until its reset. So if the fans stay at 100% while the machine is cool, look at the CPU sensors on the **Overview** page for one reporting an impossible temperature. Then fix or unload the driver that reports it, or report it so that sensor can be set aside when sensors are classified.
+**A faulty CPU sensor stuck at or above the limit keeps the emergency on.** One reading at the limit is enough to start it. The daemon then waits for that sensor to read 80°C or below, and never decides on its own that the reading was wrong. This is deliberate: it follows the industrial safety standard IEC 61511, where a safety action that has fired stays in force until its reset. So if the fans stay at 100% while the machine is cool, look at the CPU sensors on the **Overview** page for one reporting an impossible temperature. Then fix or unload the driver that reports it, or report it so that sensor can be set aside when sensors are classified. **If that was your only CPU sensor, unloading its driver does not end the emergency** — a sensor that disappears keeps it on — so restart the daemon afterwards (`sudo systemctl restart control-ofc-daemon`). With no CPU sensor left, the restarted daemon then applies the 40% fallback above.
 
-Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects what the daemon reports: while an override is active it shows a "Daemon thermal override active" warning (in the Dashboard warning count and the event log on the **Logs** page), driven by the `thermal_state` field in the daemon's 1 Hz poll. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
+Both overrides are owned and driven entirely by the daemon — it forces the fan speeds and holds them itself. The GUI simply reflects the `thermal_state` field in the daemon's 1 Hz poll: the footer's **thermal state** chip changes (click it for the detail), a banner reading *"Thermal protection active (…)"* appears across the top of the Dashboard, and the chart gets a marker. A thermal state is not counted as a warning and does not appear in the Logs page's alert bar. Normal profile control resumes automatically once the daemon reports a normal thermal state again — fans pinned during an override are the daemon protecting the system, not a stuck profile.
 
-Check the **Thermal safety** row of the Hardware Readiness report. If it reports "no CPU sensor", install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`). See [Sensors missing or fewer than expected](#sensors-missing-or-fewer-than-expected).
+Check the **CPU Thermal State** row on the **System State** page. If it reads *No_sensor_fallback*, the daemon has no current CPU temperature: install / load the matching driver (`k10temp` for AMD, `coretemp` for Intel are mainline; some boards also need `nct6775` or `it87`). See [Sensors missing or fewer than expected](#sensors-missing-or-fewer-than-expected).
 
 ### "GPU fan control says feature_unavailable"
 
-Open the **System State** page, look at the **GPU diagnostics** row. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
+Open the **System State** page and look at the GPU rows on the **Safety & GPU Limits** card. If `amdgpu.ppfeaturemask` is missing bit `0x4000` (`PP_OVERDRIVE_MASK`), the kernel will not expose PMFW fan curves on RDNA3+ GPUs (RX 7000 / 9000 series). Add `amdgpu.ppfeaturemask=0xffffffff` to your kernel command line and reboot. See the [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) doc for the full kernel-parameter explanation.
 
 ### "A popup said my kernel has a known regression — should I worry?"
 
-The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`). When the running kernel matches a known issue affecting your hardware, the GUI raises a popup, and the warning is listed as an advisory row under **GPU diagnostics** on the **System State** page until you acknowledge it. The popup's details carry the upstream references.
+The daemon ships a curated catalogue of amdgpu kernel regressions (`hwmon/kernel_warnings.rs`). When the running kernel matches a known issue affecting your hardware, the GUI raises a popup, and the warning is listed as an **Advisory** row on the **System State** page's **Safety & GPU Limits** card until you acknowledge it. The popup's details carry the upstream references.
 
 Currently catalogued:
 

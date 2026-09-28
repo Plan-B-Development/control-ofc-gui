@@ -39,8 +39,9 @@ way to determine what a sensor reading represents.
 **Kernel docs:** https://docs.kernel.org/hwmon/k10temp.html
 
 This is the **highest-confidence** source for CPU thermals on Ryzen systems.
-The data comes directly from the CPU's internal thermal monitoring hardware
-via MSR (Model-Specific Register) reads.
+The data comes directly from the CPU's internal thermal monitoring hardware,
+read through PCI configuration space and, on Zen parts, the SMN (System Management
+Network) registers — not through MSRs.
 
 #### Tctl — CPU Control Temperature
 
@@ -179,9 +180,10 @@ The driver exposes these label categories:
 
 The kernel documentation explicitly states:
 
-> "On various ASUS boards with NCT6776F, CPUTIN is not really connected to
-> anything and floats, or that it is connected to some non-standard
-> temperature measurement device."
+> "On various ASUS boards with NCT6776F, it appears that CPUTIN is not really
+> connected to anything and floats, or that it is connected to some non-standard
+> temperature measurement device. As a result, the temperature reported on CPUTIN
+> will not reflect a usable value."
 
 Symptoms: unreasonably high temperatures, or temperature that declines when
 the actual CPU temperature rises.
@@ -192,7 +194,8 @@ PECI 0 or TSI 0 instead.
 **GUI handling:** When the chip is any of the 11-chip nct6775 family (`nct6775`
 through `nct6799`, DEC-294) and the board vendor is ASUS,
 the GUI classifies CPUTIN as `bogus` at `low` confidence with an explanatory
-note.
+note. The vendor comes from the board's DMI data; if it cannot be read, the rule
+does not fire and CPUTIN keeps its normal classification.
 
 ---
 
@@ -389,6 +392,10 @@ specific board features.
 All readings are `high` confidence because the EC provides the identity
 mapping. The driver only loads on boards in an explicit kernel allowlist.
 
+The water readings are coolant temperatures, and **coolant carries no safety
+meaning**: the daemon's thermal emergency and no-sensor floor read CPU sensors only,
+so a hot loop never trips them. Bind a curve to the coolant sensor to cool the loop.
+
 #### ACPI mutex
 
 The driver uses an ACPI mutex to coordinate access with the firmware. A
@@ -403,15 +410,25 @@ updates. A special `:GLOBAL_LOCK` mode is also documented for edge cases.
 
 Same label vocabulary as `asus_ec_sensors` (VRM, T_Sensor, Water In/Out,
 etc.) but accessed via WMI (Windows Management Instrumentation) ACPI
-methods. Found on 16 older ASUS AMD boards, listed by exact name: X370, X470,
-B450 and X399 boards (no X570 board is on the list).
+methods. The driver binds on 16 older ASUS AMD boards, matched by exact name:
+PRIME X399-A, PRIME X470-PRO, ROG CROSSHAIR VI EXTREME, CROSSHAIR VI HERO, ROG
+CROSSHAIR VI HERO (WI-FI AC), ROG CROSSHAIR VII HERO, ROG CROSSHAIR VII HERO
+(WI-FI), ROG STRIX B450-E GAMING, ROG STRIX B450-F GAMING, ROG STRIX B450-F GAMING
+II, ROG STRIX B450-I GAMING, ROG STRIX X399-E GAMING, ROG STRIX X470-F GAMING, ROG
+STRIX X470-I GAMING, ROG ZENITH EXTREME and ROG ZENITH EXTREME ALPHA (the driver's
+table; the kernel doc lists 15, omitting the B450-F GAMING II). No X570 board is on
+the list.
 
 #### Confidence reduction
 
-All classifications follow the same label-matching rules as
-`asus_ec_sensors` but at **one confidence level lower** (`medium_high`
-instead of `high`). This is because the WMI interface has documented
-reliability issues.
+Classification sits **one confidence level lower** than `asus_ec_sensors`
+(`medium_high` instead of `high`), because the WMI interface has documented
+reliability issues, and the rules are not quite the same. A label containing `CPU`
+is the board's reading of the CPU (`cpu_board_side`), not a die sensor. A label
+that matches none of the rules is `medium`, not `medium_high`. Water labels are
+classified as coolant before any of this, by the rule that applies to every driver:
+`Water In` / `Water Out` at `high`, any other coolant/water/liquid label at
+`medium`.
 
 #### Polling reliability warning
 
@@ -632,8 +649,10 @@ chip+vendor+label as `mb` rather than `cpu`, so it is excluded from the thermal
 ladder's hottest-CPU reduction. Before this the 115 C symptom above was not
 merely cosmetic — it is plausible enough to pass the reader's range check, so it
 latched the thermal emergency permanently (release requires <= 80 C) and pinned
-every fan at 100%. The chip's `PECI`/`TSI` channels became `cpu` in the same
-change.
+every fan at 100%. In the same change the chip's `PECI`/`TSI` channels became `cpu`
+on five chips only; the other nine gained it in daemon 2.51.2. Until then an ASUS
+board with one of those nine had its `CPUTIN` demoted and nothing promoted in its
+place.
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 
@@ -691,7 +710,8 @@ confidence.
 
 ### Quirk 6: Thermistor channels are real but physically unmappable
 
-**Applies to:** nct6683, nct6775, it87
+**Applies to:** nct6683 (named `Thermistor N` channels); nct6775 and it87 (generic
+`tempN` or board-named channels)
 
 **Symptom:** Sensors show "Thermistor 7" or "temp2" with no indication of
 physical placement.
@@ -701,8 +721,11 @@ but cannot determine where on the board it is physically located. Only
 vendor documentation, BIOS labels, or controlled load testing can determine
 the mapping.
 
-**GUI handling:** Classifies as "board thermistor channel" rather than
-inventing a location. A board-specific override, where one is validated, is
+**GUI handling:** Never invents a location. An nct6683 thermistor (type code 4, or
+a `Thermistor N` label) is described as a "board thermistor channel" at `medium`. The
+nct6775 and it87 families give no such hint: their unnamed `tempN` channels read as a
+generic Super-I/O channel at `low`, and so does an it87 label that is all lower
+case; a capitalised it87 label is `medium`. A board-specific override, where one is validated, is
 shown in its own section of the Sensor Detail dialog; it is display-only and does
 not change the channel's classification or confidence anywhere else in the GUI.
 

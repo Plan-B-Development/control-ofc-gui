@@ -17,14 +17,14 @@ If you already know your way around DKMS and modprobe, the condensed reference l
 Many boards work out of the box with mainline kernel drivers. Check first:
 
 1. Start the GUI and open the **System State** page.
-2. Click **Rescan Hardware**.
-3. Look at the **Hardware Readiness** summary line.
+2. Click **Rescan Hardware** in the footer.
+3. Look at the **System Health Overview** summary line and the cards below it.
 
-If it reports your PWM headers with a non-zero **writable** count and no issues, you are done — no driver work needed. If it reports *"No hwmon chips detected"*, *"All PWM headers are read-only"*, or a chips-table row whose status says **"not loaded — install …"**, continue below.
+If it reports your PWM headers with a non-zero **writable** count and no issues, you are done — no driver work needed. If it reports *"No hwmon chips detected"*, *"All PWM headers are read-only"*, or a **Hardware Registry** row whose status says **"not loaded — install …"**, continue below.
 
 ## Step 1 — Identify your board and chip
 
-The readiness report's **Board info** row shows what DMI reports (e.g. `Gigabyte Technology Co., Ltd. — X870E AORUS MASTER`), and the **chips table** lists every detected Super-I/O chip with the driver it needs. The report is the easiest path because it already cross-references the project's chip knowledge base.
+The **System State** page's summary line shows what DMI reports (e.g. `Gigabyte Technology Co., Ltd. — X870E AORUS MASTER — BIOS F14c`), and its **Hardware Registry** table lists every detected Super-I/O chip with the driver it needs. The page is the easiest path because it already cross-references the project's chip knowledge base.
 
 From a terminal, the same facts come from:
 
@@ -50,6 +50,7 @@ Rule of thumb by vendor (full matrix: [Hardware Compatibility](../docs/19_Hardwa
 | ASUS (AM5, Intel Z890/B860) | Nuvoton NCT6799D (AM5 600) or NCT6701D (AM5 800, Z890/B860), both reported as `nct6799` | usually **none** — mainline `nct6775` |
 | ASUS (AM4 300/400-series, e.g. PRIME X470-PRO) | ITE IT8665E | `it87-dkms-git` (AUR) — mainline has no IT8665E driver |
 | ASRock | Nuvoton NCT67xx, and on many boards an NCT6686D/NCT6683D carrying some or all fans | the NCT67xx needs none; the NCT668x fans are read-only in the kernel driver and need a board-specific out-of-tree driver — see the [ASRock notes](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) |
+| Dell (laptops, and some desktops) | none — the fans are run by the BIOS's System Management Mode, not a Super-I/O chip | **none** — mainline `dell_smm_hwmon` (it appears as `dell_smm`). Software control needs your model on the driver's fan-control list; without it the BIOS stays in charge and can override any speed that is set. Many models give every fan **one shared BIOS switch**, so a profile must control all of their fans or none (see [Controls](controls.md)), and the fans usually have only a few speed steps rather than a smooth range |
 
 > **Don't guess.** Installing the wrong out-of-tree driver can actively harm: the `nct6687`/`nct6775` chip-ID collision has bricked a CPU fan header in the wild. If both are loaded, the **System State** page shows a critical *Driver module collision* condition; deactivate the active profile at once (the tray's **Stop profile control** — the GUI has no deactivate button) and run no fan tests until you have rebooted and it is gone. That stops your curve, but not every write: the daemon still restores each header's original setting once, and only removing the wrong driver (blacklist it, then reboot) stops writes to the chip. Only install a driver the readiness report or the compatibility matrix recommends for your identified chip.
 
@@ -90,7 +91,17 @@ yay -S nct6687d-dkms-git
 
 Both are `-git` packages: every install/reinstall builds the **current upstream snapshot**. That matters — many historical workarounds are already fixed upstream (for the it87 driver: MMIO on by default since the 2026-03 builds, ACPI-conflict sidestepping). The version number shown on the AUR page is stale `-git` metadata; what installs is upstream HEAD at build time. If you installed the driver months ago and something misbehaves, **reinstalling the package is the first remediation, not the last** — but read the next section first if you have a Gigabyte board.
 
-With the `nct6687d` driver, also blacklist the in-kernel `nct6683` (`echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/nct6683_blacklist.conf`, then reboot). Both drivers can bind the same chip, which garbles readings and makes PWM writes fail. The in-kernel one also names its device `nct6687` and publishes it read-only.
+With the `nct6687d` driver, two more things before Step 4:
+
+```bash
+# Blacklist the in-kernel nct6683, and unload it if it is already bound
+echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/nct6683_blacklist.conf
+sudo modprobe -r nct6683
+# Load nct6687 at every boot: the daemon package's modules-load file does not list it
+echo nct6687 | sudo tee /etc/modules-load.d/nct6687.conf
+```
+
+Both drivers can bind the same chip, which garbles readings and makes PWM writes fail, and the in-kernel one also names its device `nct6687` and publishes it read-only. The blacklist keeps it from loading automatically from the next boot; the `modprobe -r` removes it now (if that fails because the module is in use, reboot instead, then skip Step 4's `modprobe`). Without the modules-load file, `nct6687` loads only when you load it by hand, so the fans vanish at the first reboot.
 
 ### it87 v2.0 renames your chips
 
@@ -133,13 +144,13 @@ sensors
 
 If `modprobe` fails with *Key was rejected by service* (or a lockdown "unsigned module" error), Secure Boot is blocking the unsigned module — see [Secure Boot and DKMS modules](#secure-boot-and-dkms-modules) below.
 
-Boot-time loading is already handled for you: the `control-ofc-daemon` package ships `/etc/modules-load.d/control-ofc.conf`, which loads the common Super-I/O modules at boot.
+Boot-time loading: the `control-ofc-daemon` package ships `/etc/modules-load.d/control-ofc.conf`, which loads `nct6775`, `it87`, `w83627ehf` and `drivetemp` at boot — so `it87` is handled. `nct6687` is not in it: the `/etc/modules-load.d/nct6687.conf` from Step 3 is what loads it.
 
 Then verify end-to-end in the GUI:
 
 1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click in the global footer page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
-2. Click **Rescan Hardware** in the global footer, then open **System State** — the chips table should show your chip as *loaded* and the header count should match what the board physically has.
-3. Run **Test PWM Control** on a *non-critical chassis fan* header (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
+2. Click **Rescan Hardware** in the global footer, then open **System State** — the **Hardware Registry** should show your chip as *loaded* and the header count should match what the board physically has.
+3. On the **Hardware** page, press **Test Control** on a *non-critical chassis fan* header's card (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 4. If the test reports the BIOS reverting control, go to Step 5.
 
 ## Secure Boot and DKMS modules
@@ -199,7 +210,7 @@ Most users on current driver builds need **none** of these. The exceptions, all 
 >
 > **Never load `nct6687` with `force=1` on a board whose chip is an NCT679x** (MSI AM4 300/400-series and the original X570 boards). Since [nct6687d PR #174](https://github.com/Fred78290/nct6687d/pull/174), `force=1` attaches to any Nuvoton chip ID from 0xD000 to 0xDFFF. That reopens the chip-ID collision that has bricked a CPU fan header.
 
-Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a dual-chip Gigabyte board — it can wedge the Super-I/O bridge so the secondary chip vanishes, and a reboot may not bring it back — power down at the wall, because the bridge keeps standby power. The recovery is in [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
+Two warnings: never use the it87 `force_id` parameter outside testing (upstream: *"should only be used for testing"*), and never run `sensors-detect` after boot on a Gigabyte board — it can wedge the Super-I/O bridge so a second chip vanishes (the package's guard cannot stop it), and a reboot may not bring it back — power down at the wall, because the bridge keeps standby power. The recovery is in [Hardware Troubleshooting](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up).
 
 There is also nothing to gain by running it on these boards. As of 2026-08-26 `sensors-detect` has **no entry for device IDs 0x8688, 0x8689, 0x8696 or 0x8698**, so it cannot identify an IT8688E, IT8689E, IT8696E or IT8698E — the primary chip on essentially every modern Gigabyte board — and it has no NCT6686D entry either. On exactly the boards where running it can do harm, it has nothing useful to tell you.
 
@@ -214,25 +225,27 @@ sudo modprobe -r it87          # or: nct6687
 # 2. Remove the package (DKMS uninstalls the module from all kernels)
 sudo pacman -R it87-dkms-git   # or: nct6687d-dkms-git
 
-# 3. Remove any module-parameter files you created
-sudo rm -f /etc/modprobe.d/it87.conf /etc/modprobe.d/nct6687.conf
+# 3. Remove any module-parameter, blacklist and load files you created
+sudo rm -f /etc/modprobe.d/it87.conf /etc/modprobe.d/nct6687.conf \
+  /etc/modprobe.d/nct6683_blacklist.conf /etc/modules-load.d/nct6687.conf \
+  /etc/modprobe.d/it87-debug.conf
 
 # 4. Reboot to return to the clean pre-driver state
 sudo systemctl reboot
 ```
 
-BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its default profile). If you pinned `it87-dkms-git` to a commit, remove it from `IgnorePkg` too. If you use snapshots (e.g. `snapper` / Timeshift on CachyOS), taking one before Step 3 gives you a one-command rollback as well.
+If you created `/etc/modprobe.d/control-ofc-superio-local.conf` while [recovering a missing chip](hardware-troubleshooting.md#some-of-my-fan-headers-are-missing--only-5-of-8-show-up), leave it unless you are sure the package's guard covers your board (`sudo journalctl -b -t control-ofc-superio-guard` shows a line per module it declined): removing it lets `nct6775` and `w83627ehf` probe again. BIOS changes are rolled back in BIOS setup (restore Smart Fan / Q-Fan to its default profile). If you pinned `it87-dkms-git` to a commit, remove it from `IgnorePkg` too. If you use snapshots (e.g. `snapper` / Timeshift on CachyOS), taking one before Step 3 gives you a one-command rollback as well.
 
 ## Staying current
 
 - **Kernel updates:** DKMS rebuilds the module automatically when a new kernel + matching headers are installed. If fans disappear right after a kernel update, the usual cause is missing/mismatched headers — re-check Step 2.
-- **Driver updates:** `-git` AUR packages only pick up upstream fixes when *reinstalled* (`yay -S it87-dkms-git`). Do this before troubleshooting any fan-control regression. (If a current build *fails to compile*, see upstream [issue #108](https://github.com/frankcrawford/it87/issues/108) for a known `-Werror=unused-function` toolchain failure.)
+- **Driver updates:** `-git` AUR packages only pick up upstream fixes when *reinstalled* (`yay -S it87-dkms-git`). Do this before troubleshooting any fan-control regression — except `it87-dkms-git` on a Gigabyte board: a build from 2026-09-09 on renames your chips and changes every fan header's id, so read [it87 v2.0 renames your chips](#it87-v20-renames-your-chips) and stay on the pinned commit until Control-OFC recognises the new names. (If a current build *fails to compile*, see upstream [issue #108](https://github.com/frankcrawford/it87/issues/108) for a known `-Werror=unused-function` toolchain failure.)
 
 ## AMD GPU fan control prerequisite (RDNA3+)
 
 The rest of this page is about motherboard headers; AMD GPU fan control has exactly one prerequisite of its own. RDNA3 and newer cards (RX 7000 / RX 9000 series) only accept fan-curve writes through the PMFW interface, which the kernel locks behind an *overdrive* feature bit. Pre-RDNA3 cards (RX 6000 and older) need none of this.
 
-Check first — the readiness report's **GPU diagnostics** row (on the **System State** page) says whether the bit is set, or from a terminal:
+Check first — the GPU row of the **Safety & GPU Limits** card (on the **System State** page) says whether the bit is set, or from a terminal:
 
 ```bash
 cat /sys/module/amdgpu/parameters/ppfeaturemask
@@ -260,7 +273,7 @@ Reboot, confirm the parameter took effect with `cat /proc/cmdline`, then run **T
 ## Where to go next
 
 - [Setup Checklist](setup-checklist.md) — the ordered end-to-end setup path this page slots into
-- [Hardware Troubleshooting](hardware-troubleshooting.md) — readiness report, dual-chip warning, Test PWM Control results
+- [Hardware Troubleshooting](hardware-troubleshooting.md) — the System State health report, dual-chip warning, fan-test results
 - [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) — full chip/driver matrix with sources
 - [AMD Motherboard Fan Control Guide](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) / [Intel Guide](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) — vendor-by-vendor depth
 

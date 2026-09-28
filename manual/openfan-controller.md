@@ -51,7 +51,7 @@ The daemon needs read/write access to the serial port, and the package already h
 
 Two cases need a manual step:
 
-- **Your controller appears as something other than `/dev/ttyACM*` or `/dev/ttyUSB*`** (a `/dev/serial/by-id/` link to one of those is fine): the service is not allowed to open it. Add a systemd drop-in — `sudo systemctl edit control-ofc-daemon` — with a `DeviceAllow=` line for that device class, for example `DeviceAllow=char-ttyS rw`.
+- **Your controller appears as something other than `/dev/ttyACM*` or `/dev/ttyUSB*`** (a `/dev/serial/by-id/` link to one of those is fine): the service is not allowed to open it. Add a systemd drop-in: run `sudo systemctl edit control-ofc-daemon` and enter a `[Service]` line followed by a `DeviceAllow=` line for that device class, for example `DeviceAllow=char-ttyS rw`. Save, then `sudo systemctl restart control-ofc-daemon` — the running daemon keeps its old device rules until it restarts.
 - **You want a specific group or mode on the device node**: the daemon repo ships an optional udev rules example (`99-control-ofc.rules`) you can copy and fill in with your device's USB vendor / product id. This is optional convenience, not a requirement. For a fixed path, use the `/dev/serial/by-id/` link above rather than a custom udev symlink: the daemon refuses a name such as `/dev/control-ofc-controller`.
 
 ## Identifying which fan is which

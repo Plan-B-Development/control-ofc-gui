@@ -50,8 +50,8 @@ QT_QPA_PLATFORM=offscreen python -m pytest --cov --cov-branch --cov-report=term-
 
 ### Headless / no display
 
-Tests construct real Qt widgets, so `QT_QPA_PLATFORM=offscreen` is already part of
-every command above — set it whether or not you have a display. If you see Qt
+Tests construct real Qt widgets, so `QT_QPA_PLATFORM=offscreen` is part of every test
+command in this file — set it whether or not you have a display. If you see Qt
 platform-plugin errors, that variable is what fixes them.
 
 ## Running
@@ -71,13 +71,13 @@ control-ofc-gui --socket /tmp/control-ofc.sock
 
 ```bash
 # Full suite — see CHANGELOG.md for the current passing count
-pytest
+QT_QPA_PLATFORM=offscreen python -m pytest
 
 # Specific file
-pytest tests/test_profile_service.py -v
+QT_QPA_PLATFORM=offscreen python -m pytest tests/test_profile_service.py -v
 
 # With coverage
-pytest --cov --cov-branch --cov-report=term-missing
+QT_QPA_PLATFORM=offscreen python -m pytest --cov --cov-branch --cov-report=term-missing
 ```
 
 Tests use `pytest-qt` for widget testing. All tests must be deterministic — no real hardware, no real network calls, no flaky timing.

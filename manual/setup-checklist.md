@@ -58,18 +58,18 @@ Launch the GUI and check:
 - **Temperatures visible** on the Dashboard and on the **Overview** page? Continue to Step 3.
 - **Missing or fewer than expected** (no CPU temperature, no motherboard temperatures, no drive temperatures)? → [Sensors missing or fewer than expected](hardware-troubleshooting.md#sensors-missing-or-fewer-than-expected), then come back here.
 
-## Step 3 — Run the Hardware Readiness check
+## Step 3 — Read the health report
 
-Open the **System State** page (the report fetches automatically the first time; **Rescan Hardware**, in the global footer, re-runs it) and read the **summary line** — chip count, writable header count, and any issues. [What each section of the report means](hardware-troubleshooting.md#what-the-hardware-readiness-report-shows).
+Open the **System State** page (the daemon's hardware snapshot is fetched in the background at startup; **Rescan Hardware**, in the global footer, re-runs it) and read the **System Health Overview** — how many PWM headers were found and how many are writable, and a card for each issue. [What each section of the page means](hardware-troubleshooting.md#what-the-system-state-page-shows). The **Hardware** page's **Hardware Readiness Checklist** gives the daemon's own go/no-go answer beside it.
 
 ## Step 4 — Branch: what your hardware needs
 
-| The readiness report says / you have | Meaning | Go to |
+| The health report says / you have | Meaning | Go to |
 |---|---|---|
 | Writable headers > 0, no issues | The mainline driver already works | Step 5 |
-| A chips-table row says **"not loaded — install …"** | Your board needs an out-of-tree DKMS driver (most 2022+ Gigabyte / MSI, some ASRock) | [Driver Setup](driver-setup.md) |
+| A **Hardware Registry** row says **"not loaded — install …"** | Your board needs an out-of-tree DKMS driver (most 2022+ Gigabyte / MSI, some ASRock) | [Driver Setup](driver-setup.md) |
 | **BIOS interference**, or Test PWM Control says control was reverted | Firmware Smart Fan keeps reclaiming the headers | [Driver Setup — Step 5 (BIOS)](driver-setup.md#step-5--bios-settings-the-half-people-skip); vendor depth: [AMD boards](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) / [Intel boards](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) |
-| AMD RDNA3+ dGPU (RX 7000 / 9000) and GPU diagnostics flags `ppfeaturemask` | GPU fan-curve writes need a one-time kernel parameter | [Driver Setup — AMD GPU prerequisite](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
+| AMD RDNA3+ dGPU (RX 7000 / 9000) and the **Safety & GPU Limits** card flags `ppfeaturemask` | GPU fan-curve writes need a one-time kernel parameter | [Driver Setup — AMD GPU prerequisite](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) |
 | OpenFan Controller | **Nothing to do** — the daemon auto-detects it on `/dev/ttyACM*` / `/dev/ttyUSB*`, and the service ships with serial access | [OpenFan Controller](openfan-controller.md) → Step 5 |
 | Intel Arc dGPU | Monitor-only **by design** (firmware-managed fan; the kernel exposes no write interface) | [Why](hardware-troubleshooting.md#intel-arc-gpus-are-monitor-only) |
 | NVIDIA dGPU | Monitor-only (the writable `nouveau` `pwm1` is excluded for safety; the NVML path is telemetry-only and off by default) | [Why](hardware-troubleshooting.md#nvidia-gpus-are-monitor-only) |
@@ -96,15 +96,15 @@ Also worth knowing:
 
 ## Step 6 — Verify control end-to-end
 
-On the **System State** page:
-
-1. Run **Test PWM Control** on a **non-critical chassis fan** header (not CPU or pump). *"PWM control is working correctly"* is the finish line; every other verdict comes with a tailored next step — see [the result table](hardware-troubleshooting.md#test-pwm-control).
-2. If you have an AMD GPU with a write path, run **Test GPU Fan Control** (daemon ≥ 1.11.0) — see [its result table](hardware-troubleshooting.md#test-gpu-fan-control).
+1. On the **Hardware** page, under **Cooling Hardware**, press **Test Control** on a **non-critical chassis fan** header (not CPU or pump). *"PWM control is working correctly"* is the finish line; every other verdict comes with a tailored next step — see [the result table](hardware-troubleshooting.md#test-pwm-control). To test several headers in one run, use **PWM Test Report…** under **Hardware Diagnostics** on the same page.
+2. If you have an AMD GPU with a write path, run **Test GPU Fan Control** (daemon ≥ 1.11.0) from **Advanced actions** on the **System State** page — see [its result table](hardware-troubleshooting.md#test-gpu-fan-control).
 
 ## Step 7 — Create your first profile
 
 1. Run the [Fan Wizard](fan-wizard.md) to identify and label each fan — it changes one fan at a time so you can match headers to physical fans. Ordinary fans are stopped briefly; a pump has its speed shifted instead, never stopped.
 2. On [Controls](controls.md), create fan roles and assign curves. Concepts: [Profiles and Curves](profiles-and-curves.md).
+3. Click **Save** on the Controls page. Nothing you edit reaches the daemon until you do.
+4. Pick the profile in the selector (page header or sidebar) and click **Apply**. The daemon then runs it — and keeps running it after you close the GUI, and after a reboot — until you apply another. Until you apply a profile, no curve controls any fan.
 
 ## When to redo what
 

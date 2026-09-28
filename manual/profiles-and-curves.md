@@ -86,11 +86,13 @@ Each fan role carries a set of tuning parameters that the daemon applies to the 
 
 The **Minimum** floor is chosen automatically from the role inferred for the fan group, so chassis and CPU/pump fans don't stall, while GPU fans are free to idle at 0%:
 
-- **30%** for CPU / pump-labelled hwmon members, and for a member whose header you assigned the **pump** role. The **Min** badge and the Dashboard fan cards show that 30% as soon as you assign the role, even for a fan you added to the group before. The manual slider and the curve editor still go down to the group's own minimum. The daemon raises anything lower to 30%.
+- **30%** for CPU / pump-labelled hwmon members, for every fan channel on a liquid cooler's own controller (an NZXT Kraken's fan channel, for example — it cools the loop the pump serves), and for a member whose header you assigned the **pump** role. The **Min** badge and the Dashboard fan cards show that 30% as soon as you assign the role, even for a fan you added to the group before. The manual slider and the curve editor still go down to the group's own minimum. The daemon raises anything lower to 30%.
 - **20%** for chassis / OpenFan members
 - **0%** for GPU members — and in a *mixed* group, the GPU member idles to its own 0% floor in the same cycle the chassis/CPU members hold their floor (the card's own fan minimum — board-specific, often around 15% — still decides how slowly the fan can actually turn)
 
 These per-role floors are GUI-owned policy baked into the profile. The daemon additionally enforces the **pump/CPU 30% floor** as a hard backstop: it rejects a profile whose pump/CPU control declares a `minimum_pct` below 30% at validate time, and re-applies the 30% floor on every evaluation tick regardless of the declared value. The 20% chassis / 0% GPU floors remain GUI policy — the daemon does not enforce those.
+
+A profile saved before one of its fans earned the 30% floor — say, a cooler an older version did not recognise — is **healed when it loads**: a pump/CPU control below 30% is raised to 30%, so the daemon does not refuse it when you apply it. Only the 30% floor is healed; a chassis control you deliberately set below 20% keeps your value.
 
 ## Curves
 
@@ -162,7 +164,7 @@ Graph, Stepped, Linear, and Trigger curves are each bound to one temperature sen
 | Case fans | CPU temperature (since CPU is usually the hottest component) |
 | CPU cooler | CPU temperature |
 | GPU fans | GPU temperature |
-| Radiator fans | CPU or GPU temperature, depending on what the radiator cools |
+| Radiator fans | The **coolant** temperature where your cooler reports one — the radiator's job is to cool the loop. Without a coolant sensor, the temperature of what the loop cools (CPU, or GPU for a GPU loop). A curve drawn for coolant is too aggressive on a CPU sensor, which runs 20–30 °C hotter; see [Configuring an AIO](controls.md#configuring-an-aio--liquid-cooler) |
 
 ## The Control Loop
 
@@ -172,18 +174,50 @@ The **daemon** runs the control loop every second — the GUI never writes fan s
 2. For each fan role in the active profile:
    - If mode is Manual: use the fixed output percentage
    - If mode is Curve: look up the curve, read the bound sensor's temperature, interpolate the output
-3. Apply the **hysteresis deadband** (2 degrees C): when temperature is falling, hold the current PWM until the temperature drops 2 degrees below the last transition point (prevents fan oscillation)
-4. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW), **coalescing redundant writes**: for hwmon it skips the write when the new PWM is byte-identical to the last commanded value, and for AMD GPU PMFW it skips changes smaller than 5% (to avoid SMU firmware churn). This coalescing is entirely daemon-internal — the GUI itself never writes PWM.
+3. Apply the **hysteresis deadband** (2 degrees C): when temperature is falling, hold the current PWM until the temperature drops 2 degrees below the last transition point (prevents fan oscillation). A hold never lasts more than 30 seconds in a row: after that the curve is re-read at the current temperature for one tick, so a temperature that settles just inside the band cannot pin the fans at their old speed
+4. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW), **coalescing redundant writes**: for OpenFan and hwmon it skips the write when the new PWM is identical to the last commanded value, and for AMD GPU PMFW it skips changes smaller than 5% (to avoid SMU firmware churn). This coalescing is entirely daemon-internal — the GUI itself never writes PWM
+5. For a motherboard header whose write was skipped, **check the speed held**: the daemon reads the header back, and if something else — usually the BIOS's own fan control — has moved it more than 2 points, it writes the curve's value again. After 3 corrections that do not hold it stops fighting and reports the fan on the **System State** page as *"Fan duty is not holding"* (see [Diagnostics](diagnostics.md))
 
 ## The Daemon Drives the Fans
 
-Once you **Activate** a profile, the daemon owns fan control completely:
+Once you **Apply** a profile, the daemon owns fan control completely:
 
 - The daemon's profile engine evaluates the active profile and writes every fan backend itself
 - Your fans stay controlled whether the GUI is open, closed, or has crashed — there is nothing to keep running
 - The GUI's job is to author and validate profiles, upload and activate them, poll the daemon once a second, and show you what is happening
 
-This is why **Activate** is the moment that matters: it hands your profile to the daemon, which then keeps your fans managed headlessly.
+This is why **Apply** is the moment that matters: it hands your profile to the daemon, which then keeps your fans managed headlessly.
+
+### Fans your profile does not control
+
+Apart from a fan test you start yourself — the Fan Wizard, **Test Control**, the PWM Test
+Report — the daemon writes only the fans the active profile names. Everything else stays with
+whatever drove it before: a motherboard header with the BIOS's own fan curve, a GPU fan
+with its firmware, an OpenFan channel at the last speed it was set to (the controller has
+no curve of its own). With no profile active, the daemon writes no fan. The one
+exception is a thermal emergency, which takes every fan to full speed and gives each one
+back when it ends — see
+["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile).
+
+**When you switch profiles**, a motherboard header the new profile does not name is given
+back to exactly what it was doing before the daemon first took it — usually the BIOS curve
+— within a second. An OpenFan channel the new profile does not name keeps its last speed.
+
+**When the daemon stops** — a normal stop, a crash, or an uninstall — each motherboard
+header goes back to what it was doing before, and each AMD GPU the daemon drove goes back
+to its firmware curve. Two kinds of fan have nothing to go back to: OpenFan channels and
+motherboard headers with no automatic mode. Those are left at their last speed or the
+daemon's *exit minimum* (50 % unless you changed it in **Settings**), whichever is higher,
+and at full speed if the daemon had lost track of their speed. An NZXT Kraken runs at
+100 % once the daemon stops, because the driver has no way to return the
+cooler to its own behaviour. On a Dell machine whose fans share one BIOS switch, the BIOS
+takes every fan back.
+
+**After sleep and resume**, the firmware often takes the motherboard headers back while the
+machine sleeps. The daemon notices the resume and puts each header your profile controls
+back under its curve on its next tick, within a second or two; you do not need to
+re-apply the profile. An OpenFan channel's speed is treated as unknown until its curve
+writes it again, because the controller may have come back at its power-on default.
 
 > **Demo mode is the one exception.** With no daemon to talk to, the GUI animates fans with its own built-in evaluator so you can explore curves and profiles. Nothing is written to real hardware.
 

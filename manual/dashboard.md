@@ -7,7 +7,7 @@ The Dashboard is the landing page. It answers the most important questions at a 
 - What are the sensors reading?
 - Is the system healthy?
 
-![Dashboard](../screenshots/auto/01_dashboard.png)
+![Dashboard](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/01_dashboard.png)
 
 The page leads with the **telemetry chart** — the one view nothing else duplicates —
 with a compact **card per fan control** beneath it and the **Thermal Sensors** panel
@@ -152,7 +152,8 @@ OpenFan channels arrive with no name of their own, so they start out as
 **OpenFan CH0**, **OpenFan CH1** and so on. To give one a name that means
 something — "Front Intake", "Radiator Push" — **double-click it** in the Sensors
 panel (or select it and press **F2**, or right-click it and choose
-**Rename fan…**). The name applies everywhere at once: fan cards, the Overview
+**Rename fan…**). A fan card that drives a single fan offers the same **Rename fan…**
+when you right-click it. The name applies everywhere at once: fan cards, the Overview
 table, curve and fan-role pickers.
 
 To go back to the default name, clear the text and press Enter, or right-click and
@@ -164,7 +165,7 @@ Two things worth knowing:
 - The **(AIO)** tag is not part of the name. You do not need to type it and you
   cannot remove it by renaming — it marks a fan the daemon reports as belonging to
   a liquid cooler.
-- Naming a fan also keeps it on screen when **Hide unused fan headers** is on, so
+- Naming a fan also keeps it on screen when **Auto-hide unused fan headers** (Settings) is on, so
   a header that is idle right now stays visible once you have named it. Clearing
   the name lets it drop out of the list again.
 
@@ -197,21 +198,38 @@ profile engine then evaluates its curves every second and drives the fans — so
 fans stay controlled whether the GUI is open or closed. See
 [The Daemon Drives the Fans](profiles-and-curves.md#the-daemon-drives-the-fans).
 
+If the profile cannot be activated — the daemon refuses it, or cannot be reached — a banner
+across the top of the window says why: *Could not activate "<profile>": <reason>*, or, for a
+profile that controls only some of a Dell machine's fans, which fans to add. The previous
+profile keeps running. The banner goes away on your next successful **Apply**.
+
 ## Thermal Safety States
 
-If the daemon engages its thermal failsafe (a CPU sensor at or above the emergency limit, or no CPU sensor
-found), the daemon forces fans itself and holds them until it reports normal again —
-every OpenFan and writable hwmon fan in an emergency, and only the fans your profile
-controls while it recovers or has no CPU sensor. This shows in the footer's **thermal state** chip (click it
-for the detail) and as a banner across the top of the Dashboard, and raises a warning
-(visible in the footer health rollup and in the Logs page's alert bar). See
+The daemon has two thermal safety states, and it drives both itself:
+
+- **Emergency** — the hottest CPU sensor reached the emergency limit. Every OpenFan fan and
+  every writable fan header runs at full speed, including fans no profile controls. The
+  daemon holds it until a *current* CPU reading is back at or below 80 °C — a CPU sensor that
+  stops updating or disappears keeps it at full speed — then hands control straight back
+  to your profile.
+- **No CPU sensor** — no current CPU temperature for five seconds, with no emergency in
+  force. The fans your active profile controls get at least 40 %. Fans no profile controls
+  are not touched, and with no profile active nothing is forced.
+
+Both are minimums, not replacements: a fan your profile is already running faster keeps its
+speed. GPU fans are never forced — the GPU protects itself — and keep following their
+curves. The state shows in the footer's **thermal state** chip (click it for the detail),
+as a banner across the top of the Dashboard, and as a marker on the chart. It is not
+counted as a warning and does not appear in the Logs page's alert bar. See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
 
 ## Disconnected / No Hardware States
 
 If the daemon is not reachable, the Dashboard shows a disconnected overlay with a
-reconnection message. If the daemon is connected but no controllable hardware is
+reconnection message. If the reason is that the `control-ofc-daemon` service is installed
+but not enabled, the overlay says so and shows the command that enables and starts it,
+with a **Copy command** button; run it in a terminal, then re-open the GUI. If the daemon is connected but no controllable hardware is
 detected, it shows a "No hardware" message with a button that opens the **Hardware**
 page's readiness report, which names the driver or package your board needs.
 

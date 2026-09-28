@@ -226,6 +226,41 @@ def test_a_render_refreshes_an_open_report_with_the_same_flag(qtbot):
     _flush(page)
 
 
+def test_the_pop_out_is_named_for_its_own_card_not_the_hardware_checklist(qtbot):
+    """D13 (`DC-bv` (m), G169): the pop-out was titled "Hardware Readiness — Full
+    Report", the name of the Hardware page's checklist — so "the Hardware
+    Readiness report" in the manual named two surfaces.
+
+    Both sides are read off the live widgets, not literals, so the check
+    survives either card being re-worded and fails only on a real collision.
+    Presence first: it opens from the health card, so it carries that name.
+    """
+    from control_ofc.services.app_state import AppState
+    from control_ofc.services.diagnostics_service import DiagnosticsService
+    from control_ofc.ui.components.cards import SectionHeader
+    from control_ofc.ui.pages.hardware_page import HardwarePage
+
+    page, _svc = _page(qtbot, recorded="effective")
+    page._open_readiness_report()  # the call site, not the dialog class alone
+    assert page._report_dialog is not None
+    title = page._report_dialog.windowTitle().casefold()
+
+    state = AppState()
+    hardware = HardwarePage(state=state, diagnostics_service=DiagnosticsService(state))
+    qtbot.addWidget(hardware)
+    health = page.findChild(SectionHeader, "SystemState_SectionHeader_health")
+    checklist = hardware.findChild(SectionHeader, "Hardware_SectionHeader_checklist")
+    assert health is not None and checklist is not None
+
+    health_name = health.title().casefold().removesuffix(" overview")
+    checklist_name = checklist.title().casefold().removesuffix(" checklist")
+    assert health_name != health.title().casefold(), "precondition: the suffix was stripped"
+    assert checklist_name != checklist.title().casefold(), "precondition: the suffix was stripped"
+    assert health_name in title, f"the pop-out must name its card: {title!r}"
+    assert checklist_name not in title, f"the pop-out shares the checklist's name: {title!r}"
+    _flush(page)
+
+
 # ── `SSN-i`'s answer C, pinned so the rename cannot silently regress ─────────
 
 

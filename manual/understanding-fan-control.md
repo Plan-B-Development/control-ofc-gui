@@ -1,6 +1,6 @@
 # Understanding Motherboard Fan Control (hwmon)
 
-This page explains, in plain English, *how* Linux controls motherboard fans and *why* the rest of this manual keeps mentioning things like hwmon, Super I/O chips, drivers, and BIOS settings. It is background reading — you do **not** need it to get fans working. The [Setup Checklist](setup-checklist.md) and the GUI's **Hardware Readiness** report do the actual work and tell you what your specific board needs. Read this when you want to understand *why* a step is being asked of you, or when something misbehaves and you want the mental model to troubleshoot it.
+This page explains, in plain English, *how* Linux controls motherboard fans and *why* the rest of this manual keeps mentioning things like hwmon, Super I/O chips, drivers, and BIOS settings. It is background reading — you do **not** need it to get fans working. The [Setup Checklist](setup-checklist.md) and the GUI's **System State** and **Hardware** pages do the actual work and tell you what your specific board needs. Read this when you want to understand *why* a step is being asked of you, or when something misbehaves and you want the mental model to troubleshoot it.
 
 None of this applies to an [OpenFan Controller](openfan-controller.md) (a USB device with its own page) or to AMD GPU fans — it is specifically about the fan headers on your motherboard.
 
@@ -53,7 +53,7 @@ Super I/O chips sit on an old-style bus with no automatic "plug-and-play" announ
 
 Mainline Linux already includes drivers for many chips (for example `nct6775` covers a lot of ASUS boards). Newer boards — most 2022-and-later Gigabyte and MSI, some ASRock — use chips whose driver is **out-of-tree**: not shipped with the kernel, installed separately from the AUR and rebuilt for your kernel by **DKMS**.
 
-**What this means:** "my motherboard fans don't show up" usually means "the driver for my Super I/O chip isn't loaded yet", not "my board is unsupported". The GUI's **Hardware Readiness** report identifies your chip and names the exact package to install.
+**What this means:** "my motherboard fans don't show up" usually means "the driver for my Super I/O chip isn't loaded yet", not "my board is unsupported". The GUI's **Hardware** page identifies your chip and names the exact package to install.
 
 > ### Before you change anything
 >
@@ -82,17 +82,18 @@ These come up only on some systems, and the [Driver Setup](driver-setup.md) page
 - **Secure Boot**, when enabled, refuses to load unsigned out-of-tree modules — the driver builds but is rejected at load time. You either disable Secure Boot or sign the module.
 - **Boot parameters** (the kernel command line) are needed in one specific case: AMD **GPU** fan control on RDNA3+ cards needs `amdgpu.ppfeaturemask=0xffffffff`. Motherboard fan control needs no boot parameter.
 
-**What this means:** none of these are required for most boards. When one *is* required, the Hardware Readiness report says so, and Driver Setup has the exact steps — including how to undo them.
+**What this means:** none of these are required for most boards. When one *is* required, the **System State** page says so, and Driver Setup has the exact steps — including how to undo them.
 
 ## How Control-OFC removes the guesswork
 
 You do not have to discover any of the above by hand. By design, the **control-ofc-daemon** owns all hardware access — it reads your hwmon chips, evaluates fan curves, and is the **only** component that writes PWM. The **control-ofc-gui** is a client: it shows you what the daemon sees and lets you author profiles and run tests. The GUI never writes to a fan directly.
 
-Three GUI features turn the concepts above into concrete answers, all on the **System State** page:
+Four GUI features turn the concepts above into concrete answers:
 
-- **Hardware Readiness** — names your board and Super I/O chip, says which driver each chip needs and whether it is loaded, counts writable headers, and flags BIOS interference and ACPI conflicts. Start here.
-- **Test PWM Control** — writes a known value to a header you choose, waits a few seconds, and reports what actually happened: control works, the BIOS reverted it, or the value was ignored. This is how you confirm a header is genuinely controllable instead of guessing.
-- **Rescan Hardware** — re-checks the hardware after you load a driver or change a BIOS setting.
+- **The System State page** — names your board and Super I/O chips, says which driver each chip needs and whether it is loaded, counts writable headers, and flags BIOS interference and ACPI conflicts. Start here.
+- **The Hardware page's Hardware Readiness Checklist** — the daemon's own go/no-go answer to "is this machine set up for fan control?", with the next step for anything that is not ready.
+- **Test Control**, on each header's card on the **Hardware** page — writes a known value to that header, waits a few seconds, and reports what actually happened: control works, the BIOS reverted it, or the value was ignored. This is how you confirm a header is genuinely controllable instead of guessing.
+- **Rescan Hardware**, in the footer — re-checks the hardware after you load a driver or change a BIOS setting.
 
 [Hardware Troubleshooting](hardware-troubleshooting.md) explains how to read each part of these reports.
 
@@ -100,7 +101,7 @@ Three GUI features turn the concepts above into concrete answers, all on the **S
 
 - [Setup Checklist](setup-checklist.md) — the ordered path that puts all of this into practice
 - [Driver Setup](driver-setup.md) — copy-paste driver install, Secure Boot, BIOS, and rollback
-- [Hardware Troubleshooting](hardware-troubleshooting.md) — reading the Hardware Readiness report and Test PWM Control results
+- [Hardware Troubleshooting](hardware-troubleshooting.md) — reading the System State page and the fan-test results
 - [Hardware Compatibility](../docs/19_Hardware_Compatibility.md) — full chip and driver matrix
 - [Sensor Interpretation Guide](../docs/20_Sensor_Interpretation_Guide.md) — what each temperature sensor means
 - [AMD](../docs/21_AMD_Motherboard_Fan_Control_Guide.md) / [Intel](../docs/23_Intel_Motherboard_Fan_Control_Guide.md) fan-control guides — vendor-by-vendor depth

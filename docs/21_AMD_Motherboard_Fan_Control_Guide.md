@@ -66,13 +66,19 @@ fan control path, which is Super I/O / EC based.
 
 ### Base packages
 
-Install at minimum:
+Control-OFC needs nothing beyond its own packages. `lm_sensors` is an optional extra
+for checking readings from a terminal:
 
 ```bash
 sudo pacman -S lm_sensors
 ```
 
-This provides `sensors`, `sensors-detect`, `pwmconfig`, and `fancontrol`.
+It provides `sensors`, `sensors-detect`, `pwmconfig`, and `fancontrol`. The last two
+are a fan controller of their own: do not run `pwmconfig`, or enable
+`fancontrol.service`, while Control-OFC drives your fans. Two programs writing the same
+header fight over it, and the daemon reports that fan's duty as not holding. On a
+Gigabyte board, do not run `sensors-detect` either — see *A secondary Super-I/O that
+will not enumerate* below.
 
 References:
 - https://archlinux.org/packages/extra/x86_64/lm_sensors/
@@ -108,6 +114,13 @@ References:
 - https://archlinux.org/packages/extra/any/dkms/
 - https://archlinux.org/packages/core/x86_64/linux-headers/
 
+**After installing or updating the driver**, the copy already loaded keeps running
+until you reboot or reload it (`sudo modprobe -r it87 && sudo modprobe it87`, or the
+same for `nct6687`). Then restart the daemon
+(`sudo systemctl restart control-ofc-daemon`): it takes control of a header only if the
+header was there when it started, so a driver loaded or reloaded while it runs shows
+its fans but cannot control them until the restart.
+
 > **CachyOS-LTS / non-standard kernel paths:** the it87 DKMS config has a
 > known module-install-path quirk on CachyOS-LTS and openSUSE Tumbleweed —
 > the module builds but lands in a directory the kernel does not search
@@ -123,7 +136,10 @@ References:
 > (e.g. `mmio=on`, the 0xd450 collision) are already fixed upstream, so
 > updating the driver is the first remediation, not the last. Note the
 > AUR page's displayed version string is stale `-git` metadata; what
-> installs is the current upstream HEAD at build time.
+> installs is the current upstream HEAD at build time. **Except on a
+> Gigabyte board:** an `it87-dkms-git` build from 2026-09-09 on (it87
+> v2.0) renames the chips and changes every fan header's id — see doc 19
+> and the manual's Driver Setup page before rebuilding.
 
 ### Common out-of-tree drivers
 
@@ -188,6 +204,11 @@ included.
   echo 'blacklist nct6687' | sudo tee /etc/modprobe.d/blacklist-nct6687.conf
   sudo update-initramfs -u  # Debian/Ubuntu — not needed on Arch
   ```
+
+  Then reboot: `blacklist` only stops the module being loaded automatically, and does
+  nothing to a copy already loaded. Nor does it stop an explicit load — a line naming
+  `nct6687` in a file under `/etc/modules-load.d/`, or a `modprobe nct6687` — so
+  remove any such line too (`grep -r nct6687 /etc/modules-load.d/`).
 
 - AM4 400-series MSI boards do not carry an NCT6687D at all; MSI moved to it
   with B550.
@@ -274,8 +295,10 @@ sudo tee /etc/modprobe.d/it87.conf <<<'options it87 mmio=on'
 
 The historic note that the secondary IT8792E was read-only on some AM4
 Gigabyte boards still applies; verify per-header writability via the
-PWM Verify action on the System State page before assigning fans
-to it in a profile.
+**Test Control** button on its header card on the Hardware page before assigning fans
+to it in a profile. Testing cannot find a secondary chip that did not enumerate at all
+— it has no headers to test. The System State page's dual-chip warning is what tells
+you it is missing.
 
 ### 4. ASRock AM4 — generally smooth
 
@@ -352,8 +375,8 @@ X570-generation boards can also lose **IT8792E fan control after
 suspend/resume** (frankcrawford/it87 issue #99). The reporter found it working
 after rebuilding from master in September 2026, and the author of PR #128
 credits that patch's sleep/suspend changes, but the issue is still open. The
-daemon re-asserts `pwm_enable` after resume; if headers stay stuck, a reboot is
-the reliable reset.
+daemon puts every header it controls back into manual mode by itself after a resume;
+if headers stay stuck, a reboot is the reliable reset.
 
 ### ASRock (mostly NCT6798D)
 
@@ -376,8 +399,8 @@ B550 series, PRIME X570-PRO) ship **NCT6798D** covered by mainline
 enrichment ONLY — they never provide PWM writes.
 
 If `nct6775` fails to bind because of an ACPI conflict on I/O ports
-`0x0290-0x0299`, add `acpi_enforce_resources=lax` to kernel boot
-parameters or disable "ACPI Hardware Monitor" in BIOS. Since Linux
+`0x0290-0x0299`, add the kernel parameter `acpi_enforce_resources=lax`
+(how: [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)) or disable "ACPI Hardware Monitor" in BIOS. Since Linux
 5.16 the driver can read supported ASUS boards through an ASUS WMI
 access path (`access_asuswmi`) that sidesteps the port reservation,
 often removing the need for `acpi_enforce_resources=lax` (this is a WMI
@@ -656,9 +679,15 @@ byte-identical unlock behaviour in the same function, not by measurement.
    `control-ofc-daemon` package ships
    `/usr/lib/modprobe.d/control-ofc-superio.conf`, which suppresses both
    automatically on every Gigabyte board from daemon 2.56.1 (DEC-424; 2.56.0 and
-   older cover only the boards they list). To do it by hand, use
-   `install <mod> /bin/true` — **not** `blacklist`, which the explicit `modprobe`
-   issued by systemd ignores.
+   older cover only the boards they list), and logs each module it declines:
+   `sudo journalctl -b -t control-ofc-superio-guard`. No line there means it did
+   not act. To do it by hand, create `/etc/modprobe.d/control-ofc-superio-local.conf`
+   holding `install nct6775 /bin/true` and `install w83627ehf /bin/true` — **not**
+   `blacklist`, which the explicit `modprobe` issued by systemd ignores. (The only
+   way to turn the package's guard *off* is an empty file of its own name,
+   `/etc/modprobe.d/control-ofc-superio.conf`; modprobe reads every directory's
+   files in one name order and the first `install` line for a module wins, so a
+   file of another name does not reliably override it.)
 2. **Reboot** and rescan. Upstream's first step, and enough when nothing re-arms
    the latch at boot.
 3. **Still missing: power the machine down at the wall.** On the X870E AORUS
@@ -882,8 +911,9 @@ Taichi), sometimes beside an NCT67xx chip that `nct6775` drives. The in-kernel
 `nct6683` driver supports the NCT668x part for monitoring only:
 
 - **Monitoring (read) works** — temperatures, fan RPMs, and voltages are
-  visible (some boards need `force=1`, because the driver binds only known
-  customer IDs).
+  visible (some boards need the driver option `options nct6683 force=1`, in
+  `/etc/modprobe.d/nct6683.conf`, because the driver binds only known customer IDs;
+  how: [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)).
 - **PWM is read-only** — the driver makes `pwmN` writable only on Mitac OEM
   systems and has no `pwmN_enable`. Writes are refused, not accepted and
   ignored; this section used to say the latter.
@@ -1056,15 +1086,19 @@ EAGLE AX (#128).
 The in-kernel `it87` driver may refuse to load due to ACPI I/O port
 conflicts. Two options:
 
-1. **Preferred (driver-local):** Use `ignore_resource_conflict=1` when
-   loading the module:
+1. **Preferred (driver-local):** set the driver option in a file, so it applies at
+   every boot, then reload the driver and restart the daemon:
    ```bash
-   modprobe it87 ignore_resource_conflict=1
+   echo 'options it87 ignore_resource_conflict=1' | sudo tee /etc/modprobe.d/it87.conf
+   sudo modprobe -r it87 && sudo modprobe it87
+   sudo systemctl restart control-ofc-daemon
    ```
-   This is driver-local and does not affect other kernel subsystems.
+   This is driver-local and does not affect other kernel subsystems. Typing the option
+   on a `modprobe` line alone lasts only until reboot: the daemon package loads `it87`
+   at every boot, and without the file it loads without the option.
 
-2. **Fallback (system-wide):** Add `acpi_enforce_resources=lax` to kernel
-   parameters. This is a system-wide change that affects all ACPI resource
+2. **Fallback (system-wide):** the kernel parameter `acpi_enforce_resources=lax`
+   (how: [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)). This is a system-wide change that affects all ACPI resource
    enforcement.
 
 **Warning:** Both options carry inherent risk because ACPI and the driver
@@ -1184,8 +1218,13 @@ To blacklist a conflicting module:
 
 ```bash
 echo "blacklist <module_name>" | sudo tee /etc/modprobe.d/blacklist-<module_name>.conf
-sudo depmod -a
 ```
+
+Then reboot, or unload it now with `sudo modprobe -r <module_name>` and restart the
+daemon. `blacklist` only stops automatic loading: it does not unload a copy already
+loaded, and it does not stop an explicit load, so also remove the module from any file
+under `/etc/modules-load.d/` that names it. To stop even an explicit load, use an
+`install <module_name> /bin/true` line instead.
 
 The daemon's hardware diagnostics endpoint (`GET /diagnostics/hardware`)
 reports loaded modules and can detect known conflicts.
@@ -1261,11 +1300,11 @@ limitations.
 ## Troubleshooting checklist
 
 1. **No sensors visible:**
-   - Check the System State page's readiness report first — it identifies the
-     board's chips without probing the hardware. Treat `sensors-detect` as a
-     last resort, and **never** run it after boot on a dual-chip Gigabyte board:
-     it writes the Super-I/O unlock key and can latch the bridge in front of the
-     secondary chip. It also cannot identify the IT8688E / IT8689E / IT8696E /
+   - Check the Hardware page's readiness checklist and Super-I/O section first —
+     they identify the board's chips without probing the hardware. Treat
+     `sensors-detect` as a last resort, and **never** run it after boot on a
+     Gigabyte board: it writes the Super-I/O unlock key and can latch the bridge in
+     front of a second chip. It also cannot identify the IT8688E / IT8689E / IT8696E /
      IT8698E or the NCT6686D.
    - Check if a DKMS driver is needed for your board's Super I/O chip.
    - Ensure kernel headers match your running kernel (`uname -r`).
@@ -1314,7 +1353,9 @@ limitations.
 5. **Fans behave erratically after resume from suspend:**
    - The daemon detects system resume via CLOCK_BOOTTIME vs CLOCK_MONOTONIC
      gap and signals a manual mode reset.
-   - Some boards require re-writing `pwm_enable=1` after resume.
+   - Some boards hand the headers back to the BIOS during sleep. The daemon re-writes
+     `pwm_enable=1` and the duty on its next tick after resume — nothing for you to
+     do. If a header still does not follow its curve, reboot.
 
 ---
 

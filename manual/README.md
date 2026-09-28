@@ -18,7 +18,7 @@ This manual covers every page, setting, and feature of the application.
 6. [System Health](diagnostics.md) — The Overview, System State, Hardware, and Logs pages: daemon health, sensors, fan status, hardware readiness, Super-I/O detection, and logs
 7. [Fan Wizard](fan-wizard.md) — Guided fan identification and labelling
 8. [Profiles and Curves Reference](profiles-and-curves.md) — How profiles, fan roles, and curves work together
-9. [Hardware Troubleshooting](hardware-troubleshooting.md) — Hardware Readiness, missing sensors, vendor quirks, Test PWM Control, and why some fans appear read-only
+9. [Hardware Troubleshooting](hardware-troubleshooting.md) — the System State health report, missing sensors, vendor quirks, Test PWM Control, and why some fans appear read-only
 10. [Driver Setup](driver-setup.md) — Beginner walkthrough for the out-of-tree motherboard fan drivers (DKMS), Secure Boot, the AMD GPU kernel parameter, verification, and rollback
 11. [Understanding Motherboard Fan Control (hwmon)](understanding-fan-control.md) — Plain-English primer: what hwmon, sysfs, Super I/O, and PWM are, and why drivers and BIOS settings matter
 12. [OpenFan Controller](openfan-controller.md) — The OpenFan USB fan controller: detection, serial access, stable device paths, channels, fan identification, profiles, and troubleshooting
@@ -38,4 +38,4 @@ For deeper hardware and sensor topics, see:
 
 All screenshots in this manual are captured automatically from the application running in demo mode, so they always show a reproducible setup. The `screenshots/auto/` directory holds the canonical set referenced from these pages.
 
-The screenshots are not included in the packaged copy under `/usr/share/doc/control-ofc-gui/` — view this manual [on GitHub](https://github.com/Plan-B-Development/control-ofc-gui/tree/main/manual) for the rendered images.
+The screenshots are not installed with the packaged copy under `/usr/share/doc/control-ofc-gui/`, so the pages link each image from the project's GitHub repository instead. A viewer that renders Markdown loads them from there when you are online. They show the current development version, which can differ a little from the version you have installed. The whole manual is also [on GitHub](https://github.com/Plan-B-Development/control-ofc-gui/tree/main/manual).

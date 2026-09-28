@@ -1,6 +1,6 @@
 # Settings
 
-The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. Changes are batched: edit as many cards as you like, then click **Save Changes** in the page header to persist them all at once. They are saved to `~/.config/control-ofc/app_settings.json`. Two cards are the exception and save as you change them, because their values live on the daemon: **Daemon Configuration** and **Preferred Sensors**.
+The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. The switches, choices and folder paths are batched: change as many as you like, then click **Save Changes** in the page header to persist them all at once, to `~/.config/control-ofc/app_settings.json`. Everything else acts the moment you use it, with no Save step: **Daemon Configuration** and **Preferred Sensors**, because their values live on the daemon; a name edited in **Fan Names**; and every reset, clear and restore button on the maintenance cards (see [Resets & Maintenance](#resets--maintenance)). The switches on the **Prompts & Dismissals** card are switches like any other and wait for **Save Changes**.
 
 Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and export, import and the automatic settings backup live in the **Sync & Backup** card below.
 
@@ -14,17 +14,17 @@ Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-pag
 > trapped in demo by a setting you cannot change. **Import Config** is not
 > available in demo, because it writes your real settings, profiles and themes.
 
-![Settings page](../screenshots/auto/06_settings.png)
+![Settings page](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/06_settings.png)
 
 ## General & Startup
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **Default startup page** | Dashboard | Which page the application opens to on launch, used when "Restore last selected page" is off |
-| **Restore last selected page on startup** | On | Instead of using the default, return to whichever page you were on when you last closed the app |
-| **Start in demo mode when daemon is unavailable** | Off | At startup the GUI probes the daemon; if it cannot be reached (and this is on) the GUI starts in demo mode with synthetic data. A slow-to-respond daemon is treated as present. Applies at launch only — a mid-session disconnect uses the normal reconnect path |
+| **Restore last selected page** | On | Instead of using the default, return to whichever page you were on when you last closed the app |
+| **Start in demo mode** | Off | At startup the GUI probes the daemon; if it cannot be reached (and this is on) the GUI starts in demo mode with synthetic data. A slow-to-respond daemon is treated as present. Applies at launch only — a mid-session disconnect uses the normal reconnect path |
 | **Show GPU zero-RPM warning** | On | When you add a GPU fan to a fan role, show an informational popup explaining that the GPU's zero-RPM idle mode will be temporarily disabled while the curve is controlling it |
-| **Chart default time range** | 15m | The initial time window shown on the Dashboard telemetry chart (choices: 30s, 2m, 5m, 10m, 15m, 20m, 30m, 1h, 2h) |
+| **Chart time range** | 15m | The initial time window shown on the Dashboard telemetry chart (choices: 30s, 2m, 5m, 10m, 15m, 20m, 30m, 1h, 2h) |
 
 ## Operational Behavior
 
@@ -100,7 +100,7 @@ Several cards collect the things that accumulate quietly as you use the applicat
 |---|---|
 | **Fan Names** | Every fan name in one place, including names for hardware that is no longer plugged in. Those rows are kept on purpose: otherwise a stale name could never be removed. Renaming from the Dashboard or the Overview fan table is unchanged |
 | **Sensors & Chart Series** | Hidden sensors, coolant classification overrides, custom chart colours, hidden chart series — and **Settings for missing hardware** (below) |
-| **Prompts & Dismissals** | Re-arms the AIO pump popup, dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding. Also governs the **System State** page's health surfaces: whether the *Acknowledge* and *Dismiss* buttons appear at all, a single **Restore** that brings back everything you have dismissed there — conditions, board notes, interference, the GPU rows on Safety & GPU Limits and GPU advisories — and a control to forget the recorded fan-control test result so those notes read as unverified again. There is no *Clear acknowledged*: acknowledging is for the current session only, so closing the app already clears it |
+| **Prompts & Dismissals** | A **Show AIO pump info** switch for the popup shown when a pump header joins a role, and buttons that re-arm dismissed driver advisories, the daemon profile-import offer, and the one-time fan-name and chart-series seeding. Also governs the **System State** page's health surfaces: whether the *Acknowledge* and *Dismiss* buttons appear at all, a single **Restore** that brings back everything you have dismissed there — conditions, board notes, interference, the GPU rows on Safety & GPU Limits and GPU advisories — and a control to forget the recorded fan-control test result so those notes read as unverified again. There is no *Clear acknowledged*: acknowledging is for the current session only, so closing the app already clears it |
 | **Card Layout** | Every Controls-page card size at once (resetting one card by double-clicking its grip is unchanged), and **Reset layout**, which puts every panel divider back to an even split |
 
 ### Remembered layout
@@ -174,7 +174,7 @@ older daemon it does nothing.
 
 The **Theme** page is a separate entry in the sidebar (not part of Settings). It controls the visual appearance of the entire application — typography, colour tokens, and contrast — and is the only place that writes theme changes.
 
-![Theme page](../screenshots/auto/07_theme.png)
+![Theme page](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/07_theme.png)
 
 ### Theme selection
 

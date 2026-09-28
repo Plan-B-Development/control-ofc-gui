@@ -98,7 +98,7 @@ driver — blacklist it, then reboot — stops writes to the chip.
 
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
-| Legacy IT87xx (IT8603E/IT8620E/IT8622E/IT8628E, IT8705F–IT8795E) | `it87` | Yes (per the mainline `enum chips`, verified at the **v7.2** release tag, 2026-08-16, and again at 7.3-rc4) | linux (built-in) |
+| Legacy IT87xx: IT8603E, IT8620E, IT8622E, IT8623E, IT8628E, IT8705F, IT8712F, IT8716F, IT8718F, IT8720F, IT8721F, IT8726F, IT8728F, IT8732F, IT8758E, IT8771E, IT8772E, IT8781F, IT8782F, IT8783E/F, IT8786E, IT8790E, IT8792E/IT8795E — only these; a chip in the same number range but not named here (IT8686E, IT8688E, IT8696E and the rows below) is not mainline | `it87` | Yes (per the mainline `enum chips`, verified at the **v7.2** release tag, 2026-08-16, and again at 7.3-rc4) | linux (built-in) |
 | IT8613E | `it87` | **Not yet** — queued in hwmon-next, so expected in **7.4** | `it87-dkms-git` (AUR) until then |
 | IT8625E | `it87` | **No** — no mainline submission since October 2024, when changes were requested; not in 7.3-rc4 | `it87-dkms-git` (AUR) |
 | IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — ASUS AM4 300/400-series boards (PRIME X470-PRO, ROG STRIX B450-F, X470-F/-I — [issue #27](https://github.com/frankcrawford/it87/issues/27)) and X399-era boards. **Update the driver**: [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22) removes the MMIO path for IT8665E, fixing the fan-write regression ([issue #106](https://github.com/frankcrawford/it87/issues/106), closed). `mmio=off` is the fallback for builds older than the merge |
@@ -177,8 +177,14 @@ chip gives, so this is the order for both):**
    `it87-dkms-git` (older, pre-2026-03 builds also need `options it87 mmio=on`).
 2. **Stop the trigger.** Keep `nct6775` and `w83627ehf` from loading — the
    daemon package's modprobe guard does this on every Gigabyte board from daemon
-   2.56.1 (DEC-424; 2.56.0 and older, only on the boards it listed) — and do not run
-   `sensors-detect`.
+   2.56.1 (2.56.0 and older, only on the boards it listed) — and do not run
+   `sensors-detect`, which the guard cannot stop. Check that the guard acted:
+   `sudo journalctl -b -t control-ofc-superio-guard` prints a line for each module
+   it declined this boot. No line means it did not: the board's vendor is not
+   Gigabyte, an older package is installed, or nothing asked for the module. Where
+   it has not acted, suppress the two modules with an `install … /bin/true` file of
+   your own (not `blacklist`, which an explicit `modprobe` ignores), and look for
+   them named in `/etc/modules-load.d/` and `/etc/conf.d/lm_sensors`.
 3. **Reboot**, then rescan.
 4. **Still missing: remove mains power** (PSU switch off or unplugged, about ten
    seconds), then boot. The bridge keeps standby power, so a reboot or a normal
@@ -222,15 +228,32 @@ reading `/sys/class/hwmon/*/name` or matching a board note.
 
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
-| F71882FG | `f71882fg` | Yes | linux (built-in) |
-| F718xx series | `f71882fg` | Yes | linux (built-in) |
+| F71805F, F71806F, F71872F | `f71805f` | Yes | linux (built-in) |
+| F71882FG and the rest of the F718xx series, F8000, F818xx | `f71882fg` | Yes | linux (built-in) |
+
+### Winbond
+
+| Chip Series | Kernel Driver | Mainline | Package |
+|-------------|--------------|----------|---------|
+| W83627EHF/EHG, W83627DHG, W83627UHG, W83667HG | `w83627ehf` | Yes | linux (built-in) |
+| W83627HF, W83627THF, W83637HF, W83687THF, W83697HF | `w83627hf` | Yes | linux (built-in) |
 
 ### SMSC
 
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
+| LPC47B397-NC, SCH5307-NS, SCH5317 | `smsc47b397` | Yes | linux (built-in) |
+| LPC47M10x/M11x/M13x/M14x/M15x/M19x, LPC47M292 | `smsc47m1` | Yes | linux (built-in) |
+| DME1737, SCH311x, SCH5027, SCH5127 | `dme1737` | Yes | linux (built-in) |
 | SCH5627 | `sch5627` | Yes | linux (built-in) |
 | SCH5636 | `sch5636` | Yes | linux (built-in) |
+
+### National Semiconductor
+
+| Chip Series | Kernel Driver | Mainline | Package |
+|-------------|--------------|----------|---------|
+| PC87360, PC87363, PC87364, PC87365, PC87366 | `pc87360` | Yes | linux (built-in) |
+| PC87427 | `pc87427` | Yes | linux (built-in) |
 
 ## AMD platform → typical chip mapping
 
@@ -508,7 +531,7 @@ instead of the ports, for boards on its exact-name lists — as of 7.3 there is 
 B850, B840, B860 or Z890 board on them.
 
 **Remediation (only if the bind fails):**
-- Add `acpi_enforce_resources=lax` to kernel parameters — `nct6775` has no
+- Add the kernel parameter `acpi_enforce_resources=lax` (see [Setting a driver option or a kernel parameter](#setting-a-driver-option-or-a-kernel-parameter)) — `nct6775` has no
   driver-local escape (its only module parameters are `force_id` and
   `fan_debounce`), so the system-wide parameter is the only option, OR
 - Disable "ACPI Hardware Monitor" in BIOS (if available)
@@ -571,7 +594,8 @@ To check current value:
 cat /sys/module/amdgpu/parameters/ppfeaturemask
 ```
 
-To enable all features (including fan control), add to kernel parameters:
+To enable all features (including fan control), add this kernel parameter and reboot
+(see [Setting a driver option or a kernel parameter](#setting-a-driver-option-or-a-kernel-parameter)):
 ```
 amdgpu.ppfeaturemask=0xffffffff
 ```
@@ -659,9 +683,28 @@ NVIDIA GPUs live in one of two mutually-exclusive driver worlds:
 
 The `driver` field on the capability/diagnostics is always the **kernel module
 name** (`"nouveau"`/`"nvidia"`), never the `nvml` library. The proprietary NVML
-backend is **opt-in and off by default** (`[detection] enable_nvidia_telemetry`
-in the daemon config) and needs the daemon to reach `/dev/nvidia*` (a packaged
-systemd drop-in grants this).
+backend is **opt-in and off by default**. Turning it on takes four steps, and
+all of them are needed:
+
+1. Install `nvidia-utils`, which provides `libnvidia-ml.so.1` (it comes with the
+   proprietary driver on Arch).
+2. Set the flag in `/etc/control-ofc/daemon.toml` (or with the **NVIDIA telemetry**
+   switch under Settings → Daemon Configuration):
+   ```toml
+   [detection]
+   enable_nvidia_telemetry = true
+   ```
+3. Install the drop-in that lets the daemon reach `/dev/nvidia*`. The package ships
+   it as an example only, not installed:
+   ```bash
+   sudo install -Dm644 \
+     /usr/share/doc/control-ofc-daemon/nvidia-telemetry.conf.example \
+     /etc/systemd/system/control-ofc-daemon.service.d/nvidia-telemetry.conf
+   ```
+4. `sudo systemctl daemon-reload && sudo systemctl restart control-ofc-daemon`.
+
+With the flag but no drop-in, NVML cannot open the device nodes: the daemon logs
+one line and shows no NVIDIA telemetry.
 
 ### Supported (read-only)
 
@@ -698,12 +741,12 @@ fakes control. There is **no coolant safety rule** (CPU-only thermal safety is u
 
 | Driver (hwmon `name`) | Devices | Coolant temp | Pump/fan control |
 |---|---|---|---|
-| `nzxt-kraken3` (`x53`, `z53`, `kraken2023`, `kraken2023elite`; `kraken2024elite` from kernel 7.3) | NZXT Kraken X/Z-series, 2023, 2023 Elite, 2024 Elite | yes | **writable** — `pwm1` pump (+ `pwm2` fan on Z/2023/2024). The driver labels channel 1 "Pump speed", which the daemon's pump rule matches on every model. From daemon 2.56.1 (DEC-423) the daemon's cooler list includes `kraken2024elite`, so that model is flagged as an AIO and its radiator fan gets the cooler floor, as on the other models (on 2.56.0 and older it gets the chassis floor; its pump is protected by the label either way) |
+| `nzxt-kraken3` (`x53`, `z53`, `kraken2023`, `kraken2023elite`; `kraken2024elite` from kernel 7.3) | NZXT Kraken X/Z-series, 2023, 2023 Elite, 2024 Elite | yes | **writable** — `pwm1` pump (+ `pwm2` fan on Z/2023/2024). The driver labels channel 1 "Pump speed", which the daemon's pump rule matches on every model. From daemon 2.56.1 (DEC-423) the daemon's cooler list includes `kraken2024elite`, so that model is flagged as an AIO and its radiator fan gets the 30 % pump/CPU floor that every fan channel on a liquid cooler gets, as on the other models (on 2.56.0 and older it gets the 20 % chassis floor; its pump is protected by the label either way) |
 | `nzxt-kraken2` (`kraken2`) | older NZXT Kraken | yes | **monitor-only** (no `pwm` exposed). Note `fan1_input` is the fan and `fan2_input` the pump — the reverse of kraken3 |
 | `aquacomputer_d5next` (`d5next`, `highflownext`, `leakshield`, `octo`, `quadro`, `aquaero`, …) | Aquacomputer D5 Next pump; Octo / Quadro / Aquaero fan controllers; flow / leak devices | yes on the liquid devices (labelled channel) | **D5 Next: `pwm1` is the pump duty and `pwm2` the fan, both writable** (`d5next_ctrl_fan_offsets[] = { 0x97, 0x42 } /* Pump and fan speed */`, since 6.0). The daemon maps channel 1 of a cooler chip to the pump role, so the pump floor applies. Octo (`pwm1`–`8`), Quadro and Aquaero (`pwm1`–`4`) are writable fan controllers, not flagged AIO; flow / leak devices expose no `pwm`. (This row said "pump duty monitor-only" until 2026-09-24.) |
 | `asus_rog_ryujin` (`rog_ryujin`) | ASUS ROG RYUJIN II / III AIOs | yes (`temp1` labelled "Coolant temp") | **writable** — `pwm1` pump, `pwm2` internal fan, `pwm3` controller fans (RYUJIN II only). Channel 1 is labelled "Pump speed", which the daemon's pump rule matches; not flagged as an AIO. RYUJIN III EXTREME / EVA / WHITE editions added in 7.3 |
 | `gigabyte_waterforce` (`waterforce`) | Gigabyte AORUS WATERFORCE X 240 / 280 / 360 | yes | **monitor-only** — fan, pump and coolant readings, all read-only (since 6.8) |
-| `arctic_fan_controller` (`arctic_fan`) | ARCTIC Fan Controller (10 channels), kernel 7.2+ | no | **writable, with a driver hazard the daemon works around (DEC-425).** There is no `pwm_enable`, and every command the driver sends carries all ten channels. On 7.2 and 7.3 its duty cache starts at 0 at probe and after resume, so **the first write to one channel would send 0% to the other nine** until each has been written, and reading `pwmN` back returns that cache, not the device. From daemon 2.56.1 (DEC-425) the daemon first sets every channel still holding such a 0 to 100%, unless the daemon itself last set that channel to 0 (a curve at 0%, a zero-RPM fan), and does so before the write that would send it. So a profile that controls only some channels leaves the rest at full speed instead of stopping them. It does this again by itself after a resume. The first report of each batch still sends 0 to the channels not yet reached, briefly, for as long as the batch takes (each write waits up to about 0.6 s for the device's reply). If the device stops answering, the daemon stops at the first write that fails and logs one warning, then sets the remaining channels straight after the next write the device accepts. To keep uncontrolled fans quiet, control all ten channels. A change queued for kernel 7.4 starts the cache at 40% instead, and the daemon leaves that alone |
+| `arctic_fan_controller` (`arctic_fan`) | ARCTIC Fan Controller (10 channels), kernel 7.2+ | no | **writable, with a driver hazard the daemon works around (DEC-425).** There is no `pwm_enable`, and every command the driver sends carries all ten channels. On 7.2 and 7.3 its duty cache starts at 0 at probe and after resume, so **the first write to one channel would send 0% to the other nine** until each has been written, and reading `pwmN` back returns that cache, not the device. From daemon 2.56.1 (DEC-425) the daemon first sets every channel still holding such a 0 to 100%, unless the daemon itself last set that channel to 0 (a curve at 0%, a zero-RPM fan), and does so before the write that would send it. So a profile that controls only some channels leaves the rest at full speed instead of stopping them. It does this again by itself after a resume. The first report of each batch still sends 0 to the channels not yet reached, briefly, for as long as the batch takes (the driver waits up to 1 s for the device to acknowledge each write). If the device stops answering, the daemon stops at the first write that fails and logs one warning, then sets the remaining channels straight after the next write the device accepts. To keep uncontrolled fans quiet, control all ten channels. A change queued for kernel 7.4 starts the cache at 40% instead, and the daemon leaves that alone |
 | `corsair-cpro` (`corsaircpro`), `nzxt-smart2` (`nzxtsmart2`) | Commander Pro / RGB & Fan hubs | no (probes are generic) | writable fans, **not** flagged AIO (fan hubs, not coolers). A Commander Pro `pwmN` read returns an error unless that channel was set to a fixed duty |
 | USB-only (much Corsair iCUE/Commander Core, some NZXT) | — | — | **out of scope** — no mainline hwmon driver; the daemon never opens USB-HID |
 
@@ -730,8 +773,10 @@ The daemon detects these by comparing `/proc/ioports` ACPI entries against
 known SIO I/O ranges.
 
 **Fix options:**
-1. **Preferred (driver-local, it87 only):** `modprobe it87 ignore_resource_conflict=1`
-2. **System-wide fallback:** Add `acpi_enforce_resources=lax` to kernel command line.
+1. **Preferred (driver-local, it87 only):** the driver option `options it87 ignore_resource_conflict=1`,
+   set in `/etc/modprobe.d/it87.conf` — see [Setting a driver option or a kernel parameter](#setting-a-driver-option-or-a-kernel-parameter).
+2. **System-wide fallback:** the kernel parameter `acpi_enforce_resources=lax` (same section). It can
+   stop some systems booting, so use it only when the first option is not available.
 3. **nct6775 (kernel >= 5.16, ASUS boards):** Since Linux 5.16 the driver can
    read the chip through an ASUS WMI access path (`access_asuswmi`) that
    sidesteps the ACPI Super-I/O port reservation on supported ASUS boards,
@@ -743,6 +788,39 @@ known SIO I/O ranges.
    `asus_wmi_boards[]` allowlist of supported boards. The kernel-level
    user-facing [nct6775 hwmon doc](https://docs.kernel.org/hwmon/nct6775.html)
    covers the driver's sensor schema but does not document this access path.
+
+## Setting a driver option or a kernel parameter
+
+This page names options in two forms. Each needs a file, and each needs the module
+reloaded or the machine rebooted before it does anything.
+
+**A driver option** — written `options it87 mmio=off`, `options nct6683 force=1`,
+`options it87 ignore_resource_conflict=1`:
+
+1. Put the line in a file named after the module, for example
+   `echo 'options it87 ignore_resource_conflict=1' | sudo tee /etc/modprobe.d/it87.conf`.
+   The option is read each time the module loads, so it lasts across reboots.
+2. Apply it: reboot, or reload the module now with
+   `sudo modprobe -r it87 && sudo modprobe it87`. If you added the module to your
+   initramfs, also run `sudo mkinitcpio -P`, or the copy loaded at boot keeps the old
+   settings.
+3. Restart the daemon so it adopts the driver's fan headers:
+   `sudo systemctl restart control-ofc-daemon`. The same applies to any PWM driver
+   you load, reload or update while the daemon is running: until the restart, its
+   headers can be seen but not controlled.
+
+Typing the option on the command line (`sudo modprobe it87 ignore_resource_conflict=1`)
+works for this boot only. The daemon package asks for `it87` and `nct6775` at every boot
+through `/etc/modules-load.d/control-ofc.conf`, and without the file above that load
+has no option, so the problem returns on the next boot. Likewise, installing or
+updating a DKMS driver does not replace the copy already loaded: reload it or reboot.
+
+**A kernel parameter** — written `amdgpu.ppfeaturemask=0xffffffff`,
+`acpi_enforce_resources=lax` — goes on the kernel command line through your
+bootloader's configuration, then takes effect at the next boot. The manual's Driver
+Setup page has the steps for GRUB, systemd-boot, rEFInd and Limine
+([Driver Setup § AMD GPU prerequisite](../manual/driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3)).
+After rebooting, `cat /proc/cmdline` shows whether it took.
 
 ## force_id warning
 
@@ -758,8 +836,21 @@ Reference: https://github.com/frankcrawford/it87
 
 The daemon ships a module load configuration file at
 `/etc/modules-load.d/control-ofc.conf` which ensures required hwmon
-drivers are loaded at boot. The GUI's Hardware page shows
-which modules are currently loaded by reading `/proc/modules`.
+drivers are loaded at boot. The daemon reads `/proc/modules` to tell which are
+currently loaded, and the GUI's Hardware page shows its answer.
+
+On a Gigabyte board the package's **Super-I/O guard**
+(`/usr/lib/modprobe.d/control-ofc-superio.conf`) keeps `nct6775` and `w83627ehf` from
+loading, although that file lists them: Gigabyte boards use ITE Super-I/O, which
+those drivers cannot bind, and their probe can latch the bridge in front of a second
+chip (see § ITE above). It also covers a board it lists whose firmware reports no
+vendor; everywhere else it loads the module unchanged. Each module it declines is
+logged — `sudo journalctl -b -t control-ofc-superio-guard`. The only way to turn it
+off is an **empty** `/etc/modprobe.d/control-ofc-superio.conf`: a file of any other
+name does not reliably win, because modprobe reads every directory's files in one
+name order and the first `install` line for a module takes effect. `blacklist` does
+not stop it either — an explicit `modprobe`, which is what `systemd-modules-load`
+issues, ignores `blacklist`.
 
 ## Thermal Safety
 

@@ -2,7 +2,7 @@
 
 The Controls page is the operational heart of the application. It manages **profiles**, **fan roles**, and **curves** — the three layers that determine how your fans respond to temperature.
 
-![Controls Page](../screenshots/auto/02_controls.png)
+![Controls Page](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/02_controls.png)
 
 ## How It Works
 
@@ -22,7 +22,7 @@ The page **header** carries the actions that apply to the whole profile:
 |--------|-------------|
 | *Profile name* | A read-only label naming the profile these edits and **Save** apply to — it follows the sidebar selection, and is how you confirm what **Save** will write to |
 | **⋮** | Profile-management menu (create / rename / duplicate / delete) |
-| **Set up ▾** | The hardware-setup menu. It always offers **Auto-Connect Wizard…**, which opens the Fan Wizard to identify and label your physical fans (see [Fan Wizard](fan-wizard.md)). Two further entries appear only when the matching hardware is detected: **Configure AIO…**, one-click liquid-cooler setup (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **Dedicate GPU Fan…**, one-click setup so a writable AMD GPU fan can idle at true 0 RPM (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
+| **Set up ▾** | The hardware-setup menu. It always offers **Auto-Connect Wizard…**, which opens the Fan Wizard to identify and label your physical fans (see [Fan Wizard](fan-wizard.md)). Two further entries appear only when they can be used: **Configure AIO…**, one-click liquid-cooler setup, shown when a liquid cooler is detected **or** the daemon supports header roles (v2.28.0 or newer) — a cooler plugged into a motherboard header cannot be detected, so the entry does not wait for one (see [Configuring an AIO](#configuring-an-aio--liquid-cooler)), and **Dedicate GPU Fan…**, shown for a writable AMD GPU fan that supports zero-RPM idle — one-click setup so it can idle at true 0 RPM (see [Dedicating a GPU fan](#dedicating-a-gpu-fan)) |
 | **Revert** | Discards unsaved changes and restores the last saved version of the profile. Enabled only while there are unsaved edits |
 | **Save** | Writes the profile's changes to disk (`Ctrl+S`); saving the active profile also re-applies it to the daemon |
 | *Unsaved chip* | A warning chip that appears beside **Save** while the profile has unsaved edits |
@@ -51,9 +51,10 @@ If the Controls page has unsaved edits when you select a different profile, the 
 **Creating and deleting** profiles are available in two places: **New** and **Delete** sit directly beneath the sidebar's profile dropdown, and the full set — **New Profile**, **Rename Profile**, **Duplicate Profile**, **Delete Profile** — lives under the Controls page header's **⋮** menu. Both routes do the same thing. Deleting a profile names it in the confirmation prompt and cannot be undone; deleting the currently active profile deactivates it on the daemon first, after which **no** profile is active until you apply one.
 
 **On some Dell computers a profile must control all of the fans or none.** The BIOS on
-many Dell machines has one switch for its fan control, shared by every fan. Controlling
-one fan turns the BIOS off for all of them, and releasing it turns the BIOS back on for
-all of them. So a profile that controls only some of these fans would leave the others
+many Dell machines has one switch for its fan control, shared by every fan, and it sits
+on the **first** fan. Controlling the first fan turns the BIOS off for all of them, and
+releasing it turns the BIOS back on for all of them; the other fans have no switch of
+their own. So a profile that controls only some of these fans would leave the others
 with nothing controlling them, or hand a fan it still controls back to the BIOS. The
 GUI will not save such a profile. Save, Rename, Duplicate and Apply all refuse it, and a
 note at the top of the Controls page names the fans to add to a fan role or to remove.
@@ -104,7 +105,7 @@ A read-only / monitor-only cooler (one whose pump the kernel cannot drive, such 
 
 ### Dedicating a GPU fan
 
-When a writable, zero-RPM-capable AMD GPU is detected, a **Dedicate GPU Fan** button appears in the page header. Use it to let the GPU fan idle at **true 0 RPM** when the card is cool. In one step it:
+When a writable, zero-RPM-capable AMD GPU is detected, **Dedicate GPU Fan…** appears in the **Set up ▾** menu in the page header. Use it to let the GPU fan idle at **true 0 RPM** when the card is cool. In one step it:
 
 - pulls the GPU fan out of any role that currently drives it, and creates a **GPU-only** role — because that role holds only the GPU, its curve can be drawn all the way down to 0% (no chassis/CPU stall-protection minimum applies);
 - binds a dedicated curve to a **GPU temperature** sensor (edge/junction preferred) — the default idles at 0% up to 45 °C, then ramps (20% / 40% / 60% / 100% at 47 / 58 / 75 / 95 °C);
@@ -130,7 +131,7 @@ Use it for quick experiments ("what does 80% sound like?") without touching the 
 
 Click **Edit…** to open the role dialog:
 
-![Fan Role Dialog — Curve Mode](../screenshots/auto/10_fan_role_dialog_curve.png)
+![Fan Role Dialog — Curve Mode](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/10_fan_role_dialog_curve.png)
 
 | Field | Description |
 |-------|-------------|
@@ -140,7 +141,7 @@ Click **Edit…** to open the role dialog:
 | **Manual Output** | Fixed percentage with slider and spinbox (Manual mode only) |
 | **Members** | Read-only summary, with an **Edit Members** button |
 
-![Fan Role Dialog — Manual Mode](../screenshots/auto/11_fan_role_dialog_manual.png)
+![Fan Role Dialog — Manual Mode](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/11_fan_role_dialog_manual.png)
 
 When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appears with a per-GPU **Allow zero-RPM idle** checkbox: leave it checked to let the GPU's firmware stop the fan at idle (it spins up with the curve), or uncheck it so the fan tracks the curve continuously. For a fresh setup, the header's [**Dedicate GPU Fan**](#dedicating-a-gpu-fan) button does this for you in one step (GPU-only role + 0%-capable curve + zero-RPM enabled).
 
@@ -150,9 +151,9 @@ When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appe
 
 Each physical fan can belong to **only one role**: outputs already assigned elsewhere appear greyed out with "(Assigned to: …)" so you can see which role owns them. Read-only GPU fans are marked "(read-only)".
 
-Fans belonging to a configured cooler are marked "(Part of: …)" with the device's name, and a header you have assigned the pump or radiator role is marked with that role. These stay **selectable** — a cooler's layout is a description, not a lock, so you are allowed to move its fans — but you are asked to confirm first, because assigning a pump to an unrelated curve is rarely what you meant. The same confirmation appears when you use the **Unassigned Fans** quick-assign menu.
+Fans belonging to a configured cooler are marked "(Part of: …)" with the device's name. Outside a configured cooler, a header the cooling stack claims is marked too: "(Pump role assigned)" for a pump you assigned, "(Pump)" for one the daemon protects on its own — its label or hardware, or the active profile naming it a pump — "(Radiator fan role assigned)" for a radiator fan you assigned in the Fan Wizard, and "(Radiator fan)" for a liquid cooler's radiator channel. These stay **selectable** — a cooler's layout is a description, not a lock, so you are allowed to move its fans — but you are asked to confirm first, because assigning a pump to an unrelated curve is rarely what you meant. The same confirmation appears when you use the **Unassigned Fans** quick-assign menu.
 
-To release a fan permanently rather than confirming each time, forget the device on the **Hardware** page, or re-run **Configure AIO** and leave it out.
+To release a fan permanently rather than confirming each time: for a cooler's member, forget the device on the **Hardware** page, or re-run **Configure AIO** and leave it out; for a pump you assigned, clear it in **Configure AIO**. A pump the daemon detected, and a radiator fan role of either kind, have no release in the GUI — the mark stays, and you confirm each time.
 
 > This is advisory. It keeps the cooler's layout coherent; it is not what keeps your pump safe. Pump protection — the 30% floor, and the refusal to stop it — comes from the header's **role**, and applies no matter which curve the fan is assigned to.
 
@@ -195,7 +196,7 @@ Each curve card shows the curve's name and type, the bound sensor with its live 
 
 These open a small parameter dialog instead:
 
-![Curve Edit Dialog](../screenshots/auto/12_curve_edit_dialog.png)
+![Curve Edit Dialog](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/12_curve_edit_dialog.png)
 
 - **Linear** — name, a sensor, and start/end temperature and output values.
 - **Flat** — just a name and an output percentage (no sensor needed).

@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The System State pop-out is now titled "System Health — Full Report"** (DEC-441). It used to be
+  called "Hardware Readiness", which is the name of the Hardware page's checklist. The two answer
+  different questions.
+
+### Fixed
+
+- **The GUI names the right driver for three Fintek chips** (DEC-441). F71805F, F71806F and F71872F use
+  the `f71805f` driver, as the daemon already said. The GUI's chip guidance named `f71882fg` for the
+  whole F718xx series. The note for older ITE chips now also lists IT8726F, IT8758E and IT8795E.
+
+### Documentation
+
+- **The installed manual and hardware guides describe the app and the daemon that ship** (DEC-441). The
+  main corrections:
+  - **Thermal safety.** There are two states and both are minimums, so a faster fan keeps its speed.
+    The no-sensor floor covers only the fans your profile controls. GPU fans are never forced and keep
+    their curves. The GUI shows a banner but raises no warning.
+  - **When fans are not under the profile.** A new section covers fans no profile controls, switching
+    profiles, a daemon stop (an NZXT Kraken runs at 100 %) and sleep and resume.
+  - **Supported hardware.** Getting Started lists the supported coolers and controllers. Driver Setup
+    has a Dell (`dell_smm`) row.
+  - **Page layout.** The System State and Hardware pages are described as they are laid out now.
+  - **Settings.** The page says which settings wait for **Save Changes** and which act at once.
+  - **Driver options and kernel parameters** now say which file to use, how to make them last across
+    reboots, and when to restart the daemon. Blacklisting now says to reboot.
+  - **Gigabyte boards.** The Super-I/O guard and its journal line are explained, and running
+    `sensors-detect` is discouraged on every Gigabyte board.
+  - **Sensors.** Coolant temperatures have no safety meaning, and **Treat as coolant** is explained.
+  - **Also fixed:** the `lm_sensors` section, the NVIDIA telemetry steps, the Fintek, Winbond, SMSC and
+    National chip tables, and the man page's file list.
+  - **Screenshots.** Manual screenshots and links to other repository files now use GitHub URLs, so
+    they work from the installed copy.
+
 ## [2.83.5] — 2026-09-27
 
 ### Fixed

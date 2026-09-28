@@ -17,7 +17,8 @@ rather than restating the whole dependency set.
   Arch's own `pyside6` package records the same mix.
 
   It does not reach this application. Nothing under `src/` imports `QtCharts` or
-  `QtDataVisualization` (we use only `QtCore`, `QtGui`, `QtWidgets`), and on the
+  `QtDataVisualization` (we use only `QtCore`, `QtGui`, `QtWidgets`, and
+  `QtNetwork` for the local socket that keeps the app to a single window), and on the
   packaged Arch install the GPL engine libraries are not even present — they live
   in the separate optional `qt6-charts` / `qt6-datavis3d` packages. So the
   GPL-covered code is unreached and uninstalled, which is mere aggregation at
@@ -48,6 +49,17 @@ rather than restating the whole dependency set.
 
 Everything else in the runtime set (`httpx`, `pyqtgraph`, `numpy`, `colorama`)
 is MIT or BSD.
+
+## Bundled fonts
+
+- **DM Sans** and **Space Grotesk** — **SIL Open Font License 1.1**. They ship
+  inside the application (`src/control_ofc/ui/fonts/`) so the interface renders
+  the same on every machine. The OFL lets them be bundled with and used by any
+  software; what it asks is that the licence travel with the fonts and that a
+  font is not sold on its own. Each font's licence text sits beside it
+  (`OFL-DMSans.txt`, `OFL-SpaceGrotesk.txt`), and the Arch package installs both
+  under `/usr/share/licenses/control-ofc-gui/`. The OFL covers only the font
+  files and does not change this project's license.
 
 ## Development dependencies
 

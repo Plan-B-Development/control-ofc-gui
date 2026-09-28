@@ -72,6 +72,37 @@ class TestLookupChipGuidance:
         assert g.driver_name == "f71882fg"
         assert g.in_mainline is True
 
+    # `DC-bw` (d): the daemon's `expected_driver_for_chip` (chip_db.rs) sends
+    # F71805F/F71806F/F71872F to `f71805f` and the rest of the F718xx series to
+    # `f71882fg`. The GUI used to name `f71882fg` for all of them, so a user on
+    # one of the three was told to load a driver that cannot bind.
+    @pytest.mark.parametrize(
+        ("chip", "driver"),
+        [
+            ("f71805f", "f71805f"),
+            ("f71806f", "f71805f"),
+            ("f71872f", "f71805f"),
+            ("f71882fg", "f71882fg"),
+            ("f71889fg", "f71882fg"),
+            ("f71869a", "f71882fg"),
+        ],
+    )
+    def test_fintek_driver_matches_the_daemon(self, chip, driver):
+        g = lookup_chip_guidance(chip)
+        assert g is not None
+        assert g.driver_name == driver
+        assert g.in_mainline is True
+
+    def test_generic_it87_entry_names_every_mainline_chip_it_catches(self):
+        # The fallback's text lists the mainline chips it stands for. These three
+        # reach it (no entry of their own) and were missing from that list.
+        g = lookup_chip_guidance("it8726")
+        assert g is not None and g.chip_prefix == "it87"
+        blob = " ".join(g.known_issues)
+        for number in ("8726", "8758", "8795"):
+            assert lookup_chip_guidance(f"it{number}").chip_prefix == "it87"
+            assert number in blob, number
+
     def test_unknown_chip_returns_none(self):
         assert lookup_chip_guidance("totally_unknown_chip") is None
 

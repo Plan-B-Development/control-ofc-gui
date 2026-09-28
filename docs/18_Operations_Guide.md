@@ -27,14 +27,19 @@ installs none of these, so the unit cannot start it or cannot hand the fans back
 
 **`/etc/modules-load.d/control-ofc.conf`** loads the Super-I/O and drive-temperature
 drivers at boot (`nct6775`, `it87`, `w83627ehf`, `drivetemp`); the kernel cannot
-auto-load them because the chips sit on ISA ports. Rename or delete the file to stop it.
+auto-load them because the chips sit on ISA ports. To stop loading one, comment out its
+line and run `sudo systemctl restart systemd-modules-load` (`start` does nothing once the
+unit has run) or reboot. Do not rename or delete the file: it is a pacman `backup=` file,
+so the next upgrade restores a missing one; an edited one is kept, with a new version
+arriving as `control-ofc.conf.pacnew`.
 **The Super-I/O guard** (`/usr/lib/modprobe.d/control-ofc-superio.conf`, which runs
 `/usr/lib/control-ofc/control-ofc-superio-guard`) stops `nct6775` and `w83627ehf` from
-probing on a Gigabyte board (every Gigabyte board from daemon 2.56.1; older daemons
-cover only the boards the guard lists): those drivers write to the Super-I/O ports before
+probing on a Gigabyte board (every Gigabyte board from daemon 2.56.1, and a listed board
+whose firmware reports no vendor; older daemons cover only the boards the guard lists): those drivers write to the Super-I/O ports before
 they check for their chip, and on a Gigabyte board with an ITE eSPI bridge that write can
-hide the second fan chip until the machine is powered off at the wall. On every other
-board the real `modprobe` runs unchanged. To turn the guard off, create an empty file
+hide the second fan chip until a reboot, and on some boards until the machine is
+powered off at the wall. On every other board the real `modprobe` runs unchanged. Each
+module it declines is logged: `sudo journalctl -b -t control-ofc-superio-guard`. To turn the guard off, create an empty file
 with the **same name**, `/etc/modprobe.d/control-ofc-superio.conf`, and reboot; a file
 with a different name does not reliably override it. Recovering a chip the probe has
 already hidden is in the manual's
@@ -337,7 +342,7 @@ activated:
    `POST /profile/activate` and `/deactivate` (the GUI, the tray). `--profile` and
    `OPENFAN_PROFILE` are never saved there: while one is set it wins on every start, and removing it
    brings back the last profile activated from the GUI.
-4. None → no curve is evaluated until a profile is activated, but the daemon's thermal safety still acts on its own: an emergency takes every writable fan to 100 % and gives each one back when it ends (DEC-382). The 40 % no-sensor floor, by contrast, needs a profile's fans to act on. The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
+4. None → no curve is evaluated until a profile is activated, but the daemon's thermal safety still acts on its own: an emergency takes every OpenFan channel and writable hwmon header to 100 % and gives each one back when it ends (DEC-382); GPU fans are never forced (DEC-130). The 40 % no-sensor floor, by contrast, needs a profile's fans to act on. The GUI never drives PWM — the daemon's profile engine is the sole writer (DEC-159 / DEC-165).
 
 ### GUI activation flow
 When the user activates a profile in the GUI:

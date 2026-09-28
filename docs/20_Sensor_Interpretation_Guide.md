@@ -204,7 +204,8 @@ The it87 driver provides minimal labeling. Most sensors appear as generic
 | Label pattern | source_class | Confidence |
 |---|---|---|
 | `tempN` (numeric) | `super_io_channel` | low |
-| Named label | `super_io_channel` | medium |
+| Named label with a capital letter (as the out-of-tree driver or a `sensors.d` file names it) | `super_io_channel` | medium |
+| Named label, all lower case | `super_io_channel` | low |
 
 The driver does not expose which physical sensor type is connected to each
 channel. A board-specific override can name such a channel in the Sensor Detail
@@ -248,7 +249,22 @@ Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip na
 `coolant`/`water`/`liquid` label maps to `coolant` on any chip (medium). The Kraken 2024 Elite
 (`kraken2024elite`, kernel 7.3+) joined the chip list in DEC-423; before that its "Coolant temp" label
 was what reached `coolant`. The daemon reports these as
-the `coolant_temp` sensor kind; a user override can force any sensor to `coolant`.
+the `coolant_temp` sensor kind.
+
+**Coolant has no safety meaning.** The daemon's thermal ladder reads CPU sensors
+only. A coolant sensor — however hot — never trips the emergency or the no-sensor
+floor, and there is no coolant over-temperature protection. Cool the loop with a
+curve bound to the coolant sensor; the CPU emergency still protects the CPU.
+
+**"Treat as coolant" (user override).** Right-click a sensor on the Overview page's
+sensor table and choose **Treat as coolant** to classify it as coolant when the rules
+above miss it; on a sensor already overridden the same menu offers **Reset
+classification to auto**, and Settings → Sensors & Chart Series → **Clear overrides**
+removes them all. The override is the GUI's alone: the daemon's `kind` for the sensor
+does not change, and it has no effect on thermal safety. What it drives is the GUI's
+own coolant view — the sensor's class everywhere it is shown, the coolant marking in
+the curve sensor picker, which sensor the AIO setup takes as the coolant sensor, and so
+which calibration (coolant or CPU) **Configure AIO** seeds the radiator-fan curve with.
 
 This driver only loads on explicitly supported ASUS boards (the kernel driver
 has a board allowlist). All readings are high confidence because the EC provides
@@ -258,10 +274,20 @@ the identity mapping.
 
 Kernel docs: https://docs.kernel.org/hwmon/asus_wmi_sensors.html
 
-Same label vocabulary as `asus_ec_sensors` but accessed via WMI (Windows
-Management Instrumentation) ACPI methods. Classification follows the same
-label-matching rules but at `medium_high` confidence (one step lower) because
-the WMI interface has known polling reliability issues on some boards.
+Accessed via WMI (Windows Management Instrumentation) ACPI methods, with labels
+the BIOS supplies. Classification is close to `asus_ec_sensors`' but not the same,
+and one step lower, because the WMI interface has known polling reliability issues on
+some boards:
+
+| Label pattern | source_class | Confidence |
+|---|---|---|
+| `Water In` / `Water Out` and any other coolant/water/liquid label | `coolant_in` / `coolant_out` / `coolant` (the cross-driver rule, ahead of this table) | high for in/out, medium otherwise |
+| Contains `CPU` | `cpu_board_side` — the board's reading of the CPU, not a die sensor | medium_high |
+| Contains `VRM` | `vrm` | medium_high |
+| Contains `Chipset` | `chipset` | medium_high |
+| Contains `T_Sensor` | `external_probe` | medium_high |
+| Contains `Motherboard` | `board_ambient` | medium_high |
+| Other | `vendor_labeled` | medium |
 
 The kernel doc explicitly calls out the firmware bug: *"The WMI implementation
 in some of Asus' BIOSes is buggy. This can result in fans stopping, fans getting
@@ -362,21 +388,25 @@ reads per-core DTS (Digital Thermal Sensor) values from Intel CPUs.
 
 ## Where the rich classification surfaces
 
-Three places consume this knowledge base:
+These surfaces consume this knowledge base:
 
 1. **Cell tooltips** on every Overview-page sensor-table cell (`format_sensor_tooltip`).
    The note list is capped at 3 entries for readability.
-2. **Sensor Detail dialog** (`Diagnostics_SensorDetail_Dialog`, DEC-117) —
-   opens via the per-row Details button, row double-click, or
-   right-click → "Open detail…". Shows the full classification
-   description **and every classification note** (not truncated), the
-   matching board override if one exists, board context, the Thresholds
-   section, and a clickable kernel.org driver doc link. This is the
-   canonical surface when a user wants the full story behind a sensor.
-3. **Header summary line** and **inline `⚠`/`?` chips** on the Sensors
-   tab (DEC-117) — the `bogus` and `low`-confidence rows in the table
-   below have a visible prefix on the Label cell so they're discoverable
-   without hovering.
+2. **Sensor Detail dialog** (`Diagnostics_SensorDetail_Dialog`) — opens by
+   double-clicking a row, pressing Enter on it, or right-click → **Open detail…**.
+   Shows the full classification description **and every classification note** (not
+   truncated), the matching board override if one exists, board context, the
+   Thresholds section, and a clickable kernel.org driver doc link. On a daemon that
+   publishes its own classification it adds a **Daemon classification** section, whose
+   confidence is the daemon's own scale and is not comparable one-for-one with the
+   GUI's levels below. This is the canonical surface when a user wants the full story
+   behind a sensor.
+3. **The sensor table's summary line** (in its section header) and **inline `⚠`/`?`
+   prefixes** on the Overview page's sensor table — the `bogus` and `low`-confidence
+   rows have a visible prefix on the Label cell so they're discoverable without
+   hovering.
+4. The Dashboard's sensor list and chart, which use the same classification (and the
+   same "Treat as coolant" overrides) for grouping.
 
 ## Confidence levels
 
@@ -403,14 +433,20 @@ Reference: https://docs.kernel.org/hwmon/k10temp.html
 
 ### ASUS CPUTIN bogus on the nct6775 family
 
-The kernel documentation states: "On various ASUS boards with NCT6776F, CPUTIN
-is not really connected and reports unreasonable temperatures."
+The kernel documentation states: "On various ASUS boards with NCT6776F, it appears
+that CPUTIN is not really connected to anything and floats, or that it is connected to
+some non-standard temperature measurement device. As a result, the temperature
+reported on CPUTIN will not reflect a usable value. It often reports unreasonably high
+temperatures…"
 
 When `chip_name` is any of the nct6775 family — `nct6775`, `nct6776`, `nct6779`,
 `nct6791`, `nct6792`, `nct6793`, `nct6795`, `nct6796`, `nct6797`, `nct6798`,
 `nct6799` — and `board_vendor` contains "ASUS", the CPUTIN
 channel is classified as `bogus` with `low` confidence and notes explaining the
-issue. This is a well-documented kernel driver quirk, not a GUI assumption.
+issue. This is a well-documented kernel driver quirk, not a GUI assumption. The
+vendor comes from the board's DMI data; where the daemon cannot read it, neither side
+can tell an ASUS board from any other, and `CPUTIN` keeps its normal classification —
+the rule fails open.
 
 **The daemon acts on the same triple (DEC-294).** Until that change this was a
 GUI *display* classification only: the daemon still returned `kind: "cpu"` for
@@ -453,8 +489,13 @@ to `_classify_nct6683`, and both promote `TSI`/`PECI` to a CPU source (`amd_tsi`
 `cpu_peci`, `medium_high`). That covers the `PECI Agent N Calibration` channels on
 `nct6792` and later, which the kernel accepts as a CPU temperature source. Like any
 Super-I/O CPU proxy, they can read low. The daemon's plausibility filter rejects a
-proxy pinned near 0 °C beside a warm board, and it logs once when a proxy is the
-only CPU sensor.
+CPU reading that is **both** below 10 °C **and** more than 15 °C colder than the
+hottest motherboard sensor — so a cold-room boot, where the board is cold too, never
+trips it, and with no motherboard reading it rejects nothing. A rejected channel is
+treated as unreadable: it is quarantined, logged once, listed among the Overview
+page's unavailable sensors with the reason, left out of the thermal ladder, and
+restored by itself when it reads sanely again. The daemon also logs once when a
+proxy is the only CPU sensor.
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 
@@ -479,10 +520,10 @@ confidence.
 
 `sensors-detect` is **not** needed to load the Super I/O drivers: the daemon
 package ships `/etc/modules-load.d/control-ofc.conf` to load the common ones, and
-the System State page's readiness report identifies the chip without probing
-hardware. Treat `sensors-detect` as a last resort, and never run it after boot on
-a dual-chip Gigabyte board — it writes the Super-I/O unlock key and can latch the
-bridge in front of the secondary chip. (This section used to say it "must be run
+the Hardware page's readiness checklist and Super-I/O section identify the chip
+without probing hardware. Treat `sensors-detect` as a last resort, and never run it
+after boot on a Gigabyte board — it writes the Super-I/O unlock key and can latch the
+bridge in front of a second chip. (This section used to say it "must be run
 after kernel updates".)
 
 `sensors-detect` maintains its own chip ID database, updated independently

@@ -27,6 +27,14 @@ writes, PMFW handling, or GPU display naming.
   fan control MUST use the PMFW `fan_curve` sysfs interface. *(Safety-critical; also
   stated in `CLAUDE.md`.)*
 - Pre-RDNA3 GPUs (RX 6000 and older) use traditional `pwm1_enable=1` + `pwm1` control.
+- **GPU fans are outside the thermal force, and keep following the profile through it.**
+  Neither the 100 % emergency nor the 40 % no-sensor floor is ever written to a GPU fan
+  (the GPU firmware owns its own thermal protection). On a forced tick the daemon still
+  writes each GPU member its own command — its curve, a manual override, or an identify
+  — after the forced writes, so a GPU fan does not freeze at the duty it had when the
+  force began. During a force a GPU curve runs without its step-rate limit, like every
+  other member's. The write is skipped while a hardware verify holds the write pause and
+  once the daemon is shutting down.
 
   **The two generations reach that outcome by different mechanisms, and the
   difference is safety-relevant** (kernel source re-read 2026-08-26, and again at
@@ -89,8 +97,12 @@ writes, PMFW handling, or GPU display naming.
 - Kernel docs warn: **do not** drive `pwm1` and `fan[1-*]_target` at the same time.
 - GPU PMFW fan writes use a **5% threshold** (not 1%) to avoid SMU firmware churn
   during gaming (DEC-070).
-- The daemon auto-disables `fan_zero_rpm_enable` before writing a PMFW curve, and
-  re-enables it on reset (DEC-053).
+- The daemon disables `fan_zero_rpm_enable` before writing a PMFW curve, so the fan
+  spins at the commanded speed, and re-enables it on reset (DEC-053) — **except** for a
+  profile member marked `fan_zero_rpm: true` (the **Allow zero-RPM idle** checkbox,
+  and what **Dedicate GPU Fan** sets), where the card's own zero-RPM setting is left as
+  it is and the firmware stops the fan at idle. A manual write (a hardware verify or
+  test) always disables it.
 - `fan_zero_rpm_enable` sysfs returns multi-line formatted output — parse header+value,
   do not just `trim()`.
 - **The daemon must reset the GPU fan curves it drove to automatic on shutdown — and only

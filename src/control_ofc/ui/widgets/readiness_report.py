@@ -976,7 +976,10 @@ class ReadinessReportDialog(QDialog):
     def __init__(self, html: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ReadinessReport_Dialog")
-        self.setWindowTitle("Hardware Readiness — Full Report")
+        # Named for the System State card it opens from, never "Hardware
+        # Readiness": that is the Hardware page's checklist, a different
+        # surface answering a different question (D13, `DC-bv` (m)).
+        self.setWindowTitle("System Health — Full Report")
         self.resize(720, 640)
 
         layout = QVBoxLayout(self)

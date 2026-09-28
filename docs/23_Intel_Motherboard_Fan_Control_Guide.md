@@ -69,22 +69,31 @@ PWM curves reference.
 
 ### Base packages
 
-Install at minimum:
+Control-OFC needs nothing beyond its own packages. `lm_sensors` is an optional extra
+for checking readings from a terminal:
 
 ```bash
 sudo pacman -S lm_sensors
 ```
 
-This provides `sensors`, `sensors-detect`, `pwmconfig`, and `fancontrol`.
+It provides `sensors`, `sensors-detect`, `pwmconfig`, and `fancontrol`. The last two
+are a fan controller of their own: do not run `pwmconfig`, or enable
+`fancontrol.service`, while Control-OFC drives your fans. Two programs writing the same
+header fight over it, and the daemon reports that fan's duty as not holding.
 
-> **Heads-up — `sensors-detect`:** On Gigabyte dual-chip boards, do not run
-> `sensors-detect` after boot. It writes the Super-I/O unlock key and can latch
-> the bridge in front of the secondary chip in configuration mode, so the
-> secondary silently fails to enumerate — and the latch can survive a reboot.
-> The remedy is not a driver update or `mmio=on` (already the default): keep
-> `sensors-detect`, `nct6775` and `w83627ehf` away from the Super-I/O, reboot,
-> and if the chip is still missing, remove mains power. See doc 19 § ITE and
-> frankcrawford/it87 issue #70.
+> **Heads-up — `sensors-detect`:** On a Gigabyte board, do not run
+> `sensors-detect` after boot. It writes the Super-I/O unlock key, which on AMD
+> AM5 Gigabyte boards has been measured latching the ITE bridge in front of the
+> secondary chip in configuration mode, so the secondary silently fails to
+> enumerate — and the latch can survive a reboot. No Intel board has been
+> measured doing this yet, but the Gigabyte LGA1700/LGA1851 dual-chip boards
+> put their secondary behind the same kind of bridge, so treat the risk as the
+> same. The daemon package's guard keeps `nct6775` and `w83627ehf` off every
+> Gigabyte board, but it cannot stop `sensors-detect`, which probes the ports
+> itself. If a chip is already missing, the remedy is not a driver update or
+> `mmio=on` (already the default): keep `sensors-detect`, `nct6775` and
+> `w83627ehf` away from the Super-I/O, reboot, and if the chip is still missing,
+> remove mains power. See doc 19 § ITE and frankcrawford/it87 issue #70.
 
 ### DKMS for out-of-tree drivers
 
@@ -96,6 +105,13 @@ sudo pacman -S dkms linux-headers
 # Or, if you run a CachyOS kernel:
 sudo pacman -S dkms linux-cachyos-headers
 ```
+
+**After installing or updating the driver**, the copy already loaded keeps running
+until you reboot or reload it (`sudo modprobe -r it87 && sudo modprobe it87`, or the
+same for `nct6687`). Then restart the daemon
+(`sudo systemctl restart control-ofc-daemon`): it takes control of a header only if the
+header was there when it started, so a driver loaded or reloaded while it runs shows
+its fans but cannot control them until the restart.
 
 > **Z890 caveat:** the upstream nct6687d driver's board list is still
 > filling in for MSI Z890 SKUs, and each entry is a full DMI name, so a WHITE /
@@ -157,7 +173,8 @@ AMD companion guide to Intel ROG boards.
   through an ASUS WMI access path (`access_asuswmi`) that sidesteps the
   port reservation (a WMI sensor-read path, not an "ACPI mutex" — the
   separately-proposed ACPI-mutex patch was never merged); on older
-  kernels, add `acpi_enforce_resources=lax` to boot parameters.
+  kernels, add the kernel parameter `acpi_enforce_resources=lax` (how:
+  [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)).
 
 ### ASUS LGA1851 (Z890 / B860)
 
@@ -196,8 +213,9 @@ it (see below). Never force `msi_alt1` on Z690/Z790: every SYS_FAN then reads
 **BIOS tips:**
 - No BIOS setting makes the headers writable. If they are read-only, the
   in-kernel `nct6683` is bound — check `ls -l /sys/class/hwmon/hwmon*/device/driver`
-  and blacklist it. (This tip used to say "disable Smart Fan Mode"; that was
-  never the cause.)
+  and blacklist it, then reboot — a blacklist does not unload a module already
+  loaded. The manual's Driver Setup page has the exact steps for MSI. (This tip used
+  to say "disable Smart Fan Mode"; that was never the cause.)
 - In 2023 the in-kernel `nct6683` found the NCT6687D on an **MPG Z790 EDGE
   WIFI** (MS-7D91) but exposed no sensors, while the out-of-tree `nct6687`
   worked with its default map (lm-sensors issue #446, kernel bug 217591). There
@@ -251,19 +269,30 @@ their IT8689E with an IT8792E, not an IT87952E.)
 **Dual-chip remediation (in order):**
 
 ```bash
-# 1. Update the driver — 2026-03+ builds default mmio=on and merge the
-#    ISA-bridge MMIO path that fixes secondary-chip enumeration/control.
-#    Builds from 2026-09-09 rename the chips (it8689_900a090a) — see doc 19.
-yay -S it87-dkms-git
+# 0. Rule out the it87 v2.0 rename: suffixed names (it8689_900a090a) mean
+#    both chips are present.
+cat /sys/class/hwmon/hwmon*/name
 
-# 2. Only on older (pre-2026-03) builds:
-echo 'options it87 mmio=on' | sudo tee /etc/modprobe.d/it87.conf
+# 1. Is it87 loaded? One "Found IT8xxxE chip" line per chip.
+sudo dmesg | grep -i it87
+#    No lines at all: install it87-dkms-git (builds from 2026-09-09 rename the
+#    chips — read doc 19 first). Only pre-2026-03 builds also need
+#    'options it87 mmio=on' in /etc/modprobe.d/it87.conf.
 
+# 2. Stop the trigger. The control-ofc-daemon package keeps nct6775 and
+#    w83627ehf off every Gigabyte board; check that it did, and do not run
+#    sensors-detect:
+sudo journalctl -b -t control-ofc-superio-guard
+
+# 3. Reboot, then click Rescan Hardware in the GUI's footer.
 sudo systemctl reboot
-# Then in the GUI: click Rescan Hardware in the global footer
-# Still missing: keep sensors-detect / nct6775 / w83627ehf away and remove
-# mains power — the ladder in doc 19 § ITE.
+
+# 4. Still missing: shut down, switch the PSU off at the back (or unplug it)
+#    for about ten seconds, then boot — the ladder in doc 19 § ITE.
 ```
+
+A driver update does not clear a latched bridge: the failure reproduces at
+upstream HEAD. Update the driver only when step 1 shows it is missing or too old.
 
 **BIOS tips:**
 - On a current driver build, usually none are needed. **Never give the BIOS
@@ -388,12 +417,14 @@ plane uses `coretemp` exclusively.
 3. **Look for the dual-chip warning** on Gigabyte LGA1700/LGA1851
    AORUS boards. First rule out an it87 v2.0 build (suffixed chip names
    such as `it8689_900a090a` mean both chips are present). Otherwise, on a
-   current build, a missing IT87952E is a blocked Super-I/O: keep
-   `sensors-detect`, `nct6775` and `w83627ehf` away, reboot, then remove mains
-   power if needed. Only pre-2026-03 builds also need `mmio=on`.
+   current build, a missing IT87952E is most likely a blocked Super-I/O (the
+   cause measured on AM5 boards): keep `sensors-detect`, `nct6775` and
+   `w83627ehf` away, reboot, then remove mains power if needed. Only pre-2026-03
+   builds also need `mmio=on`.
 4. **Watch for BIOS reclaim:** the daemon's pwm_enable watchdog detects EC
    firmware overwriting manual mode and re-asserts it. The remedy is per
-   vendor: keep `it87-dkms-git` current on Gigabyte (Full Speed is a fail-safe,
+   vendor: on Gigabyte, an `it87-dkms-git` build from 2026-08-24 on (read
+   doc 19's v2.0 rename caution before rebuilding; Full Speed is a fail-safe,
    not a fix); `msi_fan_brute_force=1` on MSI Z890; on ASUS and ASRock no BIOS
    setting is known to stop it. Read-only headers are a different problem — a
    driver, not the BIOS.

@@ -4,7 +4,7 @@ The Fan Configuration Wizard helps you identify and label your fans. It changes 
 
 Ordinary fans are stopped briefly. A **pump is never stopped** — the daemon shifts its speed instead, so coolant keeps flowing; watch the RPM reading or listen for the change. This needs a daemon that classifies header roles (v2.28.0 or newer); against an older one the wizard says "stop" because that is what it does.
 
-![Fan Wizard — Intro](../screenshots/auto/13_fan_wizard_intro.png)
+![Fan Wizard — Intro](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/13_fan_wizard_intro.png)
 
 ## Why Use the Wizard?
 
@@ -31,7 +31,7 @@ Shown whenever the daemon supports header roles — including when nothing on th
 
 **A pump must never be stopped to identify it.** The daemon shifts a pump's speed instead, and holds it above its safety floor — but it can only do that for a header it knows is a pump. This step is where it finds out, and it runs *before* any fan is stopped.
 
-**What it lists.** Everything already known to be part of the cooling stack: a configured cooling device's pump, radiator fans and auxiliary fans, plus any header carrying a pump or radiator role. Each is ticked, meaning *leave this alone*. Untick anything you do want to identify — a radiator fan is an ordinary fan and is perfectly safe to stop.
+**What it lists.** Everything already known to be part of the cooling stack: a configured cooling device's pump, radiator fans and auxiliary fans, plus any header carrying a pump or radiator role. A pump says how it was claimed: **Pump (you assigned)** for one you named, **Pump (detected)** for one the daemon protects on its own — its label, a liquid cooler's pump channel, or the active profile naming it a pump (hover for which). Each is ticked, meaning *leave this alone*. Untick anything you do want to identify — a radiator fan is an ordinary fan and is perfectly safe to stop.
 
 **What it asks.** Which header drives your pump, and which fans are on the radiator. This is the important part on most desktop boards: many Super-I/O chips publish no header names at all, so nothing — not the daemon, not this GUI — can work out which channel the pump is on. Until you say, every header looks identical and the wizard would stop your pump looking for it.
 
@@ -75,7 +75,7 @@ A summary table (ID, Source, New Label) where every label is still editable — 
 
 - **Thermal abort:** CPU temperature is checked before and during every test. If any CPU sensor exceeds **85°C**, the test aborts immediately and the fan is restored.
 - **One fan at a time:** the wizard asks the daemon to change only the fan you are identifying. Every other fan keeps running on its curve — there is no global pause and the daemon stays in charge throughout.
-- **A pump is never stopped:** the daemon decides what "identify" means for each header from its role. An ordinary fan is stopped. A pump is *shifted* — moved clear of its current speed, upward where there is room, and never below its 30% safety floor — so coolant keeps flowing throughout. If your pump is on a header the daemon cannot classify (common on boards that publish no fan labels), tell it which header is the pump first — **Controls ▸ Set up ▾ ▸ Configure AIO** asks exactly that as its first step. Otherwise the pump is treated as an ordinary fan and stopped — unless the active profile's name for that fan contains "pump" or "AIO", which protects it only while that profile is active.
+- **A pump is never stopped:** the daemon decides what "identify" means for each header from its role. An ordinary fan is stopped. A pump is *shifted* — moved clear of its current speed, upward where there is room, and never below its 30% safety floor — so coolant keeps flowing throughout. If your pump is on a header the daemon cannot classify (common on boards that publish no fan labels), tell it which header is the pump first — **Controls ▸ Set up ▾ ▸ Configure AIO** asks exactly that as its first step. Otherwise the pump is treated as an ordinary fan and stopped — unless the active profile's name for that fan contains "pump" or "AIO", which protects it only while that profile is active, and only with `control-ofc-daemon` v2.50.0 or newer.
 - **Daemon-enforced auto-restore:** each test is a daemon request with a built-in deadman timer, so even if the GUI closes or crashes mid-test the daemon restores that fan on its own. Finishing, cancelling, aborting a test, or closing the wizard also restore the tested fan. On restore the daemon simply removes the identify entry, and the fan resumes its normal curve control on the next daemon tick (1 Hz) — there is no separate fallback speed.
 
 ## Settings That Affect the Wizard
@@ -93,7 +93,7 @@ Once saved, fan labels propagate across the entire application:
 - Overview page — fan status table
 - Profile files — member labels are snapshotted into the profile JSON
 
-Labels are stored as `fan_aliases` in `app_settings.json` and persist across sessions. Display names always prefer your alias, then the GPU model, then the OpenFan channel label (`OpenFan CH0`), then the hwmon header label, then the raw hardware ID.
+Labels are stored as `fan_aliases` in `app_settings.json` and persist across sessions. Display names always prefer your alias, then the GPU model, then the OpenFan channel label (`OpenFan CH0`), then the hwmon header label the chip publishes, then a label from `/etc/sensors.d` or `/usr/share/sensors`, then Control-OFC's own per-board table, then the raw hardware ID (see [Per-board hwmon header label resolver](hardware-troubleshooting.md#per-board-hwmon-header-label-resolver)). The name is not only cosmetic: a header whose resolved name says CPU or pump gets the 30 % minimum when it joins a fan role.
 
 You do not have to run the wizard to rename a fan. Once you know which fan is
 which, you can rename one directly wherever it appears — see
