@@ -166,7 +166,11 @@ Notable fields:
   contract-mismatch resolution).
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions
-  applicable to the active GPU. **Since DEC-422** (daemon 2.56.1) the only id raised is `rdna_mes_hang_drm_amd_4765` (drm/amd #4765:
+  applicable to **any AMD GPU on the machine**, not only the card `devices.amd_gpu`
+  describes (DEC-449, daemon ≥ 2.57.0 — older daemons evaluated the primary card
+  alone, so an RDNA3 iGPU behind an RDNA2 discrete card got no advisory). Each id
+  appears once however many cards it applies to, and its `message` names them — model
+  and PCI address, e.g. "the AMD Radeon 780M (0000:c5:00.0)". No field changed. **Since DEC-422** (daemon 2.56.1) the only id raised is `rdna_mes_hang_drm_amd_4765` (drm/amd #4765:
   RDNA3/RDNA3.5/RDNA4 on 6.17.9–6.17.13 and 6.18.0–6.18.6, `critical`). Daemon
   v2.56.0 and older raise `rdna_hang_kernel_6_18_6_19` and
   `smu_mismatch_navi48_r9700` instead. Both were retired because their advice was
@@ -1736,8 +1740,8 @@ and the GUI parser defaults safely:
   PCI device (cross-referenced from `amd_pci_devices`). Defaults `true` (an
   hwmon node implies a bound driver).
 - `gpu.kernel_warnings: list[KernelWarning]` — the same advisory catalogue
-  as `/capabilities.amd_gpu.kernel_warnings` (id / severity / message),
-  duplicated so the diagnostics support bundle is self-contained. Omitted
+  as `/capabilities.amd_gpu.kernel_warnings` (id / severity / message), covering every
+  AMD GPU as that one does (DEC-449), duplicated so the diagnostics support bundle is self-contained. Omitted
   (→ `[]`) when none apply. Hand-parsed by the GUI (nested objects can't
   round-trip through the flat dataclass unpack).
 - `intel_gpu: object` (optional; DEC-121, daemon ≥ 1.12.0) — Intel discrete GPU

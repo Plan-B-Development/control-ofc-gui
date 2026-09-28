@@ -885,7 +885,9 @@ The thermal safety state is reported in the hardware diagnostics response.
 The daemon ships a curated catalogue (`hwmon/kernel_warnings.rs`,
 DEC-098) that matches the running kernel against published amdgpu
 regressions and surfaces matches via
-`GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises a
+`GET /capabilities` (`devices.amd_gpu.kernel_warnings`). Every AMD GPU in the
+machine is checked, an integrated one beside a discrete card included, and the
+message names the affected cards (DEC-449, daemon ≥ 2.57.0). The GUI raises a
 one-time `QMessageBox` when a high- or critical-severity warning fires,
 and lists every match on the System State page. Acknowledged warnings are
 remembered in `app_settings.acknowledged_kernel_warnings` so the popup

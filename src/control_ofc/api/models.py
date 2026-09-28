@@ -54,7 +54,10 @@ class HwmonCapability:
 
 @dataclass
 class KernelWarning:
-    """Daemon-emitted kernel-version advisory for the active GPU (DEC-098).
+    """Daemon-emitted kernel-version advisory for an AMD GPU (DEC-098).
+
+    Since DEC-449 the daemon evaluates every AMD GPU on the machine, not only
+    the card the list is filed under; the ``message`` names the affected cards.
 
     Mirrors `crate::hwmon::kernel_warnings::KernelWarning` on the daemon.
     Severity is one of ``"info" | "medium" | "high" | "critical"``; the GUI
@@ -83,8 +86,9 @@ class AmdGpuCapability:
     pci_revision: int | None = None
     gpu_zero_rpm_available: bool = False
     # DEC-098: list of advisories the daemon detected based on the running
-    # kernel + this GPU's identity. Empty when nothing applies; older daemons
-    # without the field also yield an empty list (parser-tolerant).
+    # kernel + every AMD GPU's identity (DEC-449: not only this card's). Empty
+    # when nothing applies; older daemons without the field also yield an
+    # empty list (parser-tolerant).
     kernel_warnings: list[KernelWarning] = field(default_factory=list)
 
     @property
@@ -1340,7 +1344,7 @@ class GpuDiagnosticsInfo:
     # DEC-119: whether the amdgpu driver is bound to this GPU's PCI device.
     # Defaults True (an hwmon node implies a bound driver) for forward-compat.
     amdgpu_driver_bound: bool = True
-    # DEC-119: kernel-regression advisories for this GPU, mirroring
+    # DEC-119: kernel-regression advisories for any AMD GPU (DEC-449), mirroring
     # ``/capabilities.amd_gpu.kernel_warnings``. Hand-parsed in
     # ``parse_hardware_diagnostics`` (nested dataclasses can't round-trip via
     # ``**``). Empty when none apply or the daemon predates the field.
