@@ -669,6 +669,70 @@ def _as_status(run):
     return ControlPathStatus(run=run, records=[])
 
 
+class _OpenFanCalibrationWorker(_SocketWorker):
+    """Runs the OpenFan calibration calls off the UI thread (DEC-452 / DEC-453).
+
+    Same shape as :class:`_CharacterizationWorker`: all three calls are short
+    because the daemon returns ``202`` and walks the channel itself, the polling
+    cadence is the dialog's QTimer, and a GUI that dies mid-run does not strand
+    the channel — the daemon kicks a stopped fan and restores the duty on every
+    exit path.
+    """
+
+    run_updated = Signal(object)  # OpenFanCalibrationRun | None
+    run_error = Signal(str, str)  # category ('unavailable'|'error'), message
+
+    def _guard(self, call, what: str) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            self.run_updated.emit(call())
+        except DaemonTimeout:
+            self.run_error.emit(
+                "unavailable",
+                f"The daemon did not answer the {what} in time. The calibration may "
+                "still be running — the daemon restores the channel itself when it ends.",
+            )
+        except DaemonUnavailable:
+            self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
+        except DaemonError as e:
+            # The shared refusal taxonomy: `thermal_abort` and a retryable
+            # `validation_error` are protection, not failure. This route returns
+            # both — the retryable 400 with no fresh CPU reading included, since
+            # the predicate keys on `retryable`, not on the status.
+            if _is_soft_safety_refusal(e):
+                self.run_error.emit("unavailable", e.message)
+            else:
+                self.run_error.emit("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("OpenFan calibration worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            self.run_error.emit("unavailable", f"Connection lost during {what}")
+
+    @Slot(int)
+    def do_start(self, channel: int) -> None:
+        # The acknowledgement is sent only because the dialog's Start is
+        # unreachable until the user ticked the per-channel pump confirmation
+        # (DEC-453). No `hold_seconds`: the daemon's default applies.
+        self._guard(
+            lambda: self._ensure_client().start_openfan_calibration(
+                channel, acknowledge_below_floor=True
+            ),
+            "calibration start",
+        )
+
+    @Slot()
+    def do_poll(self) -> None:
+        self._guard(lambda: self._ensure_client().openfan_calibration_status(), "status poll")
+
+    @Slot()
+    def do_cancel(self) -> None:
+        self._guard(lambda: self._ensure_client().cancel_openfan_calibration(), "cancellation")
+
+
 class _ValidationWorker(_SocketWorker):
     """Runs a validation session's daemon calls off the UI thread.
 

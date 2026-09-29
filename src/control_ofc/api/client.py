@@ -30,6 +30,7 @@ from control_ofc.api.models import (
     HwmonInventory,
     HwmonVerifyResult,
     IdentifyResult,
+    OpenFanCalibrationRun,
     OverrideGrant,
     OverrideReleaseResult,
     OverrideRenewResult,
@@ -62,6 +63,7 @@ from control_ofc.api.models import (
     parse_hwmon_inventory,
     parse_hwmon_verify_result,
     parse_identify_result,
+    parse_openfan_calibration_run,
     parse_override_grant,
     parse_override_release,
     parse_override_renew,
@@ -129,8 +131,7 @@ class DaemonClient:
     #
     # ``timeout`` is per-call: pass an explicit value for endpoints whose
     # daemon-side latency is known to exceed the global default (verify is
-    # ~3 s plus IPC; calibrate is ``(steps + 1) * hold_seconds``). Per-call
-    # timeouts reuse the connection pool — see HTTPX docs:
+    # ~3 s plus IPC). Per-call timeouts reuse the connection pool — see HTTPX docs:
     #   https://www.python-httpx.org/advanced/timeouts/
     # ``httpx.TimeoutException`` is now mapped to ``DaemonTimeout`` so the
     # UI can distinguish "daemon is slow" from "daemon is gone" — a verify
@@ -1018,6 +1019,53 @@ class DaemonClient:
         down). ``409`` when no probe is running.
         """
         return parse_stall_probe_run(self._delete("/diagnostics/stall-probe"))
+
+    # ── DEC-452: OpenFan calibration, 202 + poll ─────────────────────────
+
+    def start_openfan_calibration(
+        self, channel: int, *, acknowledge_below_floor: bool
+    ) -> OpenFanCalibrationRun:
+        """POST /fans/openfan/{channel}/calibration — start a calibration walk.
+
+        Returns the ``202`` snapshot; the run proceeds daemon-side and is read
+        back with :meth:`openfan_calibration_status`. Gate on
+        ``capabilities.control.openfan_calibration``.
+
+        The walk reaches 0 %, and the daemon holds no pump evidence for an
+        OpenFan channel (`PTR-i`), so it refuses (400) unless the
+        acknowledgement is ``true``. Callers pass it only after the user has
+        confirmed the channel powers no pump — it is keyword-only with no
+        default so no call site can send it by accident. ``hold_seconds`` is
+        never sent: the daemon's default applies (DEC-453).
+        """
+        return parse_openfan_calibration_run(
+            self._post(
+                f"/fans/openfan/{int(channel)}/calibration",
+                json={"acknowledge_below_floor": bool(acknowledge_below_floor)},
+            )
+        )
+
+    def openfan_calibration_status(self) -> OpenFanCalibrationRun | None:
+        """GET /diagnostics/openfan-calibration — the current or most recent run.
+
+        ``None`` when no calibration has run since the daemon started (``404``):
+        the result is kept in memory only. Every other failure raises.
+        """
+        try:
+            return parse_openfan_calibration_run(self._get("/diagnostics/openfan-calibration"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def cancel_openfan_calibration(self) -> OpenFanCalibrationRun:
+        """DELETE /diagnostics/openfan-calibration — stop the running calibration.
+
+        Honoured within about half a second during the walk; a kick or restore
+        already under way runs to its end, and a kick owed after the cancel runs
+        too. ``409`` when none is running.
+        """
+        return parse_openfan_calibration_run(self._delete("/diagnostics/openfan-calibration"))
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

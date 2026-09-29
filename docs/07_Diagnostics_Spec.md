@@ -1004,7 +1004,11 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    diagnostics below. Above the header cards, a note (`Hardware_Box_labelPrompt`) asks for the
    real pump on a non-MSI board whose nct668x chip carries nct6687d's MSI labels (`BRD-h`).
 4. **Hardware Diagnostics** (`Hardware_Card_diagnostics`) — **PWM Test Report…** (the
-   whole-machine assessment, DEC-404), **Startup / Lifecycle Recording**, **Thermal
+   whole-machine assessment, DEC-404), **Calibrate OpenFan Channel…**
+   (`Hardware_Btn_openfanCalibration`, DEC-453: the DEC-452 stall/restart walk on one OpenFan
+   channel, gated on `control.openfan_calibration` and a reporting channel; the dialog's Start
+   needs a per-channel "does not power a pump" confirmation, and demo mode opens it with Start
+   refused), **Startup / Lifecycle Recording**, **Thermal
    Observation** (capability-gated, DEC-335), **AIO Validation**, and **Advanced (System
    State)**, a shortcut to the System State page's verify controls.
 5. **Super-I/O Architecture** (`Hardware_Card_superio`) — per-chip driver detection with

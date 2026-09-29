@@ -6,11 +6,11 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     SensorReading,
-    parse_calibration_result,
     parse_capabilities,
     parse_fans,
     parse_hwmon_inventory,
     parse_inventory_readiness,
+    parse_openfan_calibration_run,
     parse_preferred_sensor,
     parse_sensor_history,
     parse_sensors,
@@ -404,28 +404,53 @@ def test_parse_sensor_history_empty():
     assert result.points == []
 
 
-def test_parse_calibration_result():
+def test_parse_openfan_calibration_run():
+    """DEC-452's run shape, field for field (DEC-453)."""
     data = {
-        "api_version": 1,
-        "fan_id": "openfan:ch00",
+        "run_id": "ofcal-7",
+        "fan_id": "openfan:ch03",
+        "channel": 3,
+        "state": "complete",
+        "phase": None,
+        "current_pct": 18,
+        "hold_ms": 5000,
+        "outcome": "stall_and_restart_found",
+        "abort_reason": None,
+        "detail": None,
+        "stall_duty_pct": 12,
+        "restart_duty_pct": 18,
+        "hysteresis_pct": 6,
+        "min_rpm": 310,
+        "max_rpm": 1650,
+        "restart_failed_at_full": False,
+        "start_cpu_temp_c": 44.5,
+        "max_cpu_temp_c": 46.0,
+        "rise_limit_c": 5.0,
         "points": [
-            {"pwm_percent": 0, "rpm": 0},
-            {"pwm_percent": 50, "rpm": 600},
-            {"pwm_percent": 100, "rpm": 1200},
+            {"pwm_percent": 100, "rpm": 1650, "phase": "descent", "observation": "spinning"},
+            {"pwm_percent": 12, "rpm": 0, "phase": "descent", "observation": "stopped"},
+            {"pwm_percent": 18, "rpm": 310, "phase": "ascent", "observation": "spinning"},
         ],
-        "start_pwm": 20,
-        "stop_pwm": 10,
-        "min_rpm": 600,
-        "max_rpm": 1200,
+        "original_pct": 40,
+        "restore_outcome": "restored",
+        "restore_failed": False,
+        "started_unix_ms": 1_000,
+        "completed_unix_ms": 181_000,
     }
-    result = parse_calibration_result(data)
-    assert result.fan_id == "openfan:ch00"
-    assert len(result.points) == 3
-    assert result.points[1].pwm_percent == 50
-    assert result.points[1].rpm == 600
-    assert result.start_pwm == 20
-    assert result.min_rpm == 600
-    assert result.max_rpm == 1200
+    result = parse_openfan_calibration_run(data)
+    assert result.run_id == "ofcal-7"
+    assert result.channel == 3
+    assert result.stall_duty_pct == 12
+    assert result.restart_duty_pct == 18
+    assert result.hysteresis_pct == 6
+    assert [(p.pwm_percent, p.rpm, p.phase, p.observation) for p in result.points] == [
+        (100, 1650, "descent", "spinning"),
+        (12, 0, "descent", "stopped"),
+        (18, 310, "ascent", "spinning"),
+    ]
+    assert result.original_pct == 40
+    assert result.completed_unix_ms == 181_000
+    assert result.is_running is False
 
 
 # ---------------------------------------------------------------------------
@@ -646,14 +671,16 @@ class TestParserFailureModes:
         result = parse_fans({"fans": [{"id": "f1", "source": "openfan"}, None, "junk", 42]})
         assert [f.id for f in result] == ["f1"]
 
-    def test_parse_calibration_result_with_no_points_uses_empty_list(self):
-        """No-points calibration is valid (calibration failed/aborted).
-        Parser must yield an empty list, not crash."""
-        result = parse_calibration_result({"fan_id": "ch0"})
-        assert result.fan_id == "ch0"
+    def test_parse_openfan_calibration_run_tolerates_null_and_junk_points(self):
+        """A run refused before its first write has no points; a null list or a
+        non-dict element must yield an empty or filtered list, not a crash."""
+        result = parse_openfan_calibration_run({"fan_id": "openfan:ch00", "points": None})
         assert result.points == []
-        assert result.min_rpm == 0
-        assert result.max_rpm == 0
+        assert result.min_rpm is None
+        result = parse_openfan_calibration_run(
+            {"points": [None, "junk", {"pwm_percent": 30, "rpm": 0}]}
+        )
+        assert [p.pwm_percent for p in result.points] == [30]
 
     def test_parse_sensor_history_missing_v_uses_zero_default(self):
         """HistoryPoint.v defaults to 0.0 so a malformed point still parses

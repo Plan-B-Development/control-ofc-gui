@@ -315,6 +315,10 @@ GUI treats every flag as false / old behaviour (AIP-180):
   pair (§ OpenFan calibration). Hardcoded `true` like `openfan_rescan`: it describes the build,
   not whether a controller is attached (that is the route's `503`). Absent → `false`; an older
   daemon `404`s the routes and has only the deprecated synchronous `POST .../calibrate`.
+  **GUI use (DEC-453, GUI ≥ 3.1.0):** registered in `daemon_features` as `openfan_calibration`;
+  the Hardware page's **Calibrate OpenFan Channel…** is enabled only where
+  `daemon_supports("openfan_calibration", caps) is True` and `/fans` reports an OpenFan channel.
+  An older daemon gets a disabled button naming the version it needs, never a call.
 - `canonical_chip_names` (bool, DEC-442, daemon ≥ 3.0.0) — every hwmon chip name the
   daemon publishes, and every id built from one, is **canonical**: the it87 v2.0 board suffix
   (`it8696_a008090a`) is stripped where the daemon reads the chip name, stored ids a
@@ -498,9 +502,9 @@ remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 
 - `POST /fans/openfan/{channel}/calibrate` — the **deprecated** synchronous
   calibration (§ OpenFan calibrate (deprecated), below). `DaemonClient` has no
-  method for it. The 202 + poll route that replaced it (§ OpenFan calibration)
-  has no GUI caller yet either — the calibration dialog is the next change
-  (DEC-452, Run 2).
+  method for it and never will: the Hardware page's calibration dialog uses the
+  202 + poll route that replaced it (§ OpenFan calibration, DEC-453). The GUI's
+  model of the old route's result (`CalibrationResult`) was deleted with DEC-453.
 - `GET /inventory/readiness` and `GET /inventory/superio` — DEC-207 merged both
   into `GET /inventory/hardware-readiness`, which is what the GUI calls (DEC-257).
   Documented below for the daemon surface they still are.
@@ -2508,6 +2512,17 @@ where it **starts again** as the duty rises (the **restart duty**), and its RPM 
 **Daemon ≥ 3.1.0 (DEC-452), capability-gated on `control.openfan_calibration`.** An older daemon
 has only the synchronous `POST .../calibrate` below, whose `stop_pwm` measured nothing (it only
 climbed from 0 %, so its "stop" was always the step below its "start" — `WIRE-l`).
+
+**GUI use (DEC-453, GUI ≥ 3.1.0):** the Hardware page's **Calibrate OpenFan Channel…** dialog.
+It sends `acknowledge_below_floor: true` only after the user ticks a per-channel "does not power
+a pump" confirmation, which is unticked on every channel change and after every run; it never
+sends `hold_seconds`. It renders only the run its own `202` named (`run_id`), polls at 1 Hz, and
+treats a run as ended only once `completed_unix_ms` is set. `state` reads `running` through the
+kick and the restore — the terminal publish sets it, the stamp and `restore_outcome` together — so
+the dialog offers Cancel only while `phase` is `descent` or `ascent`: a `DELETE` during the kick or
+restore answers `202` and stops nothing. A failed poll, or a cancel that lost the race with the
+run's end (`409`), does not end its tracking; the next snapshot, or a `404`, does. Its advice names
+the **restart** duty as the minimum that keeps the fan running.
 
 - `POST /fans/openfan/{ch}/calibration` — body `{"acknowledge_below_floor": true, "hold_seconds"?: N}`.
   - **The acknowledgement is required** (`400 validation_error` without it). The walk reaches 0 %,

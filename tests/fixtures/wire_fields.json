@@ -1324,6 +1324,92 @@
         "since_ms": "parsed and never read: the alert ledger timestamps its own occurrence (DEC-282), so a second clock would only disagree with it"
       },
       "note": "Enrolled by DEC-443 (W-SAFE, TS-m): the cooling advisory. The GUI raises a warning-level alert from its figures (services/cooling_watch.py::advisory_alert)."
+    },
+    {
+      "daemon": "OpenFanCalibrationRun",
+      "gui": "OpenFanCalibrationRun",
+      "endpoints": [
+        "POST /fans/openfan/{ch}/calibration",
+        "GET /diagnostics/openfan-calibration",
+        "DELETE /diagnostics/openfan-calibration"
+      ],
+      "fields": [
+        "run_id",
+        "fan_id",
+        "channel",
+        "state",
+        "phase",
+        "current_pct",
+        "hold_ms",
+        "outcome",
+        "abort_reason",
+        "detail",
+        "stall_duty_pct",
+        "restart_duty_pct",
+        "hysteresis_pct",
+        "min_rpm",
+        "max_rpm",
+        "restart_failed_at_full",
+        "start_cpu_temp_c",
+        "max_cpu_temp_c",
+        "rise_limit_c",
+        "points",
+        "original_pct",
+        "restore_outcome",
+        "restore_failed",
+        "started_unix_ms",
+        "completed_unix_ms"
+      ],
+      "must_be_read": [
+        "run_id",
+        "fan_id",
+        "channel",
+        "phase",
+        "current_pct",
+        "hold_ms",
+        "outcome",
+        "abort_reason",
+        "detail",
+        "stall_duty_pct",
+        "restart_duty_pct",
+        "hysteresis_pct",
+        "min_rpm",
+        "max_rpm",
+        "restart_failed_at_full",
+        "start_cpu_temp_c",
+        "max_cpu_temp_c",
+        "rise_limit_c",
+        "points",
+        "original_pct",
+        "restore_outcome",
+        "restore_failed",
+        "completed_unix_ms"
+      ],
+      "not_assertable": {
+        "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "started_unix_ms": "Shared with another declared struct (RunStep), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The dialog reports progress by phase and duty, never by elapsed time."
+      },
+      "note": "Enrolled by DEC-453 (W-OFAN Run 2, WIRE-l): the OpenFan calibration dialog renders the run (services/openfan_calibration_view.py) and keys its end on completed_unix_ms, which the daemon sets only in the terminal publish."
+    },
+    {
+      "daemon": "CalPoint",
+      "gui": "CalPoint",
+      "endpoints": [
+        "GET /diagnostics/openfan-calibration .points[]"
+      ],
+      "fields": [
+        "pwm_percent",
+        "rpm",
+        "phase",
+        "observation"
+      ],
+      "must_be_read": [
+        "pwm_percent",
+        "rpm",
+        "phase",
+        "observation"
+      ],
+      "note": "Enrolled by DEC-453 (W-OFAN Run 2). Every field is a column of the calibration dialog's points table or a point of its chart (services/openfan_calibration_view.py)."
     }
   ]
 }

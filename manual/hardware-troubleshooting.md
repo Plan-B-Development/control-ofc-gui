@@ -209,6 +209,33 @@ The classic Linux tool for this (`pwmconfig`) stops each fan in turn and watches
 
 If the result says the telemetry update rate is **unknown**, that is a real answer rather than a missing one. Many Super-I/O drivers do not publish how often they refresh a reading, and if nothing changed during the test there is nothing to infer it from. Control-OFC reports UNKNOWN rather than quoting its own sampling rate as though it were the hardware's — a number that looks precise and is not is worse than no number.
 
+## Calibrate OpenFan Channel
+
+**Calibrate OpenFan Channel…**, in the Hardware page's **Hardware Diagnostics** section, measures two things about one fan on an OpenFan controller: the duty at which it **stops** as its speed is lowered (the *stall duty*), and the duty at which it **starts again** as its speed is raised (the *restart duty*). The second is usually higher than the first — a fan that is already turning keeps turning at a duty that could not start it from a stop.
+
+It walks the channel down from 100 % in 10 % steps to 30 %, then in 2 % steps until the fan is confirmed stopped, then back up in 2 % steps until it is confirmed spinning. Each step is held for a few seconds and judged on three fresh RPM readings. A typical fan takes 1.5 to 2 minutes, about 3 at most. The dialog plots the walk — the way down and the way back up as two lines, so the gap between them shows — and lists every step.
+
+**Requires control-ofc-daemon 3.1.0 or newer.** On an older daemon the button is disabled and its tooltip names the version.
+
+### Before it starts: the pump question
+
+The walk takes the fan to 0 %. The daemon has no way to tell whether an OpenFan channel powers a pump, so it will not start until you tick **"… does not power a pump"** for the channel you picked. The tick is cleared whenever you pick a different channel and after every run, so a confirmation for one fan never carries over to another. **Do not calibrate a channel that powers a pump.**
+
+### What it tells you
+
+- **Stops at** and **Starts again at** — the two duties, and the gap between them.
+- **The minimum to use.** When both were found, the dialog says *"Keep this fan's minimum at N% or more to keep it running"*, where N is the **restart** duty — the lowest duty that started it again from a stop. A minimum just above the stall duty keeps a spinning fan spinning, but a fan that is already stopped (at boot, or after a 0 % point on a curve) starts again only at the restart duty.
+- **The fan never stopped** — it kept spinning even at 0 %, so any minimum keeps it running.
+- **The fan did not start again on its own** — it stopped, but was still stopped at the top of the way back up, so no minimum is recommended. The daemon then runs it at 100 % to start it again; if even that does not get it spinning, the result says so and the fan may be stuck or disconnected.
+- **No fan detected** — the channel read 0 rpm at 100 %.
+
+### Safety
+
+- **Curve control for every fan is paused while it runs**, and each fan holds its last duty. Thermal safety is unaffected and still overrides everything. The test refuses to start while the system is hot, while thermal protection is active, when temperature readings are stale, or when there is no fresh CPU temperature reading — and it stops itself if any of those happens mid-run, or if the CPU warms by more than a few degrees while the fan is slowed.
+- **A fan is never left stopped.** If the run stops early at a point where the fan may be stopped, the daemon runs it at 100 % until it is seen spinning before restoring its original speed.
+- **The original speed is restored in the daemon**, so closing the window — or the GUI crashing — does not leave the fan at a test speed. If you close the window while the walk is running, it asks whether to **stop the calibration** or **keep it running**; either way the daemon restores the channel when the run ends.
+- The exceptions leave the fan running *faster*, never slower: while thermal protection is forcing fan output the original speed is not put back (the fan stays at the forced duty until temperatures fall), and if the daemon is shutting down before it could confirm the fan had restarted it leaves the channel at 100 %. The result says which happened.
+
 ## Test GPU Fan Control
 
 AMD GPU fan control fails *silently* far more often than motherboard headers: the driver accepts a `fan_curve` write but the firmware ignores it (missing `amdgpu.ppfeaturemask` bit `0x4000`), or a BIOS overdrive lock blocks it. The GPU rows on the **System State** page's **Safety & GPU Limits** card can show that the *configuration* looks right while fan control still does not work.

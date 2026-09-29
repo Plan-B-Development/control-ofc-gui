@@ -7,7 +7,7 @@ Each test would FAIL on the pre-fix code and PASS on the fixed code.
 from __future__ import annotations
 
 from control_ofc.api.models import (
-    parse_calibration_result,
+    parse_openfan_calibration_run,
     parse_sensor_history,
 )
 from control_ofc.services.profile_service import CurveConfig, CurveType
@@ -80,8 +80,9 @@ class TestCalPointExtraFields:
             ],
             "min_rpm": 0,
             "max_rpm": 2000,
+            "a_field_from_a_newer_daemon": True,
         }
-        result = parse_calibration_result(data)
+        result = parse_openfan_calibration_run(data)
         assert len(result.points) == 1
         assert result.points[0].pwm_percent == 50
         assert result.points[0].rpm == 1200
@@ -100,13 +101,17 @@ class TestCalPointExtraFields:
         assert result.points[1].ts == 2000
 
     def test_calpoint_with_missing_optional_field(self):
-        """CalPoint with only required fields (no start_pwm, stop_pwm)."""
+        """A run with no stall or restart found, and points without the DEC-452
+        ``phase``/``observation``, still parses — the absent figures stay ``None``
+        rather than becoming 0, which would read as a measured duty."""
         data = {
             "fan_id": "openfan:ch00",
             "points": [{"pwm_percent": 100, "rpm": 2000}],
-            "min_rpm": 0,
+            "min_rpm": 2000,
             "max_rpm": 2000,
         }
-        result = parse_calibration_result(data)
-        assert result.start_pwm is None
-        assert result.stop_pwm is None
+        result = parse_openfan_calibration_run(data)
+        assert result.stall_duty_pct is None
+        assert result.restart_duty_pct is None
+        assert result.points[0].phase == ""
+        assert result.points[0].observation == ""

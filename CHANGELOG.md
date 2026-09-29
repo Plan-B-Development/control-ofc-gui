@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Calibrate an OpenFan channel from the Hardware page** (DEC-453, needs control-ofc-daemon 3.1.0
+  or newer). **Calibrate OpenFan Channel…** in Hardware Diagnostics measures where a fan on an
+  OpenFan controller stops as its speed falls and where it starts again as its speed rises, plots
+  both, and recommends a minimum: the restart duty, the lowest speed that starts the fan from a
+  stop. The walk takes the fan to 0 %, so Start stays disabled until you confirm the channel
+  powers no pump; that confirmation is cleared when you pick another channel and after every run.
+  Closing the window mid-run asks whether to stop the calibration or leave it running; the daemon
+  restores the channel either way. On an older daemon the button is disabled and names the
+  version it needs; in demo mode the dialog opens with Start refused.
+
+### Changed
+
+- **The Hardware Diagnostics introduction names its one exception** (DEC-453). It said no fan is
+  driven below its floor; OpenFan calibration does that on purpose, after you confirm, and the text
+  now says so.
+
 ## [3.0.0] — 2026-09-28
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which this release's package now requires (DEC-442).

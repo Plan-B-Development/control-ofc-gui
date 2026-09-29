@@ -284,9 +284,16 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - Same coalescing applies (via FanController)
 
 ### Calibration
-- PWM sweep: 2–20 steps, 2–15 seconds hold per step
-- Exclusive: `AtomicBool` guard prevents concurrent sweeps
-- Pre-calibration PWM recorded and restored afterward
+- **Since DEC-452** a `202` + poll run (`POST /fans/openfan/{ch}/calibration`, `GET`/`DELETE
+  /diagnostics/openfan-calibration`): down from 100 % until the fan is confirmed stopped (the stall
+  duty), then back up until it is confirmed spinning (the restart duty); `hold_seconds` 2–15 is the
+  only tunable. The old upward sweep of 2–20 steps is gone; its route survives as a deprecated
+  wrapper.
+- One run at a time, on the shared diagnostic slot plus the run's own `alive` claim (it replaced the
+  `AtomicBool` guard).
+- The pre-calibration duty is read from the controller under its lock and restored afterwards; a fan
+  the run may have left stopped is kicked at 100 % first. Detail: `docs/08` § OpenFan calibration.
+- GUI: the Hardware page's **Calibrate OpenFan Channel…** dialog (DEC-453).
 
 ---
 

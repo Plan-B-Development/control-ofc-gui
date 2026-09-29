@@ -338,6 +338,12 @@ class ControlCapability:
     #: preflight token. Gate on this rather than probing: an older daemon 404s
     #: the POST from the route fallback, the same status an unknown header gets.
     stall_probe: bool = False
+    #: DEC-452 (daemon >= 3.1.0): ``POST /fans/openfan/{ch}/calibration`` plus the
+    #: GET/DELETE ``/diagnostics/openfan-calibration`` pair. Describes the build,
+    #: not whether a controller is attached (that is the POST's ``503``). An older
+    #: daemon has only the deprecated synchronous ``/calibrate``, which this GUI
+    #: never calls.
+    openfan_calibration: bool = False
     #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
     #: suffix is stripped where the daemon reads it and in the state it saved
     #: before — so a driver rebuild no longer changes any fan header's id. Gates
@@ -1232,31 +1238,76 @@ class ProfileDeactivateResult:
 # ---------------------------------------------------------------------------
 
 
-# NOTE: deferred-feature scaffolding. CalPoint / CalibrationResult /
-# parse_calibration_result model `POST /fans/openfan/{ch}/calibrate`, whose
-# built-in UI flow is deferred (docs/08_API_Integration_Contract.md §
-# calibration) — no DaemonClient method or widget consumes them yet. Kept
-# (with tests) so the calibration UI can land against a parsed contract.
-
-
 @dataclass
 class CalPoint:
-    """A single calibration sweep data point."""
+    """One held duty of an OpenFan calibration walk (DEC-452).
+
+    ``phase`` is ``descent`` | ``ascent`` | ``kick``; ``observation`` is
+    ``spinning`` | ``stopped`` | ``unconfirmed`` | ``interrupted``. Both are
+    opaque tokens: render an unrecognised one (273-i). ``rpm`` is the hold's
+    last fresh reading.
+
+    The deprecated synchronous ``/calibrate`` route's result model
+    (``CalibrationResult``) was deleted with DEC-453: the GUI never called that
+    route and never will.
+    """
 
     pwm_percent: int = 0
     rpm: int = 0
+    phase: str = ""
+    observation: str = ""
 
 
 @dataclass
-class CalibrationResult:
-    """Result of a fan calibration sweep."""
+class OpenFanCalibrationRun:
+    """An OpenFan calibration run — the ``202`` body of
+    ``POST /fans/openfan/{ch}/calibration`` and of ``GET``/``DELETE
+    /diagnostics/openfan-calibration`` (DEC-452, daemon >= 3.1.0).
 
+    ``state`` shares the characterisation vocabulary; while ``running``,
+    ``outcome``, ``abort_reason`` and ``detail`` stay ``None`` and
+    ``completed_unix_ms`` is set only by the terminal publish. Every token is
+    opaque (273-i).
+    """
+
+    run_id: str = ""
     fan_id: str = ""
+    channel: int = 0
+    state: str = ""
+    #: ``descent`` | ``ascent`` | ``kick`` | ``restore``; ``None`` before the
+    #: first write and after the end.
+    phase: str | None = None
+    current_pct: int | None = None
+    hold_ms: int = 0
+    outcome: str | None = None
+    abort_reason: str | None = None
+    detail: str | None = None
+    #: The highest duty confirmed stopped on the way down, and the lowest
+    #: confirmed spinning on the way back up.
+    stall_duty_pct: int | None = None
+    restart_duty_pct: int | None = None
+    hysteresis_pct: int | None = None
+    #: The lowest NON-ZERO and the highest reading of any point.
+    min_rpm: int | None = None
+    max_rpm: int | None = None
+    #: A recovery kick ran and the fan was not confirmed spinning within it.
+    restart_failed_at_full: bool = False
+    start_cpu_temp_c: float | None = None
+    max_cpu_temp_c: float | None = None
+    rise_limit_c: float = 0.0
     points: list[CalPoint] = field(default_factory=list)
-    start_pwm: int | None = None
-    stop_pwm: int | None = None
-    min_rpm: int = 0
-    max_rpm: int = 0
+    #: ``None`` in the ``202`` (the task reads it) and when unknown.
+    original_pct: int | None = None
+    #: ``pending`` | ``restored`` | ``restored_full_speed`` | ``write_failed`` |
+    #: ``skipped_thermal_force`` | ``not_needed``.
+    restore_outcome: str = ""
+    restore_failed: bool = False
+    started_unix_ms: int = 0
+    completed_unix_ms: int | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self.state == "running"
 
 
 @dataclass
@@ -2436,15 +2487,15 @@ def parse_field_violations(details: object) -> list[FieldViolation]:
     ]
 
 
-def parse_calibration_result(data: dict) -> CalibrationResult:
-    return CalibrationResult(
-        fan_id=data.get("fan_id", ""),
-        points=[CalPoint(**_filter_fields(CalPoint, p)) for p in data.get("points", [])],
-        start_pwm=data.get("start_pwm"),
-        stop_pwm=data.get("stop_pwm"),
-        min_rpm=data.get("min_rpm", 0),
-        max_rpm=data.get("max_rpm", 0),
-    )
+def parse_openfan_calibration_run(data: dict) -> OpenFanCalibrationRun:
+    """Parse an OpenFan calibration run, tolerating unknown tokens and new fields."""
+    run = OpenFanCalibrationRun(**_filter_fields(OpenFanCalibrationRun, data))
+    run.points = [
+        CalPoint(**_filter_fields(CalPoint, p))
+        for p in (data.get("points") or [])
+        if isinstance(p, dict)
+    ]
+    return run
 
 
 def parse_sensor_history(data: dict) -> SensorHistory:

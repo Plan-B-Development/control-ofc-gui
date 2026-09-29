@@ -167,6 +167,8 @@ control_ofc/
                                # §8.3 curve series (split by the daemon's own leg
                                # label, never by arrival order), the §8.4 detail rows
                                # and the §8.6 provenance rows
+    openfan_calibration_view.py # OpenFan calibration dialog VM: channel picker, restart-duty
+                               #   advice, end keyed on completed_unix_ms — DEC-453.
     control_path_view.py       # PWM-to-tach control-path discovery VM — DEC-333
                                #   (AIO Phase 8 Batch 1). Renders what the daemon
                                #   measured; derives no relationship or confidence.
@@ -335,6 +337,8 @@ control_ofc/
       inventory_readiness_view.py  # shared hwmon-readiness severity helpers only — view class removed (DEC-200/216)
       theme_editor.py
       aio_config_dialog.py
+      openfan_calibration_dialog.py   # "Calibrate OpenFan Channel" — DEC-453. Thin renderer
+                               #   over openfan_calibration_view; per-channel pump consent.
       pwm_characterization_dialog.py  # "Characterise PWM Response" — DEC-313/315/334.
                                #   Thin renderer over characterization_view
       pwm_response_chart.py    # DEC-334 §8.3. pyqtgraph rising/falling series with

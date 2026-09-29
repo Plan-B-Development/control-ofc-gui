@@ -77,6 +77,7 @@ from control_ofc.services.header_role_view import (
     plan_role_change,
     role_editable,
 )
+from control_ofc.services.openfan_calibration_view import build_channel_options
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
@@ -90,6 +91,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _CharacterizationWorker,
     _ControlPathWorker,
     _HardwareReadinessWorker,
+    _OpenFanCalibrationWorker,
     _ValidationWorker,
     _VerifyWorker,
 )
@@ -104,6 +106,7 @@ from control_ofc.ui.widgets.header_role_dialog import (
     HeaderRoleDialog,
     confirm_remove_pump_protection,
 )
+from control_ofc.ui.widgets.openfan_calibration_dialog import OpenFanCalibrationDialog
 from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.pwm_header_card import PwmHeaderCard
 from control_ofc.ui.widgets.pwm_report_window import PwmReportWindow
@@ -180,6 +183,10 @@ class HardwarePage(QWidget):
     _discover_start_request = Signal(str)
     _discover_poll_request = Signal()
     _discover_cancel_request = Signal()
+    #: DEC-453, the OpenFan calibration dialog (channel).
+    _ofancal_start_request = Signal(int)
+    _ofancal_poll_request = Signal()
+    _ofancal_cancel_request = Signal()
     _validation_start_request = Signal(str, str, list, list, dict, bool)
     _validation_poll_request = Signal()
     _validation_stop_request = Signal()
@@ -255,6 +262,10 @@ class HardwarePage(QWidget):
         self._discover_thread: QThread | None = None
         self._discover_worker: _ControlPathWorker | None = None
         self._discover_dialog: ControlPathDiscoveryDialog | None = None
+        # DEC-453.
+        self._ofancal_thread: QThread | None = None
+        self._ofancal_worker: _OpenFanCalibrationWorker | None = None
+        self._ofancal_dialog: OpenFanCalibrationDialog | None = None
         #: Persisted PWM to tach relationships, keyed by header id (§6.3). The
         #: DAEMON owns these and their invalidation; this is a render cache.
         self._control_paths: dict[str, ControlPathRecord] = {}
@@ -526,10 +537,15 @@ class HardwarePage(QWidget):
             SectionHeader("Hardware Diagnostics", card, object_name="Hardware_Header_diagnostics")
         )
 
+        # DEC-453: this used to promise that no fan is driven below its floor,
+        # which OpenFan calibration makes untrue on purpose — it walks the
+        # channel you pick to 0 %. The one exception is named rather than hidden.
         intro = QLabel(
             "Active tests run through the daemon, which keeps the hwmon lease, "
             "the pump safety floor and thermal protection in force throughout. "
-            "A pump is never stopped and no fan is driven below its floor.",
+            "A pump header is never stopped and no fan is driven below its floor — "
+            "except by OpenFan calibration, which takes the channel you pick down "
+            "to 0 % after you confirm it powers no pump.",
             card,
         )
         intro.setObjectName("Hardware_Label_diagnosticsIntro")
@@ -555,6 +571,15 @@ class HardwarePage(QWidget):
         )
         self._report_btn.clicked.connect(self._open_pwm_report)
         actions.addWidget(self._report_btn)
+        # DEC-453. Gated in `_sync_diagnostic_enablement`.
+        self._ofancal_btn = make_button(
+            "Calibrate OpenFan Channel…",
+            "secondary",
+            object_name="Hardware_Btn_openfanCalibration",
+            accessible_name="Calibrate an OpenFan channel's stop and restart duties",
+        )
+        self._ofancal_btn.clicked.connect(self._open_openfan_calibration)
+        actions.addWidget(self._ofancal_btn)
         self._lifecycle_btn = make_button(
             "Startup / Lifecycle Recording",
             "secondary",
@@ -848,6 +873,22 @@ class HardwarePage(QWidget):
             self._thermal_btn.setToolTip(unsupported_feature_message("thermal_observation"))
         else:
             self._thermal_btn.setToolTip(self._validation_btn.toolTip())
+
+        # DEC-453. Demo mode has OpenFan channels and no capabilities, so the
+        # button opens there and the dialog refuses Start. `is True` because
+        # `daemon_supports` is tri-state and "did not say" must not enable.
+        demo = self._is_demo()
+        ofancal_ok = demo or daemon_supports("openfan_calibration", caps) is True
+        has_channels = bool(self._openfan_channel_options())
+        self._ofancal_btn.setEnabled(ofancal_ok and has_channels and not self._report_active)
+        if self._report_active:
+            self._ofancal_btn.setToolTip(RUN_ACTIVE_REASON)
+        elif not ofancal_ok:
+            self._ofancal_btn.setToolTip(unsupported_feature_message("openfan_calibration"))
+        elif not has_channels:
+            self._ofancal_btn.setToolTip("No OpenFan channel is reporting.")
+        else:
+            self._ofancal_btn.setToolTip("")
 
     # ── Fetch + render ───────────────────────────────────────────────
 
@@ -1425,6 +1466,57 @@ class HardwarePage(QWidget):
         # run the daemon would accept.
         if self._char_dialog is not None:
             self._char_dialog.apply_preflight_error(category, message)
+
+    # ── OpenFan calibration (DEC-452 / DEC-453) ──────────────────────
+
+    def _is_demo(self) -> bool:
+        return self._state is not None and self._state.mode == OperationMode.DEMO
+
+    def _openfan_channel_options(self):
+        if self._state is None:
+            return []
+        return build_channel_options(self._state.fans, self._state.fan_display_name)
+
+    def _open_openfan_calibration(self) -> None:
+        if self._state is None:
+            return
+        if self._report_active:
+            self._show_diag_message(RUN_ACTIVE_REASON)
+            return
+        demo = self._is_demo()
+        # Demo mode has no client, so no worker: the dialog opens with Start
+        # refused, which is what tells the user why.
+        if not demo and not self._ensure_ofancal_worker():
+            self._show_diag_message("Cannot calibrate: no daemon connection.")
+            return
+        dialog = OpenFanCalibrationDialog(self._openfan_channel_options(), demo=demo, parent=self)
+        dialog.start_requested.connect(self._ofancal_start_request.emit)
+        dialog.poll_requested.connect(self._ofancal_poll_request.emit)
+        dialog.cancel_requested.connect(self._ofancal_cancel_request.emit)
+        self._ofancal_dialog = dialog
+        # The picker shows each channel's live RPM, so it follows the 1 Hz poll.
+        self._state.fans_updated.connect(self._on_ofancal_fans)
+        try:
+            dialog.exec()
+        finally:
+            self._state.fans_updated.disconnect(self._on_ofancal_fans)
+            dialog.stop_polling()
+            self._ofancal_dialog = None
+
+    @Slot(list)
+    def _on_ofancal_fans(self, _fans) -> None:
+        if self._ofancal_dialog is not None:
+            self._ofancal_dialog.set_channels(self._openfan_channel_options())
+
+    @Slot(object)
+    def _on_ofancal_update(self, run) -> None:
+        if self._ofancal_dialog is not None:
+            self._ofancal_dialog.apply_run(run)
+
+    @Slot(str, str)
+    def _on_ofancal_error(self, category: str, message: str) -> None:
+        if self._ofancal_dialog is not None:
+            self._ofancal_dialog.apply_error(category, message)
 
     # ── Control-path discovery (AIO Phase 8 Batch 1) ─────────────────
 
@@ -2008,6 +2100,19 @@ class HardwarePage(QWidget):
         )
         return ok
 
+    def _ensure_ofancal_worker(self) -> bool:
+        def connect(w: _OpenFanCalibrationWorker) -> None:
+            self._ofancal_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
+            self._ofancal_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
+            self._ofancal_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            w.run_updated.connect(self._on_ofancal_update, Qt.ConnectionType.QueuedConnection)
+            w.run_error.connect(self._on_ofancal_error, Qt.ConnectionType.QueuedConnection)
+
+        self._ofancal_worker, self._ofancal_thread, ok = self._ensure_worker(
+            self._ofancal_worker, self._ofancal_thread, _OpenFanCalibrationWorker, connect
+        )
+        return ok
+
     def _ensure_discover_worker(self) -> bool:
         def connect(w: _ControlPathWorker) -> None:
             self._discover_preflight_request.connect(
@@ -2155,6 +2260,7 @@ class HardwarePage(QWidget):
             (self._verify_worker, self._verify_thread, "Verify"),
             (self._char_worker, self._char_thread, "Characterization"),
             (self._discover_worker, self._discover_thread, "ControlPath"),
+            (self._ofancal_worker, self._ofancal_thread, "OpenFanCalibration"),
             (self._validation_worker, self._validation_thread, "Validation"),
         ):
             self._teardown_worker(worker, thread, label)
@@ -2163,6 +2269,7 @@ class HardwarePage(QWidget):
         self._verifies_in_flight = 0  # the torn-down worker answers nothing more
         self._char_worker = self._char_thread = None
         self._discover_worker = self._discover_thread = None
+        self._ofancal_worker = self._ofancal_thread = None
         self._validation_worker = self._validation_thread = None
 
     def set_theme(self, tokens) -> None:
@@ -2178,6 +2285,8 @@ class HardwarePage(QWidget):
         # avoid.
         if self._char_dialog is not None:
             self._char_dialog.set_theme(tokens)
+        if self._ofancal_dialog is not None:
+            self._ofancal_dialog.set_theme(tokens)
         if self._validation_dialog is not None:
             self._validation_dialog.set_theme(tokens)
         if self._report_window is not None:

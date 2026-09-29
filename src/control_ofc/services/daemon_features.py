@@ -79,6 +79,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         "duty_reconciliation": "2.53.0",
         # DEC-407, control.stall_probe. The opt-in below-20 % stall/restart probe.
         "stall_probe": "2.54.0",
+        # DEC-452, control.openfan_calibration. The 202 + poll calibration walk
+        # (stall and restart duties). `/ofc:release` confirms the version.
+        "openfan_calibration": "3.1.0",
         # DEC-442, control.canonical_chip_names. Chip names and ids survive the
         # it87 v2.0 board-suffix rename. Shipped in daemon 3.0.0.
         "canonical_chip_names": "3.0.0",
@@ -137,6 +140,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "exit_floor": "exit_floor",
         "duty_reconciliation": "duty_reconciliation",
         "stall_probe": "stall_probe",
+        "openfan_calibration": "openfan_calibration",
         "canonical_chip_names": "canonical_chip_names",
         "cooling_failure_detection": "cooling_failure_detection",
     }
@@ -163,6 +167,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "exit_floor": "setting an exit minimum",
         "duty_reconciliation": "correcting a fan duty something else changed",
         "stall_probe": "the stall/restart probe below 20 %",
+        "openfan_calibration": "OpenFan channel calibration",
         "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
         "cooling_failure_detection": "the coolant limit and pump stall protection",
