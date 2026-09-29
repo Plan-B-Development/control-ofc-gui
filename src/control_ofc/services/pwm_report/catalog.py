@@ -245,15 +245,22 @@ def build_channels(
 def _disambiguate_names(
     channels: list[Channel], by_header: Mapping[str, HwmonHeader]
 ) -> list[Channel]:
-    """Make header names that collide in this list distinct (`PTA-h`).
+    """Make names that collide in this list distinct (`PTA-h`, `PTA-o`).
 
     On a two-chip board each chip contributes its own ``pwm1`` to ``pwm3``, and an
     unaliased header falls back to that raw name (DEC-229). So the scope,
     setup and review pages would list ``pwm2`` twice, including on the page
-    where the user decides what gets written. A colliding header gets its chip
-    appended, ``pwm2 (it8696)``, and its daemon device id as well if the chip
-    alone does not separate it. Names that do not collide are left as they
-    are, and so is every non-header channel. This is the report's own
+    where the user decides what gets written. Three passes, each only over what
+    still collides:
+
+    1. a header gets its chip appended, ``pwm2 (it8696)``;
+    2. then its daemon device id as well, if the chip alone does not separate it;
+    3. then anything still ambiguous — two OpenFan or GPU channels, headers that
+       publish no chip name, or a same-device pair the user aliased alike — gets
+       its stable id instead, which is the channel's identity and so cannot
+       collide (`PTA-o`).
+
+    Names that do not collide are left as they are. This is the report's own
     wording: the app-wide name the rest of the GUI shows is not changed.
     """
     counts = Counter(c.name for c in channels)
@@ -268,13 +275,17 @@ def _disambiguate_names(
         device = by_header[c.channel_id].device_id if suffix is not None else ""
         if suffix is not None and counts[(c.name, suffix)] > 1 and device:
             suffixes[c.channel_id] = f"{suffix} · {device}"
-    renamed = {
-        cid: f"{c.name} ({suffixes[cid]})" for c in channels if (cid := c.channel_id) in suffixes
+    names = {
+        c.channel_id: f"{c.name} ({suffixes[c.channel_id]})" if c.channel_id in suffixes else c.name
+        for c in channels
     }
-    if not renamed:
-        return channels
+    counts = Counter(names.values())
+    for c in channels:
+        if counts[names[c.channel_id]] > 1:
+            names[c.channel_id] = f"{c.name} ({c.channel_id})"
     return [
-        replace(c, name=renamed[c.channel_id]) if c.channel_id in renamed else c for c in channels
+        replace(c, name=names[c.channel_id]) if names[c.channel_id] != c.name else c
+        for c in channels
     ]
 
 

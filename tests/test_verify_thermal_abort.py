@@ -8,7 +8,11 @@ from unittest.mock import MagicMock
 
 from control_ofc.api.errors import DaemonError
 from control_ofc.services.daemon_features import unsupported_feature_message
-from control_ofc.ui.pages.diagnostics_workers import _GpuVerifyWorker, _VerifyWorker
+from control_ofc.ui.pages.diagnostics_workers import (
+    UNEXPECTED_VERIFY_ERROR,
+    _GpuVerifyWorker,
+    _VerifyWorker,
+)
 
 
 def _capture(worker):
@@ -160,3 +164,22 @@ def test_a_non_retryable_validation_error_stays_hard(qapp):
     seen = _capture(worker)
     worker.do_verify("hwmon:x")
     assert seen == [("error", "unknown header id")]
+
+
+def test_hwmon_verify_unexpected_exception_still_answers(qapp):
+    """`PTA-p`: an exception outside the daemon-error family must still emit
+    `verify_error` for the requested header — the pages clear their in-flight
+    record only in the two result slots, so silence wedges the report's Start."""
+    worker = _VerifyWorker("/tmp/x.sock")
+    client = MagicMock()
+    client.verify_hwmon_pwm.side_effect = AttributeError("'list' object has no attribute 'get'")
+    worker._ensure_client = MagicMock(return_value=client)
+    answered: list[tuple[str, str, str]] = []
+    worker.verify_error.connect(lambda cat, msg, hid: answered.append((cat, msg, hid)))
+    worker.verify_ok.connect(lambda *a: answered.append(("ok", "", "")))
+    worker.do_verify("hwmon:x")
+    assert len(answered) == 1
+    assert answered == [("error", UNEXPECTED_VERIFY_ERROR, "hwmon:x")]
+    # Reviewer P3: the pages add their own prefix, and interpreter text is for
+    # the log, not the user.
+    assert "has no attribute" not in UNEXPECTED_VERIFY_ERROR

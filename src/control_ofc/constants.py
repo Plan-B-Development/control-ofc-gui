@@ -73,7 +73,9 @@ HISTORY_DURATION_S = 7200  # 2 hours
 # Curves
 DEFAULT_CURVE_POINTS = 5
 
-# Calibration / fan wizard
+# Fan wizard: the fallback thermal limit for a daemon that does not publish
+# `limits.diagnostic_max_temp_c` (< 2.55.0). Read it through
+# `fan_wizard.thermal_limit_c`, never directly (`PTA-m`).
 THERMAL_ABORT_C = 85.0
 
 # Pages

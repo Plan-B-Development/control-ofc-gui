@@ -3661,13 +3661,11 @@ def parse_hwmon_verify_result(data: dict) -> HwmonVerifyResult:
     def _parse_state(raw: dict) -> HwmonVerifyState:
         return HwmonVerifyState(**_filter_fields(HwmonVerifyState, raw))
 
-    initial_raw = data.get("initial_state", {})
-    final_raw = data.get("final_state", {})
     return HwmonVerifyResult(
         header_id=data.get("header_id", ""),
         result=data.get("result", ""),
-        initial_state=_parse_state(initial_raw),
-        final_state=_parse_state(final_raw),
+        initial_state=_parse_state(data.get("initial_state") or {}),
+        final_state=_parse_state(data.get("final_state") or {}),
         test_pwm_percent=data.get("test_pwm_percent", 0),
         wait_seconds=data.get("wait_seconds", 0),
         details=data.get("details", ""),

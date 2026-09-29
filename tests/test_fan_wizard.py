@@ -174,6 +174,79 @@ class TestThermalGuard:
         assert not wizard.check_thermal_safe()
 
 
+class TestPublishedThermalLimit:
+    """`PTA-m`: the wizard's gate uses the daemon's published diagnostic limit,
+    with `THERMAL_ABORT_C` only as the fallback. Each case sits a CPU reading
+    BETWEEN the two figures, the only place the source of the limit shows."""
+
+    @staticmethod
+    def _state(cpu_c: float, limit_c: float | None, *, kind: str = "cpu_temp"):
+        from control_ofc.api.models import Capabilities, Limits
+
+        state = _make_wizard_state()
+        state.set_sensors(
+            [SensorReading(id="t", label="Tctl", kind=kind, value_c=cpu_c, age_ms=50)]
+        )
+        state.set_capabilities(Capabilities(limits=Limits(diagnostic_max_temp_c=limit_c)))
+        return state
+
+    def test_a_published_lower_limit_blocks_below_the_fallback(self, qtbot):
+        from control_ofc.constants import THERMAL_ABORT_C
+
+        assert THERMAL_ABORT_C > 80.0, "precondition: the reading is under the fallback"
+        state = self._state(80.0, 75.0)
+        wizard = FanConfigWizard(state)
+        qtbot.addWidget(wizard)
+        assert not wizard.check_thermal_safe()
+        page = IntroPage(state)
+        qtbot.addWidget(page)
+        page.initializePage()
+        assert "(80.0°C > 75°C)" in page._status_label.text()
+
+    def test_a_published_higher_limit_is_followed_too(self, qtbot):
+        from control_ofc.constants import THERMAL_ABORT_C
+
+        assert THERMAL_ABORT_C < 90.0, "precondition: the reading is over the fallback"
+        wizard = FanConfigWizard(self._state(90.0, 95.0))
+        qtbot.addWidget(wizard)
+        assert wizard.check_thermal_safe()
+
+    def test_an_unpublished_limit_falls_back_to_the_constant(self, qtbot):
+        from control_ofc.constants import THERMAL_ABORT_C
+
+        wizard = FanConfigWizard(self._state(THERMAL_ABORT_C + 1, None))
+        qtbot.addWidget(wizard)
+        assert wizard.thermal_limit_c() == THERMAL_ABORT_C
+        assert not wizard.check_thermal_safe()
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_a_non_finite_limit_falls_back_rather_than_disabling_the_gate(self, qtbot, bad):
+        from control_ofc.constants import THERMAL_ABORT_C
+
+        wizard = FanConfigWizard(self._state(THERMAL_ABORT_C + 1, bad))
+        qtbot.addWidget(wizard)
+        assert not wizard.check_thermal_safe()
+
+    def test_the_gate_stays_cpu_only(self, qtbot):
+        wizard = FanConfigWizard(self._state(99.0, 75.0, kind="gpu_temp"))
+        qtbot.addWidget(wizard)
+        assert wizard.check_thermal_safe()
+
+    def test_the_test_page_names_the_published_limit(self, qtbot):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        wizard = FanConfigWizard(state=self._state(80.0, 75.0), client=client)
+        qtbot.addWidget(wizard)
+        wizard._selected_indices = [0]
+        wizard._current_test_idx = 0
+        page = wizard._test_page
+        page.initializePage()
+        page._start_test()
+        client.fan_identify.assert_not_called()
+        assert "exceeds 75°C" in page._status_msg.text()
+
+
 # ---------------------------------------------------------------------------
 # R59 — RPM filtering, stop_fan errors, restore policy
 # ---------------------------------------------------------------------------

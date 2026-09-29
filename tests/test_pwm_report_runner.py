@@ -212,7 +212,11 @@ def test_a_confirmed_probe_sends_the_acknowledgement():
 def test_a_busy_slot_is_not_tested_and_moves_straight_on():
     runner = runner_for({CPU: {TEST_SWEEP}, SYS: {TEST_VERIFY}}, [channel(CPU), channel(SYS)])
     start = one(_through_preflight(runner, _start(runner), 0.0), CALL_START_SWEEP)
-    calls = runner.on_outcome(start.req_id, refused(409, "conflict", "busy"), 0.0)
+    # The daemon's busy slot, verbatim: 409, `validation_error`, not retryable.
+    busy = refused(
+        409, "validation_error", "a hardware verify or calibration is already in progress"
+    )
+    calls = runner.on_outcome(start.req_id, busy, 0.0)
     # No hand-back wait: the daemon wrote nothing.
     assert one(calls, CALL_PREFLIGHT).header_id == SYS
     step = runner.doc["steps"][0]
@@ -221,23 +225,24 @@ def test_a_busy_slot_is_not_tested_and_moves_straight_on():
     assert step["error"]["status"] == 409
 
 
-def test_a_thermal_refusal_is_recorded_as_protection_not_failure():
+# The daemon sends every safety refusal as 409 (`verify_thermal_guard`,
+# `stale_temperature_guard`), the same status as a busy slot (DC-cl).
+@pytest.mark.parametrize(
+    ("code", "message", "retryable"),
+    [
+        ("thermal_abort", "Cannot run a fan verify while hot: cpu at 86.0°C (limit 85°C).", False),
+        ("validation_error", "thermal safety is forcing fan output (emergency)", True),
+        ("validation_error", "fan verify cannot run: no fresh temperature reading", True),
+    ],
+    ids=["too-hot", "forcing", "stale-temperatures"],
+)
+def test_a_safety_refusal_is_protection_not_a_busy_slot(code, message, retryable):
     runner = runner_for({CPU: {TEST_VERIFY}}, [channel(CPU)])
     verify = one(_through_preflight(runner, _start(runner), 0.0), CALL_VERIFY)
-    runner.on_outcome(verify.req_id, refused(409, "thermal_abort", "85 C"), 0.0)
+    runner.on_outcome(verify.req_id, refused(409, code, message, retryable=retryable), 0.0)
     step = runner.doc["steps"][0]
     assert step["status"] == d.STEP_NOT_TESTED
-
-
-def test_a_retryable_validation_refusal_is_protection_too():
-    runner = runner_for({CPU: {TEST_VERIFY}}, [channel(CPU)])
-    verify = one(_through_preflight(runner, _start(runner), 0.0), CALL_VERIFY)
-    runner.on_outcome(
-        verify.req_id, refused(400, "validation_error", "forcing", retryable=True), 0.0
-    )
-    step = runner.doc["steps"][0]
-    assert step["status"] == d.STEP_NOT_TESTED
-    assert "declined for safety" in step["reason"]
+    assert step["reason"] == f"The daemon declined for safety: {message}"
 
 
 def test_a_verify_timeout_waits_for_the_handback_before_moving_on():

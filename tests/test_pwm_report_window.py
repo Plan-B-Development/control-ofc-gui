@@ -942,9 +942,9 @@ def _header_test_buttons(page) -> list[QPushButton]:
 def test_a_hardware_page_verify_refuses_the_reports_start_and_names_the_page(
     qtbot, tmp_path, monkeypatch, settings_service
 ):
-    """Driven through the header card's real *Test* click. Two are queued, so
-    the first answer must not clear the record while the second is pending —
-    the reason the in-flight record is a count."""
+    """Driven through the header card's real *Test* click. Since `PTA-n` a
+    second click while the first runs queues nothing — the card is stood down —
+    so one answer clears the record."""
     from control_ofc.api.models import HwmonVerifyResult
 
     page, _state_unused = _hardware_page(qtbot, tmp_path, monkeypatch, settings_service)
@@ -958,13 +958,12 @@ def test_a_hardware_page_verify_refuses_the_reports_start_and_names_the_page(
         test_btn = _header_test_buttons(page)[0]
         test_btn.click()
         test_btn.click()
+        assert page._verifies_in_flight == 1, "the second click queued no second probe"
         (reason,) = window.refusals()
         assert "on the Hardware page is still running" in reason
         assert "System State" not in reason, "the reason names the page the verify came from"
-        page._on_verify_error("error", "not under test", CPU)
-        assert window.refusals(), "the second verify is still in flight"
         page._on_verify_ok(HwmonVerifyResult(header_id=CPU, result="effective"), CPU)
-        assert window.refusals() == [], "the refusal clears when both have answered"
+        assert window.refusals() == [], "the refusal clears when the verify has answered"
         # Both pages at once name both.
         page.set_local_verify_query(lambda: True)
         test_btn.click()

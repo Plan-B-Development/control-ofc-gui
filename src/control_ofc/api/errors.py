@@ -66,3 +66,34 @@ class DaemonTimeout(DaemonError):
     message: str = field(default="daemon did not respond within the timeout")
     retryable: bool = field(default=True)
     source: str = field(default="connection")
+
+
+def is_soft_safety_refusal(code: str, retryable: bool) -> bool:
+    """True for a daemon refusal that is protection, not failure (DEC-201/297).
+
+    Two codes mean the same thing to a user: the daemon declined to disturb a fan
+    because of thermal state, and it will accept the same request later.
+
+    - ``thermal_abort`` — above the diagnostic temperature limit (DEC-201).
+    - ``validation_error`` with ``retryable`` — the thermal ladder is actively
+      forcing a duty (DEC-297). The limit check cannot see this: the emergency
+      latches at a trip point of at least 105 degC and releases only at 80 degC,
+      so the band between is hot enough to be forcing and cool enough to pass the
+      limit check. Since DEC-308 the trip point is per-machine (derived from the
+      CPU's own reported ceiling, floored at 105), which only widens that band.
+    - ``validation_error`` with ``retryable`` — since DEC-385, every temperature
+      reading is too old to trust, so neither check above can be evaluated. Not
+      "too hot": the machine may be cool and the daemon cannot tell; its message
+      says to retry once sensor polling recovers.
+
+    The daemon sends all three as ``409`` — and a busy diagnostic slot as ``409``
+    too (``validation_error``, not retryable) — so the HTTP status cannot tell
+    protection from a busy slot; this predicate can (``DC-cl``).
+
+    Keyed on ``retryable`` rather than on the message text, which is daemon prose
+    and not part of the contract. Shared by the verify workers and the PWM Test
+    Report runner so they cannot drift on what counts as a refusal.
+    """
+    if code == "thermal_abort":
+        return True
+    return code == "validation_error" and bool(retryable)

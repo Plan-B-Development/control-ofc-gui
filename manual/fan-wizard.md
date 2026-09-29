@@ -21,7 +21,7 @@ Explains the process and runs pre-flight checks. The **Next** button stays disab
 - the daemon is connected, and
 - at least one controllable fan output was detected.
 
-The intro page also checks CPU temperature: if any CPU sensor is above 85°C it shows a red **"Cannot proceed"** warning urging you to let the system idle and cool. The 85°C limit is then *enforced* at the moment a fan test starts — the wizard **aborts the individual fan test** ("too hot to test safely") rather than spinning a fan down while the CPU is hot. Your system should be **idle and cool** before running it.
+The intro page also checks CPU temperature: if any CPU sensor is above the diagnostic temperature limit (85°C) it shows a red **"Cannot proceed"** warning urging you to let the system idle and cool. The limit is the one the daemon publishes for its hardware tests, so the wizard and the PWM Test Report always name the same figure; with a daemon older than 2.55.0, which publishes none, the wizard uses 85°C. The limit is then *enforced* at the moment a fan test starts — the wizard **aborts the individual fan test** ("too hot to test safely") rather than spinning a fan down while the CPU is hot. Your system should be **idle and cool** before running it.
 
 When everything is in order it reports "Ready — *N* controllable fan(s) detected."
 
@@ -75,7 +75,7 @@ A summary table (ID, Source, New Label) where every label is still editable — 
 
 ## Safety Features
 
-- **Thermal abort:** CPU temperature is checked before and during every test. If any CPU sensor exceeds **85°C**, the test aborts immediately and the fan is restored.
+- **Thermal abort:** CPU temperature is checked before and during every test. If any CPU sensor exceeds the diagnostic temperature limit (**85°C**; see above), the test aborts immediately and the fan is restored. This check is the wizard's own: the daemon does not apply its temperature limit to the wizard's fan stops, so the wizard never skips it.
 - **One fan at a time:** the wizard asks the daemon to change only the fan you are identifying. Every other fan keeps running on its curve — there is no global pause and the daemon stays in charge throughout.
 - **A pump is never stopped:** the daemon decides what "identify" means for each header from its role. An ordinary fan is stopped. A pump is *shifted* — moved clear of its current speed, upward where there is room, and never below its 30% safety floor — so coolant keeps flowing throughout. If your pump is on a header the daemon cannot classify (common on boards that publish no fan labels), tell it which header is the pump first — **Set role… ▸ Pump** on that header's card on the **Hardware** page, or **Controls ▸ Set up ▾ ▸ Configure AIO**, which asks exactly that as its first step. Otherwise the pump is treated as an ordinary fan and stopped — unless the active profile's name for that fan contains "pump" or "AIO", which protects it only while that profile is active, and only with `control-ofc-daemon` v2.50.0 or newer.
 - **Daemon-enforced auto-restore:** each test is a daemon request with a built-in deadman timer, so even if the GUI closes or crashes mid-test the daemon restores that fan on its own. Finishing, cancelling, aborting a test, or closing the wizard also restore the tested fan. On restore the daemon simply removes the identify entry, and the fan resumes its normal curve control on the next daemon tick (1 Hz) — there is no separate fallback speed.

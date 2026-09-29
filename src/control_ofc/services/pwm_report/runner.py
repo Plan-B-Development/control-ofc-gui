@@ -36,6 +36,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from control_ofc.api.errors import is_soft_safety_refusal
 from control_ofc.services.pwm_report import document as d
 from control_ofc.services.pwm_report.catalog import (
     SPECS,
@@ -586,9 +587,10 @@ class ReportRunner:
         """Record a start the daemon did not run. Returns whether it may have
         written anything (a timeout may have), which decides the hand-back wait.
 
-        A refusal is never a hardware verdict: 409 is a busy slot, a thermal or
-        retryable refusal is protection, and an ineligible header is the
-        daemon's envelope doing its job.
+        A refusal is never a hardware verdict: a thermal or retryable refusal is
+        protection, any other 409 is a busy slot, and an ineligible header is the
+        daemon's envelope doing its job. Protection is tested first because the
+        daemon sends it as 409 too (``DC-cl``).
         """
         step["error"] = {
             "status": outcome.status,
@@ -605,12 +607,10 @@ class ReportRunner:
                 "restores the header itself when it ends.",
             )
             return True
-        if outcome.status == 409:
-            reason = "Another diagnostic was already running on the daemon."
-        elif outcome.error_code == "thermal_abort" or (
-            outcome.error_code == "validation_error" and outcome.retryable
-        ):
+        if is_soft_safety_refusal(outcome.error_code, outcome.retryable):
             reason = f"The daemon declined for safety: {outcome.error_message}"
+        elif outcome.status == 409:
+            reason = "Another diagnostic was already running on the daemon."
         else:
             reason = f"The daemon did not run it: {outcome.error_message}"
         self._end_step(step, d.STEP_NOT_TESTED, reason)

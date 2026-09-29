@@ -249,6 +249,18 @@ def test_show_verify_result_effective(qtbot):
     assert page._verify_result_label.property("class") == "SuccessChip"
 
 
+def test_show_verify_result_names_a_failed_restore(qtbot):
+    """`TS-bk`: a pass whose restore failed is shown, and raised to a warning."""
+    page, _ = _page(qtbot)
+    page._show_verify_result(
+        HwmonVerifyResult(
+            header_id="pwm1", result="effective", test_pwm_percent=20, restore_failed=True
+        )
+    )
+    assert "Restore:" in page._verify_result_label.text()
+    assert page._verify_result_label.property("class") == "WarningChip"
+
+
 def test_show_verify_result_reverted_is_critical(qtbot):
     page, _ = _page(qtbot)
     page._show_verify_result(HwmonVerifyResult(header_id="pwm1", result="pwm_enable_reverted"))

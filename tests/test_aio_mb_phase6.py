@@ -15,6 +15,7 @@ So the tests that matter are the ones asserting the GUI does not *lose* or
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtWidgets import QLabel, QPushButton
 
 from control_ofc.api.models import (
@@ -2208,3 +2209,168 @@ class TestWorkerRequestSignalsReachTheirWorker:
         assert page._ensure_char_worker() is False
         assert page._ensure_validation_worker() is False
         assert page._char_thread is None and page._validation_thread is None
+
+
+# ── `PTA-n`: this page's own verify stands the header tests down ─────────────
+
+
+def _card_buttons(page) -> list[QPushButton]:
+    return [
+        b
+        for card in page._header_cards.values()
+        for b in card.findChildren(QPushButton)
+        if b.objectName().startswith(
+            ("HeaderCard_Btn_test_", "HeaderCard_Btn_characterize_", "HeaderCard_Btn_discover_")
+        )
+    ]
+
+
+def _verify_page(qtbot):
+    page, state = _page(qtbot)
+    page._ensure_verify_worker = lambda: True  # type: ignore[method-assign]
+    requested: list[str] = []
+    page._verify_request.connect(requested.append)
+    return page, state, requested
+
+
+def _click_test(page, header_id: str) -> None:
+    card = page._header_cards[header_id]
+    card.findChild(QPushButton, f"HeaderCard_Btn_test_{_slug(header_id)}").click()
+
+
+def test_a_verify_stands_every_header_test_down_until_it_answers(qtbot):
+    from control_ofc.api.models import HwmonVerifyResult
+    from control_ofc.ui.pages.hardware_page import VERIFY_ACTIVE_REASON
+
+    page, _state, requested = _verify_page(qtbot)
+    enabled_before = [b for b in _card_buttons(page) if b.isEnabled()]
+    assert len(enabled_before) >= 2, "precondition: live buttons on both cards"
+    _click_test(page, _fan_header().id)
+    assert requested == [_fan_header().id]
+    assert not any(b.isEnabled() for b in enabled_before)
+    assert all(b.toolTip() == VERIFY_ACTIVE_REASON for b in enabled_before)
+    page._on_verify_ok(HwmonVerifyResult(header_id=_fan_header().id, result="effective"), "")
+    assert all(b.isEnabled() for b in enabled_before)
+
+
+def test_a_verify_error_releases_the_header_tests_too(qtbot):
+    page, _state, _requested = _verify_page(qtbot)
+    test_btn = page._header_cards[_fan_header().id].findChild(
+        QPushButton, f"HeaderCard_Btn_test_{_slug(_fan_header().id)}"
+    )
+    _click_test(page, _fan_header().id)
+    assert not test_btn.isEnabled()
+    page._on_verify_error("error", "boom", _fan_header().id)
+    assert test_btn.isEnabled()
+
+
+def test_a_second_request_during_a_verify_sends_no_second_probe(qtbot):
+    """The entry point holds the rule as well as the buttons."""
+    from control_ofc.ui.pages.hardware_page import VERIFY_ACTIVE_REASON
+
+    page, _state, requested = _verify_page(qtbot)
+    page._run_pwm_verify(_fan_header().id)
+    page._run_pwm_verify(_pump_header().id)
+    assert requested == [_fan_header().id]
+    assert page._verifies_in_flight == 1
+    assert page._diag_result.text() == VERIFY_ACTIVE_REASON
+
+
+def test_the_report_and_a_verify_combine_rather_than_clear_each_other(qtbot):
+    """One block reason, two holders: the end of either must not release the
+    cards while the other still holds the slot."""
+    from control_ofc.api.models import HwmonVerifyResult
+    from control_ofc.ui.pages.hardware_page import VERIFY_ACTIVE_REASON
+    from control_ofc.ui.pages.pwm_report_controller import RUN_ACTIVE_REASON
+
+    page, _state, _requested = _verify_page(qtbot)
+    test_btn = page._header_cards[_fan_header().id].findChild(
+        QPushButton, f"HeaderCard_Btn_test_{_slug(_fan_header().id)}"
+    )
+    _click_test(page, _fan_header().id)
+    page._on_report_active(True)
+    assert test_btn.toolTip() == RUN_ACTIVE_REASON
+    page._on_report_active(False)
+    assert not test_btn.isEnabled() and test_btn.toolTip() == VERIFY_ACTIVE_REASON
+    page._on_report_active(True)
+    page._on_verify_ok(HwmonVerifyResult(header_id=_fan_header().id, result="effective"), "")
+    assert not test_btn.isEnabled() and test_btn.toolTip() == RUN_ACTIVE_REASON
+    page._on_report_active(False)
+    assert test_btn.isEnabled()
+
+
+def test_a_card_created_mid_verify_comes_up_stood_down(qtbot):
+    from control_ofc.ui.pages.hardware_page import VERIFY_ACTIVE_REASON
+
+    page, _state, _requested = _verify_page(qtbot)
+    _click_test(page, _fan_header().id)
+    page._header_cards.clear()
+    page._refresh_cooling_section()
+    test_btn = page._header_cards[_pump_header().id].findChild(
+        QPushButton, f"HeaderCard_Btn_test_{_slug(_pump_header().id)}"
+    )
+    assert not test_btn.isEnabled() and test_btn.toolTip() == VERIFY_ACTIVE_REASON
+
+
+# ── `TS-bk`: a failed hwmon verify restore is shown ──────────────────────────
+
+
+def _restore_failed_result(result="effective", **kw):
+    from control_ofc.api.models import HwmonVerifyResult, HwmonVerifyState
+
+    return HwmonVerifyResult(
+        header_id=_fan_header().id,
+        result=result,
+        initial_state=kw.pop("initial", HwmonVerifyState(pwm_percent=65, rpm=1200)),
+        final_state=HwmonVerifyState(pwm_percent=20, rpm=700),
+        test_pwm_percent=kw.pop("test_pct", 20),
+        restore_failed=kw.pop("restore_failed", True),
+    )
+
+
+def test_a_failed_restore_is_its_own_line_naming_both_duties():
+    view = build_verify_result_view(_restore_failed_result())
+    (line,) = [ln for ln in view.lines if ln.startswith("Restore:")]
+    assert "test duty (20%)" in line
+    assert "It was at 65% before the test." in line
+    # One boolean, three causes: the sentence names each rather than guessing.
+    for cause in ("another diagnostic", "stopping", "write failed"):
+        assert cause in line
+
+
+def test_no_restore_line_when_the_restore_landed():
+    view = build_verify_result_view(_restore_failed_result(restore_failed=False))
+    assert not any(ln.startswith("Restore:") for ln in view.lines)
+    assert view.chip_class == "SuccessChip"
+
+
+def test_unreported_duties_are_left_out_not_invented():
+    from control_ofc.api.models import HwmonVerifyState
+
+    view = build_verify_result_view(
+        _restore_failed_result(initial=HwmonVerifyState(rpm=1200), test_pct=0)
+    )
+    (line,) = [ln for ln in view.lines if ln.startswith("Restore:")]
+    assert "%" not in line
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("effective", "WarningChip"),  # a pass is raised to a warning
+        ("rpm_unavailable", "WarningChip"),  # a neutral result is raised too
+        ("pwm_enable_reverted", "CriticalChip"),  # never lowered
+    ],
+)
+def test_a_failed_restore_is_at_least_a_warning(token, expected):
+    assert build_verify_result_view(_restore_failed_result(token)).chip_class == expected
+
+
+def test_the_hardware_page_colours_the_result_and_resets_after_it(qtbot):
+    page, _state = _page(qtbot)
+    page._on_verify_ok(_restore_failed_result(), _fan_header().id)
+    label = page._diag_result
+    assert "Restore:" in label.text()
+    assert label.property("class") == "WarningChip"
+    page._show_diag_message("Cannot test: no daemon connection.")
+    assert label.property("class") == "", "a later plain message does not inherit the colour"

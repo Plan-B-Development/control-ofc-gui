@@ -601,3 +601,56 @@ def test_a_non_header_channel_keeps_its_name_in_a_collision():
     channels = _two_chip_channels(fans=[fan("openfan:ch01", source="openfan")])
     names = {c.channel_id: c.name for c in channels}
     assert names["openfan:ch01"] == "ch01"
+
+
+# ── `PTA-o`: names that chip and device cannot separate ──────────────────────
+
+
+def _channels(raw_headers=(), raw_fans=(), *, name_of):
+    from control_ofc.api.models import parse_fans, parse_hwmon_headers
+    from control_ofc.services.pwm_report.catalog import build_channels
+
+    return build_channels(
+        parse_hwmon_headers({"headers": list(raw_headers)}),
+        parse_fans({"fans": list(raw_fans)}),
+        None,
+        name_of=name_of,
+    )
+
+
+def test_two_openfan_channels_named_alike_get_their_stable_ids():
+    from tests.pwm_report_fixtures import fan
+
+    ids = ("openfan:ch01", "openfan:ch02")
+    channels = _channels(
+        raw_fans=[fan(i, source="openfan") for i in ids], name_of=lambda _cid: "Front intake"
+    )
+    names = {c.channel_id: c.name for c in channels}
+    assert names == {i: f"Front intake ({i})" for i in ids}
+
+
+def test_headers_with_no_chip_name_get_their_stable_ids():
+    from tests.pwm_report_fixtures import header
+
+    ids = ("hwmon:a:d1:pwm1:pwm1", "hwmon:b:d2:pwm1:pwm1")
+    raw = []
+    for hid in ids:
+        h = header(hid)
+        h["chip_name"], h["device_id"] = "", ""
+        raw.append(h)
+    names = {c.channel_id: c.name for c in _channels(raw, name_of=lambda _cid: "pwm1")}
+    assert names == {i: f"pwm1 ({i})" for i in ids}
+
+
+def test_a_same_device_pair_aliased_alike_gets_its_stable_ids():
+    """Chip and device are the same, so passes 1 and 2 cannot separate them."""
+    from tests.pwm_report_fixtures import header
+
+    ids = ("hwmon:it8696:it87.2624:pwm1:pwm1", "hwmon:it8696:it87.2624:pwm2:pwm2")
+    raw = []
+    for hid in ids:
+        h = header(hid)
+        h["chip_name"], h["device_id"] = "it8696", "it87.2624"
+        raw.append(h)
+    names = {c.channel_id: c.name for c in _channels(raw, name_of=lambda _cid: "Rear")}
+    assert names == {i: f"Rear ({i})" for i in ids}

@@ -25,6 +25,7 @@ Uses QWizard for standard multi-step navigation with Back/Next/Finish/Cancel.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -119,15 +120,39 @@ def _slug(fan_id: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", fan_id).strip("_")
 
 
-def _hot_cpu_sensor(sensors):
-    """The first CPU sensor over the thermal-abort threshold, or ``None``.
+def thermal_limit_c(capabilities: object | None) -> float:
+    """The temperature above which the wizard will not stop a fan (`PTA-m`).
+
+    The daemon's published ``limits.diagnostic_max_temp_c`` where it has one
+    (daemon >= 2.55.0), so this and the PWM Test Report's consent text name the
+    same figure; :data:`THERMAL_ABORT_C` only for a daemon that does not publish
+    it. **This check is the wizard's own gate, not a copy of the daemon's**: the
+    wizard stops fans through ``POST /fans/{id}/identify``, which has no
+    temperature gate, so nothing else holds an identify stop to this limit (the
+    thermal emergency is the backstop). It stays CPU-only, where the daemon's
+    diagnostic check reads every sensor. A non-finite figure falls back too: no
+    reading compares greater than NaN, so it would switch the gate off.
+    """
+    limits = getattr(capabilities, "limits", None)
+    limit_c = getattr(limits, "diagnostic_max_temp_c", None)
+    if (
+        isinstance(limit_c, (int, float))
+        and not isinstance(limit_c, bool)
+        and math.isfinite(limit_c)
+    ):
+        return float(limit_c)
+    return THERMAL_ABORT_C
+
+
+def _hot_cpu_sensor(sensors, limit_c: float):
+    """The first CPU sensor over *limit_c*, or ``None``.
 
     The single copy of the wizard's thermal-safety rule — used by both the
-    pre-flight gate (IntroPage) and the live per-tick guard (IdentifyFanPage), so
-    the threshold lives in exactly one place.
+    pre-flight gate (IntroPage) and the live per-tick guard (IdentifyFanPage).
+    Both take the limit from :func:`thermal_limit_c`, so it lives in one place.
     """
     for s in sensors:
-        if s.kind.lower().startswith("cpu") and s.value_c > THERMAL_ABORT_C:
+        if s.kind.lower().startswith("cpu") and s.value_c > limit_c:
             return s
     return None
 
@@ -378,9 +403,13 @@ class FanConfigWizard(QWizard):
         except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Failed to restore fan %s: %s", fan_id, e)
 
+    def thermal_limit_c(self) -> float:
+        """The limit :meth:`check_thermal_safe` applies — see :func:`thermal_limit_c`."""
+        return thermal_limit_c(getattr(self._state, "capabilities", None))
+
     def check_thermal_safe(self) -> bool:
-        """Whether no CPU sensor exceeds the thermal-abort threshold."""
-        return _hot_cpu_sensor(self._state.sensors) is None
+        """Whether no CPU sensor exceeds :meth:`thermal_limit_c`."""
+        return _hot_cpu_sensor(self._state.sensors, self.thermal_limit_c()) is None
 
     def accept(self) -> None:
         """Save labels and clean up on Finish."""
@@ -468,9 +497,10 @@ class IntroPage(QWizardPage):
             errors.append("Daemon is not connected.")
         if not self._state.fans:
             errors.append("No controllable fan outputs detected.")
-        hot = _hot_cpu_sensor(self._state.sensors)
+        limit_c = thermal_limit_c(getattr(self._state, "capabilities", None))
+        hot = _hot_cpu_sensor(self._state.sensors, limit_c)
         if hot is not None:
-            errors.append(f"CPU temperature too high ({hot.value_c:.1f}°C > {THERMAL_ABORT_C}°C).")
+            errors.append(f"CPU temperature too high ({hot.value_c:.1f}°C > {limit_c:g}°C).")
 
         if errors:
             self._status_label.setText("Cannot proceed:\n• " + "\n• ".join(errors))
@@ -1180,7 +1210,8 @@ class IdentifyFanPage(QWizardPage):
         # Thermal check
         if not self._wizard.check_thermal_safe():
             self._status_msg.setText(
-                f"ABORTED: CPU temperature exceeds {THERMAL_ABORT_C}°C — too hot to test safely."
+                f"ABORTED: CPU temperature exceeds {self._wizard.thermal_limit_c():g}°C — "
+                "too hot to test safely."
             )
             self._status_msg.setProperty("class", "CriticalChip")
             return
@@ -1233,7 +1264,8 @@ class IdentifyFanPage(QWizardPage):
         if not self._wizard.check_thermal_safe():
             self._abort_test()
             self._status_msg.setText(
-                f"ABORTED: CPU temperature exceeded {THERMAL_ABORT_C}°C during test."
+                f"ABORTED: CPU temperature exceeded {self._wizard.thermal_limit_c():g}°C "
+                "during test."
             )
             self._status_msg.setProperty("class", "CriticalChip")
             return

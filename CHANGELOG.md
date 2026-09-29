@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The fan wizard uses the daemon's published diagnostic temperature limit** (`PTA-m`). It
+  checked a copy of 85 °C built into the GUI; it now reads `limits.diagnostic_max_temp_c`, the
+  figure the PWM Test Report already names, and keeps 85 °C only for a daemon older than 2.55.0.
+  The check stays CPU-only. It is the only temperature gate on a wizard fan stop.
+- **Characterisation timings are shown at the tach's resolution** (`PTR-ad`). The *Response
+  latency* and *Settling time* medians read as bare milliseconds ("1500 ms"). They are now rounded
+  to the tach update rate, never below one update, and name it: "~2 s (tach updates every 1 s)".
+  When the daemon could not establish the rate, *Measurement resolution* reads "unknown" (it used
+  to be left out) and the medians are given in whole seconds, marked "tach resolution unknown".
+
+### Fixed
+
+- **A PWM Test Report step refused for safety no longer says another test was running**
+  (`DC-cl`). The daemon sends a refusal for heat, an active thermal force or stale temperatures
+  as `409`, the same status as a busy slot, so every such step read "Another diagnostic was
+  already running on the daemon." It now reads "The daemon declined for safety", with the
+  daemon's reason.
+- **A failed hwmon verify restore is shown** (`TS-bk`). When the daemon could not put a header
+  back after *Test PWM Control* — another test took it over, the daemon was stopping, or the
+  restore write failed — the result now says so on a *Restore:* line, naming the test duty and
+  the duty before the test, and is shown as at least a warning. The Hardware page's result is now
+  coloured by its verdict, as System State's already was.
+- **The Hardware page's header tests stand down while its own test runs** (`PTA-n`). *Test
+  Control* stayed enabled during a test on that page, so a second press queued a second hardware
+  test behind the first. Every header card's three tests are now unavailable until it finishes.
+- **A verify that fails in an unexpected way still answers** (`PTA-p`). An error outside the
+  daemon-error family (for example, a malformed response) was swallowed, so the page never
+  cleared its "test running" record and the PWM Test Report refused to start until restart. It
+  is now reported as a failed test.
+- **The PWM Test Report tells apart channels that still share a name** (`PTA-o`). Two OpenFan or
+  GPU channels named alike, headers that publish no chip name, and two headers on one chip and
+  device that were aliased alike were listed under one name. Their channel id is now added.
+- **A characterisation's pre-run duty is labelled a reading** (`PTR-ac`). The validation export's
+  provenance legend listed `original_pct` as COMMANDED; it is read from the header before the run,
+  and the daemon's legend already says OBSERVED.
+
 ## [3.1.0] — 2026-09-29
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. OpenFan channel

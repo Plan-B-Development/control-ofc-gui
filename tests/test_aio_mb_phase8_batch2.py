@@ -319,7 +319,9 @@ class TestViewModel:
         detail = {row.label: row.value for row in view.detail_rows}
         run_summary = _bidi_run().summary
         assert run_summary is not None and run_summary.typical_response_ms is not None
-        assert detail["Response latency (median)"] == f"{run_summary.typical_response_ms} ms"
+        # `PTR-ad`: against the resolution, in seconds — never bare milliseconds.
+        # The fixture's 1500 ms at a 500 ms cadence is exactly three updates.
+        assert detail["Response latency (median)"] == "~1.5 s (tach updates every 0.5 s)"
         assert "Response time" not in labels, (
             "the client recomputation must not be rendered alongside the daemon's"
         )
@@ -357,9 +359,42 @@ class TestViewModel:
         rows = {
             r.label: r.value for r in build_characterization_view(run, header_label="P").detail_rows
         }
-        assert rows["Measurement resolution"] == "500 ms"
+        assert rows["Measurement resolution"] == "0.5 s"
         assert rows["Sample interval"] == "500 ms"
         assert "Settling criterion" in rows
+
+    # ── `PTR-ad`: median timings are no finer than the tach cadence ──────────
+
+    def test_a_median_is_rounded_to_the_resolution_and_names_it(self):
+        run = _bidi_run(
+            measurement_resolution_ms=1000, typical_response_ms=1500, typical_settling_ms=2400
+        )
+        rows = {
+            r.label: r.value for r in build_characterization_view(run, header_label="P").detail_rows
+        }
+        assert rows["Response latency (median)"] == "~2 s (tach updates every 1 s)"
+        assert rows["Settling time (median)"] == "~2 s (tach updates every 1 s)"
+        assert rows["Measurement resolution"] == "1 s"
+
+    def test_a_sub_resolution_median_reads_one_update_never_zero(self):
+        run = _bidi_run(measurement_resolution_ms=1000, typical_response_ms=300)
+        rows = {
+            r.label: r.value for r in build_characterization_view(run, header_label="P").detail_rows
+        }
+        assert rows["Response latency (median)"] == "~1 s (tach updates every 1 s)"
+
+    def test_an_unknown_resolution_says_so_and_claims_no_sub_second_figure(self):
+        """docs/08: `null` is UNKNOWN — not the sample interval, and not omitted."""
+        run = _bidi_run(measurement_resolution_ms=None, typical_response_ms=1523)
+        run.points[0].stability = PointStability(
+            samples=12, usable=12, verdict="stable", sample_interval_ms=500
+        )
+        rows = {
+            r.label: r.value for r in build_characterization_view(run, header_label="P").detail_rows
+        }
+        assert rows["Sample interval"] == "500 ms", "precondition: an interval was on offer"
+        assert rows["Measurement resolution"] == "unknown"
+        assert rows["Response latency (median)"] == "~2 s (tach resolution unknown)"
 
     def test_dropouts_are_only_reported_when_something_measured_them(self):
         """Absence is not zero: "0 dropouts" from a daemon that measured nothing

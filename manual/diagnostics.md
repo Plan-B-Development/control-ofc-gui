@@ -227,7 +227,7 @@ Reports are saved as you go to `~/.local/share/control-ofc/reports/` and are nev
 
 The report will not start in demo mode, while the daemon's thermal protection is active, or while another test or a validation session is running. That includes a **Verify All Writable** run on System State and a **Test Control** on a Hardware page header card, which must finish first. The message names the page the test was started on. In demo mode the window still opens on your saved reports, so you can open, compare and export them.
 
-On a board with two fan chips, two headers can have the same name, such as `pwm2`. The report adds the chip to those names, as in `pwm2 (it8696)`, so you can tell which is which. A validation session window you opened before the report started stays open, but its **Start** is refused until the report finishes.
+On a board with two fan chips, two headers can have the same name, such as `pwm2`. The report adds the chip to those names, as in `pwm2 (it8696)`, so you can tell which is which. Where the chip cannot tell them apart — two OpenFan or GPU channels you named alike, or two headers on the same chip with the same name — the report adds the channel's id instead. A validation session window you opened before the report started stays open, but its **Start** is refused until the report finishes.
 
 ### Super-I/O Architecture
 

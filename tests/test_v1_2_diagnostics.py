@@ -308,6 +308,17 @@ class TestVerifyResultParsing:
         result = parse_hwmon_verify_result(data)
         assert result.restore_failed is True
 
+    def test_parse_null_states_default_rather_than_raise(self):
+        """`PTA-p`: a `null` state (a foreign or malformed response) parses to an
+        empty state, as the GPU sibling already does, instead of raising
+        `TypeError` inside the verify worker's slot."""
+        from control_ofc.api.models import HwmonVerifyState, parse_hwmon_verify_result
+
+        data = {"header_id": "h", "result": "effective", "initial_state": None, "final_state": None}
+        result = parse_hwmon_verify_result(data)
+        assert result.initial_state == HwmonVerifyState()
+        assert result.final_state == HwmonVerifyState()
+
 
 # ---------------------------------------------------------------------------
 # System State page — re-vehicled PWM-clamped verify result

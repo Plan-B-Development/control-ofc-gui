@@ -84,8 +84,10 @@ _FIXED: dict[str, str] = {
     "perturbed_pct": PROVENANCE_COMMANDED,
     "delta_pct": PROVENANCE_COMMANDED,
     "test_pwm_percent": PROVENANCE_COMMANDED,
-    "original_pct": PROVENANCE_COMMANDED,
     # Observed — read back from sysfs.
+    # `original_pct` is the duty READ from the header before a run, never one
+    # anyone commanded; the daemon's legend says OBSERVED too (`PTR-ac`).
+    "original_pct": PROVENANCE_OBSERVED,
     "readback_pct": PROVENANCE_OBSERVED,
     "readback_raw": PROVENANCE_OBSERVED,
     "pwm_readback_pct": PROVENANCE_OBSERVED,

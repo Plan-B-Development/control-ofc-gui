@@ -96,6 +96,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _VerifyWorker,
 )
 from control_ofc.ui.pages.pwm_report_controller import RUN_ACTIVE_REASON, PwmReportController
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.readiness_merge import ACTION_NONE
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
@@ -125,6 +126,14 @@ if TYPE_CHECKING:
     from control_ofc.services.app_state import AppState
 
 log = logging.getLogger(__name__)
+
+#: Why a header card's tests stand down while this page's own verify runs
+#: (`PTA-n`). The daemon has one diagnostic slot, so a second press would only
+#: queue a second probe behind the first.
+VERIFY_ACTIVE_REASON = (
+    "A PWM control test is running on this page. The header tests are available "
+    "again when it finishes."
+)
 
 _SUPERIO_COLS = [
     "Chip",
@@ -797,7 +806,7 @@ class HardwarePage(QWidget):
                 card.discover_requested.connect(self._open_control_path_discovery)
                 card.role_change_requested.connect(self._on_role_change_requested)
                 # A header that appears mid-run stands down like the others.
-                card.set_diagnostics_blocked(RUN_ACTIVE_REASON if self._report_active else "")
+                card.set_diagnostics_blocked(self._header_block_reason())
                 self._header_cards[view.header_id] = card
                 self._header_flow.insertWidget(index, card)
             else:
@@ -1375,9 +1384,35 @@ class HardwarePage(QWidget):
         if not self._ensure_verify_worker():
             self._show_diag_message("Cannot test: no daemon connection.")
             return
+        if self._verifies_in_flight:
+            # `PTA-n`: the cards are stood down, but this is the one entry point
+            # every *Test* reaches — so the rule lives here too.
+            self._show_diag_message(VERIFY_ACTIVE_REASON)
+            return
         self._show_diag_message("Testing PWM control… (about 10 seconds)")
         self._verifies_in_flight += 1
+        self._apply_header_block()
         self._verify_request.emit(header_id)
+
+    def _header_block_reason(self) -> str:
+        """Why the header cards' three tests are stood down, or ``""`` (`PTA-n`).
+
+        The cards have ONE block reason, so the two things that hold the
+        daemon's diagnostic slot for this page — a report run and this page's
+        own verify — are combined here rather than each setting it and the
+        other's release clearing it. The report outranks the verify: it is the
+        longer wait, and its end is what the user is waiting for.
+        """
+        if self._report_active:
+            return RUN_ACTIVE_REASON
+        if self._verifies_in_flight:
+            return VERIFY_ACTIVE_REASON
+        return ""
+
+    def _apply_header_block(self) -> None:
+        reason = self._header_block_reason()
+        for card in self._header_cards.values():
+            card.set_diagnostics_blocked(reason)
 
     # `requested_header_id` is the header the worker was asked about (row
     # `ACK-n`). This page has no sweep to attribute a result to (each result
@@ -1386,17 +1421,20 @@ class HardwarePage(QWidget):
     @Slot(object, str)
     def _on_verify_ok(self, result: HwmonVerifyResult, requested_header_id: str) -> None:
         self._verifies_in_flight = max(0, self._verifies_in_flight - 1)
+        self._apply_header_block()
         header = None
         if self._state:
             header = next((h for h in self._state.hwmon_headers if h.id == result.header_id), None)
         view = build_verify_result_view(
             result, header=header, diagnostics=getattr(self._diag, "last_hw_diagnostics", None)
         )
-        self._show_diag_message(view.text)
+        # The same colour System State gives the same result (`TS-bk`).
+        self._show_diag_message(view.text, chip_class=view.chip_class)
 
     @Slot(str, str, str)
     def _on_verify_error(self, category: str, message: str, requested_header_id: str) -> None:
         self._verifies_in_flight = max(0, self._verifies_in_flight - 1)
+        self._apply_header_block()
         # A soft safety refusal is protection working, not a failure — show the
         # daemon's own message rather than prefixing it as an error.
         self._show_diag_message(message if category == "unavailable" else f"Test failed: {message}")
@@ -2008,7 +2046,14 @@ class HardwarePage(QWidget):
             svc.update(confirmed_label_prompts=[*stored, key])
         self._refresh_label_prompt(self._state.hwmon_headers if self._state else [])
 
-    def _show_diag_message(self, text: str) -> None:
+    def _show_diag_message(self, text: str, *, chip_class: str = "") -> None:
+        """Show *text* in the diagnostics result line.
+
+        The line is shared by every diagnostic here, so the chip class is set on
+        every message — a message with none resets it, rather than inheriting
+        the colour of the verify result before it.
+        """
+        set_chip_class(self._diag_result, chip_class, skip_if_unchanged=True)
         self._diag_result.setText(text)
         self._diag_result.setVisible(bool(text))
         self._scroll.ensureWidgetVisible(self._diagnostics_card)
@@ -2237,8 +2282,7 @@ class HardwarePage(QWidget):
         """Stand this page's diagnostics down while a run holds the slot."""
         self._report_active = active
         reason = RUN_ACTIVE_REASON if active else ""
-        for card in self._header_cards.values():
-            card.set_diagnostics_blocked(reason)
+        self._apply_header_block()
         for device_card in self._device_cards.values():
             device_card.set_diagnostics_blocked(reason)
         self._sync_diagnostic_enablement()

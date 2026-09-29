@@ -29,7 +29,7 @@ The page renders the daemon's hardware diagnostics — fetched in the background
 
 ## Test PWM Control
 
-**Where to find it.** Since v2.56.0 the primary place is the **Hardware** page — each PWM header card has its own **Test Control** button, because the test belongs to a physical header. The **System State** page keeps the same controls as an advanced shortcut (and is still the only place with the bulk **Verify All Writable** sweep); both pages run the identical implementation and report identical wording.
+**Where to find it.** Since v2.56.0 the primary place is the **Hardware** page — each PWM header card has its own **Test Control** button, because the test belongs to a physical header. While a test started from a header card is running, every header card's tests are unavailable until it finishes: the daemon runs one hardware test at a time, so a second press would only queue another test behind the first. (A test started on the System State page does not grey them; a press then gets the daemon's "already in progress" refusal.) The **System State** page keeps the same controls as an advanced shortcut (and is still the only place with the bulk **Verify All Writable** sweep); both pages run the identical implementation and report identical wording.
 
 For motherboard hwmon headers it is often unclear whether a write actually reaches the fan. The board may accept the write at the sysfs level but the embedded controller (EC) or BIOS overrides it within milliseconds — the classic "Linux says PWM=50%, fan still runs at 100%" problem.
 
@@ -46,6 +46,8 @@ For motherboard hwmon headers it is often unclear whether a write actually reach
 | **The header became pump-protected during the test** | Partway through the test the header became one the daemon protects as a pump — you assigned it the pump role, or a profile naming it as a pump was activated — so the daemon stopped the test before measuring anything and put the header back, never below the 30 % pump floor. Nothing was learned about the header; no RPM change is shown, because the fan never settled. Re-run the test if you still want the answer. Needs daemon v2.56.0 or newer |
 
 The result panel also shows the initial → final RPM and `pwm_enable` values, plus a **Next step** suggestion tailored to the result and your board vendor.
+
+If the daemon could not put the header back when the test ended, the result says so on a **Restore:** line and is shown as a warning even when the test itself passed. That happens when another hardware test took the header over, when the daemon was stopping, or when the write that restores the duty failed — the daemon reports that one of these happened, not which. The header may still be at the test duty; the line names that duty and the one the header had before the test. If it stays there, re-activate your profile.
 
 ### Prerequisites
 
@@ -123,7 +125,11 @@ Two things worth knowing about how it words results:
 - **Timings are reported at the resolution they were measured at.** The daemon reads the
   tachometer twice a second, so it says "~1.5 s", never "1,483 ms". A more precise-looking
   number would be invented. Many motherboard chips update the reading only every couple of
-  seconds, and since daemon 2.53.0 (built as 2.52.0, which was never released) the resolution shown is that update rate. Settling time
+  seconds, and since daemon 2.53.0 (built as 2.52.0, which was never released) the resolution shown is that update rate.
+  The *Response latency* and *Settling time* medians in the detail block are rounded to that
+  update rate, never below one update, and name it — "~2 s (tach updates every 1 s)". When
+  the daemon could not establish the update rate, the resolution reads *unknown* and the
+  medians are given in whole seconds, marked "tach resolution unknown". Settling time
   and RPM stability are measured on those updates, after the fan has settled. A step that is
   still changing when its time runs out shows **Not settled**. That means there is no
   steady reading to report yet, not that something is wrong.

@@ -1080,6 +1080,12 @@ class TestProvenance:
         assert classify("readback_pct") == PROVENANCE_OBSERVED
         assert classify("confidence") == PROVENANCE_DERIVED
 
+    def test_the_pre_run_duty_is_a_reading_not_a_command(self):
+        """`PTR-ac`: `original_pct` is a sysfs read of the duty the header held
+        before the run. The daemon's `provenance_legend` says OBSERVED, and the
+        validation export writes this table into its legend."""
+        assert classify("original_pct") == PROVENANCE_OBSERVED
+
     def test_an_unclassifiable_field_says_so_rather_than_guessing(self):
         assert classify("some_field_nobody_classified") == ""
 

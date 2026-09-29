@@ -23,33 +23,19 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+#: What a verify that failed outside the daemon-error family says (`PTA-p`).
+UNEXPECTED_VERIFY_ERROR = "the test ended with an unexpected error (details in the application log)"
+
 
 def _is_soft_safety_refusal(err: object) -> bool:
-    """True for a daemon refusal that is protection, not failure (DEC-201/297).
+    """:func:`control_ofc.api.errors.is_soft_safety_refusal` for a raised error.
 
-    Two codes mean the same thing to a user: the daemon declined to disturb a fan
-    because of thermal state, and it will accept the same request later.
-
-    - ``thermal_abort`` — above the 85 degC verify limit (DEC-201).
-    - ``validation_error`` with ``retryable`` — the thermal ladder is actively
-      forcing a duty (DEC-297). The 85 degC test cannot see this: the emergency
-      latches at a trip point of at least 105 degC and releases only at 80 degC,
-      so the band between is hot enough to be forcing and cool enough to pass the
-      limit check. Since DEC-308 the trip point is per-machine (derived from the
-      CPU's own reported ceiling, floored at 105), which only widens that band.
-    - ``validation_error`` with ``retryable`` — since DEC-385, every temperature
-      reading is too old to trust, so neither check above can be evaluated. Not
-      "too hot": the machine may be cool and the daemon cannot tell; its message
-      says to retry once sensor polling recovers.
-
-    Keyed on ``retryable`` rather than on the message text, which is daemon prose
-    and not part of the contract. Shared by both verify workers so the two cannot
-    drift on what counts as a refusal.
+    The rule lives in ``api.errors`` so the PWM Test Report runner, which sees an
+    outcome rather than an exception, applies the same one (``DC-cl``).
     """
-    code = getattr(err, "code", "")
-    if code == "thermal_abort":
-        return True
-    return code == "validation_error" and bool(getattr(err, "retryable", False))
+    from control_ofc.api.errors import is_soft_safety_refusal
+
+    return is_soft_safety_refusal(getattr(err, "code", ""), bool(getattr(err, "retryable", False)))
 
 
 class _SocketWorker(QObject):
@@ -131,6 +117,17 @@ class _VerifyWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.verify_error.emit("unavailable", "Connection lost during verify", header_id)
+        except Exception as e:
+            # Backstop, as DEC-266 is for rescan (`PTA-p`). An exception escaping
+            # a slot is printed and swallowed, so neither signal would fire — and
+            # the Hardware page's in-flight count and System State's active
+            # header clear only in those two slots, leaving the report's Start
+            # refused until restart. Reachable through a malformed or foreign
+            # response the parser cannot read. Both pages prefix the "error"
+            # category themselves, so the message is a bare clause, and the
+            # exception text goes to the log rather than to the user.
+            log.exception("Verify worker failed unexpectedly: %s", e)
+            self.verify_error.emit("error", UNEXPECTED_VERIFY_ERROR, header_id)
 
 
 class _GpuVerifyWorker(_SocketWorker):

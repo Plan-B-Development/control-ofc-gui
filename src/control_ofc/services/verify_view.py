@@ -145,8 +145,9 @@ _OUTCOMES: dict[str, VerifyOutcome] = {
     # Nothing was measured, so it is `inconclusive` and neutral like the two
     # rows above: it is not a finding about the board. It makes no claim about
     # the restore (DEC-418 review `C1`): the daemon can report this token with
-    # `restore_failed`, and no hwmon verify surface renders that (`TS-bk`). The
-    # daemon's `details`, rendered beside it, states the floor rule it applied.
+    # `restore_failed`, which `build_verify_result_view` renders as its own line
+    # (`TS-bk`). The daemon's `details`, rendered beside it, states the floor
+    # rule it applied.
     "pump_protected_mid_run": VerifyOutcome(
         "The header became pump-protected during the test, so the daemon stopped "
         "it before it measured anything",
@@ -264,6 +265,33 @@ class VerifyResultView:
         return "\n".join(self.lines)
 
 
+#: Chip classes a failed restore must not be shown under: the header may have
+#: been left at the test duty, which is worth a warning whatever the verdict.
+_QUIETER_THAN_WARNING = frozenset({"SuccessChip", "CardMeta"})
+
+
+def restore_failed_line(result: HwmonVerifyResult) -> str:
+    """What to say when the daemon could not put the header back (`TS-bk`).
+
+    ``restore_failed`` is one boolean for three causes — a later diagnostic
+    took the header over, the daemon was stopping, or the restore write
+    failed — and does not say which, so the sentence names all three rather
+    than guessing. Each leaves the header possibly at the test duty until
+    something writes it again, which is the one fact the user can act on; the
+    duty it held before is named because it is where the header belongs.
+    Figures the daemon did not report are left out rather than invented.
+    """
+    test = f" ({result.test_pwm_percent}%)" if result.test_pwm_percent else ""
+    before = result.initial_state.pwm_percent
+    was = f" It was at {before}% before the test." if before is not None else ""
+    return (
+        "Restore: the daemon could not put this header back after the test — another "
+        "diagnostic took it over, the daemon was stopping, or the restore write "
+        f"failed — so it may still be at the test duty{test}.{was} If it stays "
+        "there, re-activate your profile."
+    )
+
+
 def build_verify_result_view(
     result: HwmonVerifyResult,
     *,
@@ -289,6 +317,11 @@ def build_verify_result_view(
     stopped_early = result.result == "pump_protected_mid_run"
     if init.rpm is not None and final.rpm is not None and not stopped_early:
         lines.append(f"RPM: {init.rpm} → {final.rpm}")
+    restore_failed = bool(getattr(result, "restore_failed", False))
+    if restore_failed:
+        lines.append(restore_failed_line(result))
+        if chip_class in _QUIETER_THAN_WARNING:
+            chip_class = "WarningChip"
 
     chip_name = header.chip_name if header else ""
     board_vendor = ""
@@ -311,7 +344,7 @@ def build_verify_result_view(
         header_id=result.header_id,
         chip_class=chip_class,
         lines=lines,
-        restore_failed=bool(getattr(result, "restore_failed", False)),
+        restore_failed=restore_failed,
     )
 
 

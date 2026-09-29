@@ -87,6 +87,44 @@ def _typical_seconds(values: object) -> str:
     return f"~{median / 1000:.{_SECONDS_DECIMALS}f} s"
 
 
+def _bare_seconds(ms: int) -> str:
+    """``1000`` → ``"1 s"``, ``1500`` → ``"1.5 s"``: no trailing zeros, so a
+    whole-second figure does not read as a tenth-of-a-second one."""
+    return f"{f'{ms / 1000:.3f}'.rstrip('0').rstrip('.')} s"
+
+
+def resolution_text(resolution_ms: int | None) -> str:
+    """The tach cadence the timings were measured at, or ``"unknown"``.
+
+    ``null`` is UNKNOWN, never the sample interval (docs/08, `PTR-ad`)."""
+    if resolution_ms is None or resolution_ms <= 0:
+        return "unknown"
+    return _bare_seconds(resolution_ms)
+
+
+def timing_against_resolution(ms: int, resolution_ms: int | None) -> str:
+    """A median timing no finer than the tach could see it (`PTR-ad`).
+
+    The sweep sees a change only by polling, so a timing is good to one tach
+    update and no better (docs/08: "render the timings against
+    ``measurement_resolution_ms``, never as milliseconds"). Rounded half-up to
+    the nearest multiple of the resolution and never below one — a change the
+    sweep saw took at least one update to see, so "~0 s" would claim an
+    instant response — then shown in seconds with the resolution named. With
+    no resolution, whole seconds and the word "unknown": the cadence may be
+    anything up to a couple of seconds, so a finer figure would be invented.
+    """
+    known = resolution_ms is not None and resolution_ms > 0
+    unit = resolution_ms if known else 1000
+    steps = max(1, (2 * ms + unit) // (2 * unit))
+    note = (
+        f"tach updates every {resolution_text(resolution_ms)}"
+        if known
+        else ("tach resolution unknown")
+    )
+    return f"~{_bare_seconds(steps * unit)} ({note})"
+
+
 def _fmt_rpm(value: int | None) -> str:
     return "—" if value is None else f"{value}"
 
@@ -598,10 +636,13 @@ def _build_detail_rows(run: CharacterizationRun) -> list[SummaryRow]:
     intervals = {st.sample_interval_ms for st in stats if st.sample_interval_ms}
     if intervals:
         rows.append(SummaryRow("Sample interval", f"{max(intervals)} ms"))
-    if summary is not None and summary.measurement_resolution_ms is not None:
+    if summary is not None:
         # §5: publish the resolution the timings were measured at, so nothing
-        # above implies precision the tach cannot support.
-        rows.append(SummaryRow("Measurement resolution", f"{summary.measurement_resolution_ms} ms"))
+        # above implies precision the tach cannot support — and say "unknown"
+        # when the daemon could not establish it (`PTR-ad`).
+        rows.append(
+            SummaryRow("Measurement resolution", resolution_text(summary.measurement_resolution_ms))
+        )
     if stats:
         rows.append(SummaryRow("Samples", str(sum(st.samples for st in stats))))
         means = [st.mean_rpm for st in stats if st.mean_rpm is not None]
@@ -628,12 +669,21 @@ def _build_detail_rows(run: CharacterizationRun) -> list[SummaryRow]:
         if stats:
             rows.append(SummaryRow("Tach dropouts", str(summary.total_dropouts)))
             rows.append(SummaryRow("Outliers", str(summary.total_outliers)))
+        resolution = summary.measurement_resolution_ms
         if summary.typical_response_ms is not None:
             rows.append(
-                SummaryRow("Response latency (median)", f"{summary.typical_response_ms} ms")
+                SummaryRow(
+                    "Response latency (median)",
+                    timing_against_resolution(summary.typical_response_ms, resolution),
+                )
             )
         if summary.typical_settling_ms is not None:
-            rows.append(SummaryRow("Settling time (median)", f"{summary.typical_settling_ms} ms"))
+            rows.append(
+                SummaryRow(
+                    "Settling time (median)",
+                    timing_against_resolution(summary.typical_settling_ms, resolution),
+                )
+            )
         if summary.hysteresis_compared_points:
             rows.append(
                 SummaryRow("Hysteresis comparisons", f"{summary.hysteresis_compared_points} duties")
