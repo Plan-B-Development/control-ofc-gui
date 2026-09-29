@@ -312,6 +312,7 @@ _RESTORE_WORDS = {
     "skipped_thermal_force": "thermal protection was forcing the fans, so the restore was skipped",
     "skipped_shutting_down": "the daemon was shutting down",
     "no_original_duty": "its starting duty could not be read",
+    "skipped_unresponsive": "the fan driver stopped answering",
 }
 
 

@@ -466,6 +466,23 @@ def test_a_failed_restore_is_reported_and_a_thermal_skip_does_not_offer_reapply(
     assert actions["reapply_profile"] is False
 
 
+def test_an_unresponsive_driver_is_named_and_offers_reapply():
+    """`DC-cx` / DEC-420/455: the restore did not complete because the driver
+    stopped answering — say that, not the raw token, and (unlike a thermal
+    skip) re-activating the profile is the right advice once it answers."""
+    run = sweep_run()
+    run["restore_outcome"] = "skipped_unresponsive"
+    run["restore_failed"] = True
+    findings, actions = derive_findings(
+        _restore_doc([fan(CPU)], steps=[_step("s1", CPU, TEST_SWEEP, run)])
+    )
+    (f,) = _rules(findings)["final.restore"]
+    assert f["result"] == "fail"
+    assert "stopped answering" in f["statement"]
+    assert "skipped_unresponsive" not in f["statement"], "the raw token rendered instead"
+    assert actions["reapply_profile"] is True
+
+
 def test_a_stray_override_a_changed_profile_and_a_hot_machine_are_all_reported():
     status = {
         "thermal_state": "emergency",

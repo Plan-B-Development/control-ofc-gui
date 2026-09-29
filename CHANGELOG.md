@@ -20,6 +20,15 @@
   driven below its floor; OpenFan calibration does that on purpose, after you confirm, and the text
   now says so.
 
+### Fixed
+
+- **A diagnostic stopped by an unresponsive fan driver now says so** (`DC-cx`, DEC-420/455). When
+  a read or write of a header does not return in time, the daemon ends the characterisation,
+  control-path test or PWM Test Report step with `skipped_unresponsive`. Each of those results
+  showed a generic "not restored" note naming the raw token. They now say the fan driver stopped
+  answering, that the header is at or near the last tested duty until it responds, and that you
+  should re-activate your profile if it is still there after that.
+
 ## [3.0.0] — 2026-09-28
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which this release's package now requires (DEC-442).

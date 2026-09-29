@@ -100,6 +100,14 @@ _RESTORE_NOTES: dict[str, str] = {
         "The header's pre-test duty could not be read, so there was nothing to "
         "restore it to. It is holding the last duty the test wrote."
     ),
+    # DEC-420/455: a read or a write of the header did not return in time.
+    "skipped_unresponsive": (
+        "The fan driver stopped answering during the test (a read or write of this "
+        "header did not return in time), so the test stopped and the header may not "
+        "have been returned to its original duty. It holds the last duty the test "
+        "wrote until the driver responds; if it is still there after that, "
+        "re-activate your profile."
+    ),
 }
 
 

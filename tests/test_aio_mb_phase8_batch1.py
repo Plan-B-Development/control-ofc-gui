@@ -386,6 +386,17 @@ class TestRelationshipRendering:
         assert "Thermal safety" in note
         assert "Do not set it manually" in note
 
+    def test_an_unresponsive_driver_is_named_rather_than_left_to_the_fallback(self):
+        """`DC-cx` / DEC-420/455: say the driver stopped answering, not the raw
+        token the unrecognised-outcome fallback would echo."""
+        run = parse_control_path_run(
+            _run_payload(restore_failed=True, restore_outcome="skipped_unresponsive")
+        )
+        note = restore_note(run)
+        assert "stopped answering" in note
+        assert "skipped_unresponsive" not in note, "the fallback rendered instead"
+        assert build_control_path_view(run, header_label="Pump").restore_warning
+
     def test_a_clean_run_raises_no_restore_warning(self):
         """The opposite branch — without it a note stuck on "always warn" passes."""
         assert restore_note(parse_control_path_run(_run_payload())) == ""

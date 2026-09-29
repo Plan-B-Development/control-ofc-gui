@@ -679,12 +679,13 @@ GPU verify does not share the hwmon slot.
 **Two result tokens worth knowing.** A verify stopped because its header became
 pump-protected while it held it (`pump_protected_mid_run`, DEC-418, daemon ≥ 2.56.0) renders
 neutral as *stopped: pump* — nothing was measured, so it is not a finding about the board. A
-characterisation whose driver stopped answering ends with `restore_outcome:
-skipped_unresponsive` (DEC-420, daemon ≥ 2.56.0) and leaves the header at the last swept duty,
-never below `max(20, its floor)`. This GUI has no dedicated sentence for that token and renders
-the 273-i fallback — *"The original speed was not restored (Skipped unresponsive), so the header
-is still at the last tested duty"* — which is true, but does not say the driver stopped
-answering. `docs/08` has both tokens' contracts.
+characterisation, control-path test or PWM Test Report step whose driver stopped answering — a
+read (DEC-420, daemon ≥ 2.56.0) or a write (DEC-455, daemon ≥ 3.1.0) of the header did not
+return in time — ends with `restore_outcome: skipped_unresponsive` and leaves the header at or
+near the last tested duty, never below `max(20, its floor)` after a characterisation or
+discovery. Each surface says so in its own words (`DC-cx`): the driver stopped answering, the
+original speed may not have been restored, and the profile should be re-activated if the header
+is still there once the driver responds. `docs/08` has both tokens' contracts.
 
 ### The pre-redesign readiness card (history)
 

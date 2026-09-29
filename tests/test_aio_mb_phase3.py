@@ -579,6 +579,17 @@ class TestRestoreOutcomeNotes:
         notes = self._notes(restore_failed=True, restore_outcome="no_original_duty")
         assert "could not be read" in notes
 
+    def test_an_unresponsive_driver_is_named_rather_than_left_to_the_fallback(self):
+        """`DC-cx` / DEC-420/455: the 273-i fallback was true but never said why.
+        The note must name the cause AND not be the fallback's echo of the raw
+        token — only the first half passes if the entry is removed."""
+        notes = self._notes(
+            restore_failed=True, restore_outcome="skipped_unresponsive", original_pct=45
+        )
+        assert "stopped answering" in notes
+        assert "Skipped unresponsive" not in notes, "the 273-i fallback rendered instead"
+        assert "It was at 45% before the sweep." in notes
+
     def test_an_unrecognised_reason_is_rendered_not_dropped(self):
         """273-i: the client owns the wording, so a token this build has never
         seen must still produce a note rather than silence."""

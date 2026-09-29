@@ -23,7 +23,7 @@ MAX_IMPORT_BYTES = 4 * 1024 * 1024
 
 log = logging.getLogger(__name__)
 
-# Path overrides set by the user in Settings → Application.
+# Path overrides set by the user in Settings → Path Management.
 # Empty string = use XDG default.
 _overrides: dict[str, Path] = {}
 

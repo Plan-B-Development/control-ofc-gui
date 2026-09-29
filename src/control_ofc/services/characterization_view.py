@@ -151,6 +151,16 @@ _RESTORE_NOTE = {
         "nothing to restore it to and it is still at the last tested duty. "
         "Re-activate your profile to take control back."
     ),
+    # DEC-420/455: a read or a write of the header did not return in time, so the
+    # daemon wrote nothing more to it — or queued one write behind the stuck one
+    # on a header with no mode switch, which the engine never hands back.
+    "skipped_unresponsive": (
+        "The fan driver stopped answering during the sweep (a read or write of "
+        "this header did not return in time), so the sweep stopped and the "
+        "original speed may not have been restored. The header is at or near the "
+        "last tested duty until the driver responds. If it is still there after "
+        "that, re-activate your profile."
+    ),
 }
 
 #: Said when the daemon reports the header was left moved but names a reason this
