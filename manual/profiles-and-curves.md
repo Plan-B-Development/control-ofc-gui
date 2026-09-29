@@ -209,7 +209,7 @@ motherboard header with no automatic mode to go back to (an ARCTIC fan hub's cha
 example), that the new profile does not name is left at its last speed or at the **Exit
 minimum** (Settings, 50 % by default), whichever is higher — or at full speed if the daemon has
 lost track of its speed. It is never slowed, and with an Exit
-minimum of 0 it keeps its last speed (daemon 3.0.1 and newer; older daemons always keep the
+minimum of 0 it keeps its last speed (daemon 3.1.0 and newer; older daemons always keep the
 last speed).
 
 **When the daemon stops** — a normal stop, a crash, or an uninstall — each motherboard

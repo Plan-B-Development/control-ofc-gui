@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-29
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. OpenFan channel
+calibration needs control-ofc-daemon 3.1.0 or newer.
+
 ### Added
 
 - **Calibrate an OpenFan channel from the Hardware page** (DEC-453, needs control-ofc-daemon 3.1.0
@@ -28,6 +33,14 @@
   showed a generic "not restored" note naming the raw token. They now say the fan driver stopped
   answering, that the header is at or near the last tested duty until it responds, and that you
   should re-activate your profile if it is still there after that.
+
+### Documentation
+
+- **A fan a new profile does not name is described correctly** (DEC-451, daemon 3.1.0). *Profiles
+  and Curves* and the Settings page's **Exit minimum** row say that an OpenFan channel, or a
+  motherboard header with no automatic mode to go back to, that a profile switch or **Stop profile
+  control** leaves unnamed is kept at its last speed or the exit minimum, whichever is higher, where
+  older daemons kept the old profile's speed.
 
 ## [3.0.0] — 2026-09-28
 
