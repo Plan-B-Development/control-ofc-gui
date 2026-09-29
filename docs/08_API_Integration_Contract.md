@@ -39,7 +39,9 @@ Two consequences worth stating here rather than only in the ADR:
    - the diagnostic run snapshots: `POST /hwmon/{id}/characterize`,
      `GET`/`DELETE /diagnostics/characterization`, `POST /hwmon/{id}/discover-control-path`,
      `DELETE /diagnostics/control-path` (its `GET` wraps the run in `{api_version, run, records}`),
-     `POST /hwmon/{id}/stall-probe` and `GET`/`DELETE /diagnostics/stall-probe`;
+     `POST /hwmon/{id}/stall-probe` and `GET`/`DELETE /diagnostics/stall-probe`,
+     `POST /fans/openfan/{ch}/calibration` and `GET`/`DELETE /diagnostics/openfan-calibration`
+     (DEC-452);
    - `GET /diagnostics/preflight`;
    - both verify responses, `POST /hwmon/{id}/verify` and `POST /gpu/{id}/fan/verify`;
    - the validation session document from `POST`/`GET`/`DELETE /validation/session`,
@@ -308,6 +310,11 @@ GUI treats every flag as false / old behaviour (AIP-180):
   PWM Test Report offers the probe only where `daemon_supports("stall_probe", caps) is True`,
   and sends `acknowledge_below_floor: true` only for a header the user confirmed on its
   consent page — a gate enforced in the window and again in the report's runner.
+- `openfan_calibration` (bool, DEC-452, daemon ≥ 3.1.0) — the daemon exposes
+  `POST /fans/openfan/{ch}/calibration` plus the `GET`/`DELETE /diagnostics/openfan-calibration`
+  pair (§ OpenFan calibration). Hardcoded `true` like `openfan_rescan`: it describes the build,
+  not whether a controller is attached (that is the route's `503`). Absent → `false`; an older
+  daemon `404`s the routes and has only the deprecated synchronous `POST .../calibrate`.
 - `canonical_chip_names` (bool, DEC-442, daemon ≥ 3.0.0) — every hwmon chip name the
   daemon publishes, and every id built from one, is **canonical**: the it87 v2.0 board suffix
   (`it8696_a008090a`) is stripped where the daemon reads the chip name, stored ids a
@@ -489,10 +496,11 @@ As of 2.0.0 the GUI is not a writer, so it does not call the daemon's runtime
 PWM-write endpoints — the daemon's own engine drives fans. A few endpoints
 remain on the daemon surface but are unused (or only curl-exercised) by the GUI:
 
-- `POST /fans/openfan/{channel}/calibrate` — long-running PWM-to-RPM
-  calibration sweep (§ OpenFan calibrate, below). `DaemonClient` has no method
-  for it. The Fan Wizard provides a guided identify alternative; full
-  calibration as a built-in UI flow is deferred.
+- `POST /fans/openfan/{channel}/calibrate` — the **deprecated** synchronous
+  calibration (§ OpenFan calibrate (deprecated), below). `DaemonClient` has no
+  method for it. The 202 + poll route that replaced it (§ OpenFan calibration)
+  has no GUI caller yet either — the calibration dialog is the next change
+  (DEC-452, Run 2).
 - `GET /inventory/readiness` and `GET /inventory/superio` — DEC-207 merged both
   into `GET /inventory/hardware-readiness`, which is what the GUI calls (DEC-257).
   Documented below for the daemon surface they still are.
@@ -2494,23 +2502,113 @@ discovery, the stall probe, GPU reset, rescan). It does not call OpenFan calibra
   published). An earlier revision of this section said it was never an HTTP route; it was one
   until 2.0.0.
 
-### OpenFan calibrate
-- `POST /fans/openfan/{ch}/calibrate` — PWM-to-RPM calibration sweep. **No GUI caller**:
-  `DaemonClient` has no method for it (§ Daemon endpoints the GUI does not call).
-  - **Body** (JSON, may be `{}`): `steps` (default 10) and `hold_seconds` (default 5). The
-    daemon clamps `steps` into `2..=20` and `hold_seconds` into `2..=15` and logs the clamp;
-    neither is rejected.
-  - **Blocking**: the request returns when the sweep ends — `steps + 1` holds, about 55 s at
-    the defaults and over five minutes at the maximum — so a client needs a matching timeout.
-  - **`200`**: `{api_version, fan_id, points: [{pwm_percent, rpm}], start_pwm?, stop_pwm?,
-    min_rpm, max_rpm}`. `start_pwm` is the lowest swept duty with RPM above 0 and `stop_pwm`
-    the highest with RPM 0; each is omitted when no point qualifies.
-  - **Errors**: `400 validation_error` for a channel above 9, or when the controller refuses a
-    write (its stop-timeout check); `409 validation_error` when a calibration or a hardware
-    verify is already running, and the retryable 409s described below; `409 thermal_abort`;
-    `503 hardware_unavailable` with no controller connected or on a serial fault.
+### OpenFan calibration (DEC-452)
+`[SAFETY]` Finds where an OpenFan channel's fan **stops** as its duty falls (the **stall duty**),
+where it **starts again** as the duty rises (the **restart duty**), and its RPM across the range.
+**Daemon ≥ 3.1.0 (DEC-452), capability-gated on `control.openfan_calibration`.** An older daemon
+has only the synchronous `POST .../calibrate` below, whose `stop_pwm` measured nothing (it only
+climbed from 0 %, so its "stop" was always the step below its "start" — `WIRE-l`).
 
-The calibration endpoint runs a long-running sweep (`steps + 1` holds of `hold_seconds`) that sets PWM from 0→100%, reads RPM at each step, and returns a mapping. Safety: aborts on thermal limit (85°C), and restores pre-calibration PWM on every exit path — completion, thermal abort, or a failed PWM write mid-sweep (DEC-134) — **except while thermal safety is itself forcing a duty** (DEC-295). **Since daemon 2.55.0 (DEC-412) the restore follows the sweep's first write:** a sweep refused before its first step (too hot, a forcing ladder, a stale source) writes nothing at all, not even a restore; once a step has been written, the channel is restored to its pre-calibration duty, or **to 100 % when that duty is unknown** — never commanded, or withdrawn by a failed reply, a reconnect or a resume. Older daemons skipped the restore for an unknown duty, which left a cancelled sweep's channel at its current step (0 % for the first ones). The 85°C abort is a *temperature* test, but the thermal emergency **latches** at its trip point (105 °C or higher — per-machine since DEC-308) and releases only at ≤80°C, so between 80 and 85°C it would otherwise pass while the engine is still forcing every fan to 100%. In that state the endpoint refuses to start or continue with **`409 validation_error`, `retryable: true`** — the same shape as the single-flight refusal below, because this is a transient state of the daemon rather than a malformed request, and it clears by itself. It is deliberately **not** `thermal_abort`, which means "too hot to calibrate": this fires on a machine that may be perfectly cool, since the emergency latches at its trip point and releases only at ≤80 °C. **Two consequences a client must handle.** The `no_sensor_fallback` state (no CPU temperature sensor at all, DEC-132) forces indefinitely, so on such a machine calibration is refused permanently — the message names the state so it is diagnosable. And a sweep already under way skips its restore: the channel is left at the forced duty, and is **not** restored automatically once the force clears, because an idle daemon with no active profile commands nothing. Re-running calibration or activating a profile restores normal control. **Since DEC-385 (`TS-q`) it also refuses — and a sweep in progress aborts at its next step — when every temperature reading is older than the diagnostic freshness budget** — which is exactly the thermal ladder's own CPU trust window, five poll intervals (5 s at the default 1 s poll), at every cadence (DEC-395, daemons after 2.51.1; earlier ones floored it at a flat 10 s, so a diagnostic could run on a reading the ladder had already stopped acting on), with the same `409 validation_error`, `retryable: true` (the message names the freshest reading's age): the 85 °C test and the forcing test both read values with no age term, so a poll wedged on a hot reading passes both while the ladder, which does see the age, cannot fire — and the sweep would drive the channel from 0 % on frozen numbers. For the sweep's duration the daemon pauses its profile-engine write phase — the same single-flight pause used by hardware verify — so an active profile cannot overwrite each step's test PWM and corrupt the readback (DEC-191, daemon ≥ 2.2.2). A hardware verify already in progress is therefore rejected with `409` (and an in-progress calibration likewise blocks a verify).
+- `POST /fans/openfan/{ch}/calibration` — body `{"acknowledge_below_floor": true, "hold_seconds"?: N}`.
+  - **The acknowledgement is required** (`400 validation_error` without it). The walk reaches 0 %,
+    and **the daemon holds no pump evidence for an OpenFan channel** — every pump predicate is
+    hwmon-only (`PTR-i`) — so it cannot refuse a pump the way the stall probe does. A client
+    sends `true` only after the user confirms the channel does not power a pump.
+  - `hold_seconds` (default 5) is clamped into `2..=15`; any other field is rejected by the typed
+    extractor (axum's plain-text `422`, not the envelope). There are no duty or step tunables.
+  - **`202`** with the run snapshot; the run is detached, on the **same** single-flight slot as
+    every hardware diagnostic. Poll `GET /diagnostics/openfan-calibration`.
+  - **Refusals, in this order, all before anything is written:** `503 hardware_unavailable`
+    while shutting down; `400 validation_error` without the acknowledgement; `503
+    hardware_unavailable` with no controller; `400 validation_error` for a channel above 9;
+    `409 thermal_abort` above 85 °C; `409 validation_error` `retryable: true` while the thermal
+    ladder is forcing or when every temperature reading is stale (DEC-295 / DEC-385); `400
+    validation_error` `retryable: true` with `details.reason: "no_cpu_temperature"` when no
+    fresh CPU reading exists (the rise gate needs one — the stall probe's rule); `409
+    validation_error` `retryable: true` while an earlier calibration's task is still alive —
+    even if the engine pause it held has lapsed, so two calibrations never share the
+    controller; `409 validation_error` when another diagnostic holds the slot.
+- **The walk.** Descent from 100 % in 10 % steps to 30 %, then 2 % steps, until the fan is
+  confirmed stopped. Ascent from there in 2 % steps up to 30 % (one 10 % step for a stall found
+  above 30 %) until it is confirmed spinning. A step's verdict needs three fresh 500 ms samples
+  — only readings taken after that step's write — and its last three to agree (all 0 →
+  stopped, all > 0 → spinning); fewer than three, or a mix, is `unconfirmed` and the walk moves
+  on. At the default 1 s poll even the 2 s minimum hold yields three. Worst case at the
+  default hold is about 3 minutes; a typical fan takes 1.5–2.
+- **Gates, on every 500 ms sample and before every write**: shutdown, cancel, the 85 °C limit,
+  the ladder forcing, stale temperatures, the hottest fresh CPU reading rising more than
+  `rise_limit_c` (5 °C) above `start_cpu_temp_c`, and the engine-pause keepalive (renewed per
+  sample, DEC-296). These apply to the descent and ascent only. An abort or cancel that may
+  have left the fan stopped kicks it at 100 % first, held until it is seen spinning (three
+  fresh samples) or 10 s. The kick is owed when the fan was not last confirmed spinning — or,
+  where there is no verdict at all (a failed write, no fresh reading), when the walk reached
+  30 % or found a stall; a stall can sit above 30 %, so the duty alone does not decide it. The
+  kick is not gated (it runs after a cancel or an abort) and stops only on shutdown. No kick
+  while the ladder is forcing.
+- **Restore.** The pre-calibration duty is read from the controller under its lock after the
+  pause is claimed (`TS-bh` — earlier daemons read a copy that could still show a thermal force's
+  100 % mid give-back). An unknown duty (never commanded, or lost to a failed reply, a reconnect
+  or a resume) is restored to 100 % (DEC-412). **Where a kick was owed and could not run to its
+  end — the daemon was shutting down — the restore writes 100 % instead of the original duty**
+  (`restore_outcome: "restored_full_speed"`), because the original may sit between the stall and
+  restart duties and leave a stopped fan stopped. The restore is skipped only while the ladder
+  is forcing (DEC-295); the channel is then left at the forced duty and nothing restores it
+  later. It still runs while shutting down: the exit floor latches each channel's minimum
+  (DEC-388), so whichever writes last the channel ends at or above the floor. A run refused
+  before its first write writes nothing at all.
+- `GET /diagnostics/openfan-calibration` — the current or most recent run, **in memory only**:
+  `{run_id, fan_id, channel, state, phase, current_pct, hold_ms, outcome, abort_reason, detail,
+  stall_duty_pct, restart_duty_pct, hysteresis_pct, min_rpm, max_rpm, restart_failed_at_full,
+  start_cpu_temp_c, max_cpu_temp_c, rise_limit_c, points[], original_pct, restore_outcome,
+  restore_failed, started_unix_ms, completed_unix_ms}`. No `api_version`. `404 not_found` before
+  any run. `state` is characterisation's vocabulary (`running` | `complete` | `cancelled` |
+  `aborted`); **while `running`, `outcome`, `abort_reason` and `detail` stay `null`** and
+  `completed_unix_ms` is set only by the terminal publish — a client waits for it, not for
+  `state` alone. `phase` is `descent` | `ascent` | `kick` | `restore`, `null` before the first
+  write and after the end. `original_pct` is `null` in the `202` (the task reads it). `outcome`
+  is `stall_and_restart_found` | `no_stall_down_to_0` (still spinning at 0 %) |
+  `did_not_restart` (still stopped at the top of the ascent; the kick followed) |
+  `no_fan_detected` (0 rpm at 100 %) | `aborted` | `cancelled`. `restart_failed_at_full: true`
+  means a kick ran — this one, or one after an early stop — and the fan was not confirmed
+  spinning within its 10 s window. `abort_reason` is `thermal_limit` | `thermal_force` |
+  `stale_temperature` | `thermal_rise` | `no_cpu_temperature` | `write_failed` |
+  `rpm_unreadable` (no reading arrived after a write within its hold) | `shutting_down` |
+  `superseded` | `task_failed` (the daemon's calibration task ended without a result — a
+  defect; the channel's restore was attempted but not recorded, so `restore_outcome` stays
+  `pending`). Each point is `{pwm_percent, rpm, phase, observation}` with `observation` in
+  `spinning` | `stopped` | `unconfirmed` | `interrupted`. `min_rpm` is the lowest non-zero reading.
+  `restore_outcome` is `pending` | `restored` | `restored_full_speed` | `write_failed` |
+  `skipped_thermal_force` | `not_needed`; `restore_failed` is true when the channel was left
+  anywhere but its original duty — `write_failed`, `skipped_thermal_force`, and
+  `restored_full_speed` unless that duty was itself 100 %. **All tokens are opaque;
+  render an unrecognised one** (273-i).
+- `DELETE /diagnostics/openfan-calibration` — asks the running calibration to stop: `202` with
+  the snapshot, `409 validation_error` when none is running. **Honoured within one sample
+  (≤ 500 ms) during the descent and ascent**; a kick or restore already under way runs to its
+  end (up to the kick's 10 s), and a kick owed after the cancel runs too, then the restore.
+
+### OpenFan calibrate (deprecated)
+- `POST /fans/openfan/{ch}/calibrate` — **deprecated since DEC-452.** **No GUI caller.** Starts
+  the same run as the route above and holds the request open until it ends, so a client needs a
+  timeout of several minutes.
+  - **Body** (JSON): `acknowledge_below_floor` — **now required, as on the new route**, a change
+    for any direct client that called it bare — plus `hold_seconds` (default 5, clamped 2–15).
+    `steps` is still accepted and **ignored**; unknown fields are not rejected.
+  - **`200`**: `{api_version, fan_id, points: [{pwm_percent, rpm, phase, observation}],
+    start_pwm?, stop_pwm?, min_rpm, max_rpm}`. **Since DEC-452 `stop_pwm` is the measured stall
+    duty and `start_pwm` the measured restart duty** (`0` for a fan still spinning at 0 %); each
+    is omitted when not found.
+  - **Errors**: the new route's refusals; then, for a run that ended early, `409 thermal_abort`
+    (`thermal_limit`), `503 hardware_unavailable` (`write_failed`, `rpm_unreadable`,
+    `shutting_down`), and a retryable `409 validation_error` for every other reason and for a
+    cancel; `500 internal_error` if the daemon's task ended without a result (`task_failed`).
+    The answer is the run this request started, handed back by its task — never whatever run
+    the shared slot holds by then.
+  - A client that disconnects no longer ends the run: it restores itself when it ends.
+- **Before DEC-452** it swept `steps + 1` duties upward from 0 % and returned when done; its
+  `start_pwm` was the lowest swept duty with RPM above 0 and `stop_pwm` the highest with RPM 0.
+  Its gates ran once per step, not per sample, and it paused the engine for one whole-sweep
+  window (DEC-191) instead of renewing per sample.
 
 ### Hwmon PWM verify
 - `POST /hwmon/{header_id}/verify` — empty body (no `lease_id` as of 2.0.0 — DEC-165). Returns `409 thermal_abort` when any sensor exceeds the 85 °C verify limit, because a verify drives the header **away** from its commanded duty and must not do so while the system is hot (DEC-201, daemon ≥ 2.6.0). **Corrected in DEC-297:** this previously said a verify "pauses the engine (incl. the thermal force)". It does not, and never did — `force_all_with_floor` runs before the engine's verify gate, so a thermal emergency always outranks a verify. Also returns **`409 validation_error`, `retryable: true`** while the thermal ladder is actively forcing a duty (DEC-297): the 85 °C test is a *temperature* check, but the emergency latches at its trip point (105 °C or higher) and releases only at ≤80 °C, so the band 80-85 °C would otherwise pass it while every fan is still being forced. Same shape and reasoning as the calibrate refusal above; the message names the forcing state. The GUI shows this as a soft "let it cool, then retry" notice. **Since DEC-385 it also returns `409 validation_error`, `retryable: true` when every temperature reading is too old to trust** — the refusal `GET /diagnostics/preflight` now publishes as `blocked` for `pwm_verify`; the message ends "Retry once sensor polling recovers". Also returns `409 validation_error` if a hardware verify or calibration is already in progress (single-flight — the verify shares the calibration pause). That refusal is **bounded**: the slot carries a deadman, so it frees itself once the window elapses even if the holder never released it, and a client that retries will eventually succeed (DEC-296). Before that fix the deadman freed only the engine pause and not the slot, so a single leaked holder made this endpoint — and `/gpu/{id}/fan/verify` and `/fans/openfan/{ch}/calibrate` — return `409` for the rest of the daemon's process lifetime.
@@ -3036,13 +3134,14 @@ Error codes and HTTP statuses:
 
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 403 `lease_required` (source: `"validation"`, retryable: false) — **retired** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); **fully removed at DEC-170**, when the verify path's internal-lease lapse was re-mapped to retryable `503 hardware_unavailable`. No route emits this code any more. Listed for historical context.
-- 404 `not_found` (source: `"validation"`, retryable: false) — an **unknown route** (the fallback; message `endpoint not found: <path>`), **and** a missing resource on these routes: no validation session started or recording (`GET`/`DELETE /validation/session`, `POST /validation/session/stop`, `/event`, `/measurement`), an unknown session id (`GET /validation/sessions/{id}`), an unknown cooling device (`POST /validation/session`, `DELETE /config/cooling-device/{id}`), and no run yet (`GET /diagnostics/control-path`, `GET /diagnostics/stall-probe`). Those send the handler's own message; before daemon 2.56.2 each was prefixed "endpoint not found:" as well (DEC-426, `DC-n`). Every other unknown *resource* on a known route (profile, control, fan, hwmon header, GPU id) returns 404 with code `validation_error`. **The code therefore cannot distinguish a missing route from a missing resource**: gate a feature on its capability flag, never on a probe.
+- 404 `not_found` (source: `"validation"`, retryable: false) — an **unknown route** (the fallback; message `endpoint not found: <path>`), **and** a missing resource on these routes: no validation session started or recording (`GET`/`DELETE /validation/session`, `POST /validation/session/stop`, `/event`, `/measurement`), an unknown session id (`GET /validation/sessions/{id}`), an unknown cooling device (`POST /validation/session`, `DELETE /config/cooling-device/{id}`), and no run yet (`GET /diagnostics/control-path`, `GET /diagnostics/stall-probe`,
+`GET /diagnostics/openfan-calibration`). Those send the handler's own message; before daemon 2.56.2 each was prefixed "endpoint not found:" as well (DEC-426, `DC-n`). Every other unknown *resource* on a known route (profile, control, fan, hwmon header, GPU id) returns 404 with code `validation_error`. **The code therefore cannot distinguish a missing route from a missing resource**: gate a feature on its capability flag, never on a probe.
 - 404 `override_expired` (source: `"validation"`, retryable: false) — **renew** of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew. A **release** of such an override is not an error: it answers `200 {"released": false}`.
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired** with the GUI-held lease (DEC-165); **fully removed at DEC-170** (the verify mapper no longer emits it). No route emits this code any more. Listed for historical context.
 - 409 `already_exists` (source: `"validation"`, retryable: false) — `POST /profiles` with an `id` that already exists (DEC-160). Rename or `PUT` the existing profile instead.
 - 409 `profile_in_use` (source: `"validation"`, retryable: false) — `DELETE /profiles/{id}` on the currently active profile (DEC-160); deactivate or switch profiles first.
-- 409 `thermal_abort` (source: `"hardware"`, retryable: true) — a fan diagnostic was aborted or refused due to high temperature: calibration aborts mid-sweep, and a verify refuses to start while any sensor is over the 85 °C limit (DEC-201, daemon ≥ 2.6.0)
-- 409 `validation_error` (source: `"validation"`, retryable: false **except three cases, which are `true`: the rescan cooldown; the DEC-297 thermal-forcing refusal, shared by both verify endpoints, calibrate, characterisation, control-path discovery and the stall probe; and the stale-temperature refusal (DEC-336 for discovery; DEC-385 for the hwmon verify, characterisation and calibrate; the stall probe from its first release) — see those endpoints**) — a fan diagnostic (`POST /fans/openfan/{ch}/calibrate`, `POST /hwmon/{id}/verify`, `POST /gpu/{id}/fan/verify`, `POST /hwmon/{id}/characterize`, `POST /hwmon/{id}/discover-control-path` or `POST /hwmon/{id}/stall-probe`) when another diagnostic is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). The same code, not retryable, answers a `DELETE /diagnostics/characterization`, `/control-path` or `/stall-probe` with nothing running, and a `POST /gpu/{id}/fan/reset` that could not take the GPU write lock within 750 ms because a GPU verify holds it. Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other. On daemon ≥ 2.22.0 that endpoint returns this same 409 shape for a **second** reason: a 10-second cooldown between probes (10-e, DEC-279), because each probe asserts DTR on every candidate tty and that resets Arduino-class boards.
+- 409 `thermal_abort` (source: `"hardware"`, retryable: true) — a fan diagnostic was aborted or refused due to high temperature: an OpenFan calibration refuses to start (or, on the deprecated sync route, reports an abort), and a verify refuses to start while any sensor is over the 85 °C limit (DEC-201, daemon ≥ 2.6.0)
+- 409 `validation_error` (source: `"validation"`, retryable: false **except these cases, which are `true`: the rescan cooldown; the DEC-297 thermal-forcing refusal, shared by both verify endpoints, OpenFan calibration (both routes), characterisation, control-path discovery and the stall probe; the stale-temperature refusal (DEC-336 for discovery; DEC-385 for the hwmon verify, characterisation and calibrate; the stall probe from its first release); an OpenFan calibration refused because an earlier calibration's task is still alive (DEC-452); and every `409 validation_error` the deprecated `POST .../calibrate` returns for a run that ended early or was cancelled (DEC-452) — see those endpoints**) — a fan diagnostic (`POST /fans/openfan/{ch}/calibration` or the deprecated `/calibrate`, `POST /hwmon/{id}/verify`, `POST /gpu/{id}/fan/verify`, `POST /hwmon/{id}/characterize`, `POST /hwmon/{id}/discover-control-path` or `POST /hwmon/{id}/stall-probe`) when another diagnostic is already in progress (they share a single-flight pause, DEC-191, daemon ≥ 2.2.2). The same code, not retryable, answers a `DELETE /diagnostics/characterization`, `/control-path`, `/stall-probe` or `/openfan-calibration` with nothing running, and a `POST /gpu/{id}/fan/reset` that could not take the GPU write lock within 750 ms because a GPU verify holds it. Retry once the in-flight operation completes. (HTTP 409 with the `validation_error` code — matches the long-standing "calibration already in progress" response shape.) `POST /fans/openfan/rescan` uses the same shape for its own single-flight (DEC-265, daemon ≥ 2.18.0), on a **separate** flag — a rescan and a calibration do not block each other. On daemon ≥ 2.22.0 that endpoint returns this same 409 shape for a **second** reason: a 10-second cooldown between probes (10-e, DEC-279), because each probe asserts DTR on every candidate tty and that resets Arduino-class boards.
 
 Two things distinguish the cooldown 409 from the single-flight 409, and a client that retries automatically should read the second one. The `message` differs — the cooldown says "over the same ports was attempted moments ago" and names the seconds to wait. (On daemon ≥ 2.47.4 the full sentence is *"a probe over the same ports was attempted moments ago"*; before that it named the caller's action, *"an OpenFan rescan over the same ports…"* — `OFN-u`. Match on the substring above, which both spellings contain, never on the whole sentence.) More usefully, the cooldown carries **`retryable: true`** while the single-flight 409 carries `retryable: false`; that field is the documented signal for exactly this decision, and a condition that clears in ten seconds must not present as permanent. No `429` was added: the documented code set is a contract and no client would branch differently on the status alone.
 
