@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QTableWidget,
@@ -349,7 +350,9 @@ class SettingsPage(QWidget):
         if self._state is not None:
             self._state.capabilities_updated.connect(self._on_capabilities_updated)
             self._state.mode_changed.connect(self._refresh_import_availability)
+            self._state.mode_changed.connect(self._refresh_dir_picker_availability)
         self._refresh_import_availability()
+        self._refresh_dir_picker_availability()
 
     # ─── Tab builders ────────────────────────────────────────────────
 
@@ -561,6 +564,8 @@ class SettingsPage(QWidget):
         note.setProperty("class", "CardMeta")
         v.addWidget(note)
 
+        # Browse/Reset on the profiles and themes rows, disabled in demo (`DC-cj`).
+        self._demo_gated_dir_buttons: list[tuple[QPushButton, str]] = []
         self._profiles_dir_label = QLabel()
         self._profiles_dir_label.setObjectName("Settings_Label_profilesDir")
         v.addLayout(
@@ -570,6 +575,7 @@ class SettingsPage(QWidget):
                 self._browse_profiles_dir,
                 key="profilesDir",
                 what="profiles directory",
+                demo_gated=True,
             )
         )
         self._themes_dir_label = QLabel()
@@ -581,6 +587,7 @@ class SettingsPage(QWidget):
                 self._browse_themes_dir,
                 key="themesDir",
                 what="themes directory",
+                demo_gated=True,
             )
         )
         self._export_dir_label = QLabel()
@@ -2186,11 +2193,14 @@ class SettingsPage(QWidget):
         *,
         key: str,
         what: str,
+        demo_gated: bool = False,
     ) -> QHBoxLayout:
         """One path-override row: a caption, the current path, Browse, Reset.
 
         ``key`` is the camelCase objectName fragment (``"profilesDir"``); ``what``
         is the spoken noun phrase for the directory ("profiles directory").
+        ``demo_gated`` registers both buttons with
+        ``_refresh_dir_picker_availability``, which disables them in demo.
 
         Both buttons go through ``make_button`` rather than a hand-rolled
         ``QPushButton`` (`CLAUDE.md § GUI component standard`), and both take a
@@ -2236,6 +2246,11 @@ class SettingsPage(QWidget):
         reset_btn.setToolTip("Reset to default XDG location")
         reset_btn.clicked.connect(lambda: self._reset_dir(path_label))
         row.addWidget(reset_btn)
+        if demo_gated:
+            self._demo_gated_dir_buttons += [
+                (browse_btn, browse_btn.toolTip()),
+                (reset_btn, reset_btn.toolTip()),
+            ]
         return row
 
     def _build_sync_backup_card(self) -> QWidget:
@@ -2679,6 +2694,9 @@ class SettingsPage(QWidget):
 
     def _handle_dir_change(self, kind: str, label: QLabel, new_path: str, old_dir: Path) -> None:
         """Handle profile/theme directory change: offer to move existing files."""
+        if self._in_demo_mode():
+            # The buttons are disabled in demo (`DC-cj`); this covers any other caller.
+            return
         new_dir = Path(new_path)
         if new_dir == old_dir:
             label.setText(new_path)
@@ -2893,6 +2911,22 @@ class SettingsPage(QWidget):
             if demo
             else "Import settings, profiles and themes from an exported file."
         )
+
+    def _refresh_dir_picker_availability(self, *_args) -> None:
+        """The profiles and themes directory rows are unavailable in demo (`DC-cj`).
+
+        Browse offers to move every ``*.json`` in the real folder to the new
+        one, and Reset points the real setting back at the default — both
+        change where the real profiles and themes live, which demo must not.
+        """
+        demo = self._in_demo_mode()
+        for btn, tooltip in self._demo_gated_dir_buttons:
+            btn.setEnabled(not demo)
+            btn.setToolTip(
+                "Changes where your real files are kept — not available in demo mode."
+                if demo
+                else tooltip
+            )
 
     def _import_settings(self) -> None:
         if self._in_demo_mode():

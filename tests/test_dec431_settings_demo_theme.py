@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QMessageBox, QPushButton
 
 from control_ofc.api.models import OperationMode
 from control_ofc.paths import config_dir, profiles_dir, set_path_overrides
@@ -173,6 +173,91 @@ class TestImportUnavailableInDemo:
         )
         page._import_settings()
         assert opened == []
+
+
+# ─── DC-cj: the profiles/themes directory rows in demo ────────────────────
+
+_GATED_DIR_BUTTONS = (
+    "Settings_Btn_browseProfilesDir",
+    "Settings_Btn_resetProfilesDir",
+    "Settings_Btn_browseThemesDir",
+    "Settings_Btn_resetThemesDir",
+)
+
+
+class TestDirectoryRowsUnavailableInDemo:
+    """`DC-cj`: Browse can `shutil.move` the real profile/theme files, so demo gets neither row."""
+
+    def test_the_rows_follow_the_mode(self, tmp_path, qtbot, monkeypatch):
+        state = AppState()
+        page, _svc = _settings_page(tmp_path, qtbot, monkeypatch, state=state)
+        buttons = [page.findChild(QPushButton, name) for name in _GATED_DIR_BUTTONS]
+        assert all(b is not None for b in buttons)
+        live_tips = [b.toolTip() for b in buttons]
+        assert all(b.isEnabled() for b in buttons), "precondition: live mode offers them"
+
+        state.set_mode(OperationMode.DEMO)
+        assert not any(b.isEnabled() for b in buttons)
+        assert all("demo" in b.toolTip().lower() for b in buttons)
+        # The opposite branch: the export row writes no profile or theme, so it stays.
+        export_btns = [
+            page.findChild(QPushButton, "Settings_Btn_browseExportDir"),
+            page.findChild(QPushButton, "Settings_Btn_resetExportDir"),
+        ]
+        assert all(b.isEnabled() for b in export_btns)
+
+        state.set_mode(OperationMode.AUTOMATIC)
+        assert all(b.isEnabled() for b in buttons)
+        assert [b.toolTip() for b in buttons] == live_tips
+
+    def _drive_dir_change(self, page, monkeypatch, new_dir: Path) -> list[bool]:
+        asked: list[bool] = []
+
+        def _yes(*_a, **_k):
+            asked.append(True)
+            return QMessageBox.StandardButton.Yes
+
+        monkeypatch.setattr("control_ofc.ui.pages.settings_page.QMessageBox.question", _yes)
+        page._handle_dir_change("profiles", page._profiles_dir_label, str(new_dir), profiles_dir())
+        return asked
+
+    def _seed_profile(self) -> Path:
+        d = profiles_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "real.json"
+        path.write_text("{}")
+        return path
+
+    def test_a_demo_dir_change_moves_nothing(self, tmp_path, qtbot, monkeypatch):
+        state = AppState()
+        state.set_mode(OperationMode.DEMO)
+        page, _svc = _settings_page(tmp_path, qtbot, monkeypatch, state=state)
+        # Built in demo, the rows start disabled — not only after a mode change.
+        assert not page.findChild(QPushButton, "Settings_Btn_browseProfilesDir").isEnabled()
+        real = self._seed_profile()
+        label_before = page._profiles_dir_label.text()
+        new_dir = tmp_path / "elsewhere"
+
+        asked = self._drive_dir_change(page, monkeypatch, new_dir)
+
+        assert asked == []
+        assert real.exists()
+        assert not new_dir.exists()
+        assert page._profiles_dir_label.text() == label_before
+
+    def test_the_same_call_moves_the_files_in_live_mode(self, tmp_path, qtbot, monkeypatch):
+        """The opposite branch: the backstop must not also silence a real session."""
+        state = AppState()
+        page, _svc = _settings_page(tmp_path, qtbot, monkeypatch, state=state)
+        real = self._seed_profile()
+        new_dir = tmp_path / "elsewhere"
+
+        asked = self._drive_dir_change(page, monkeypatch, new_dir)
+
+        assert asked == [True]
+        assert not real.exists()
+        assert (new_dir / "real.json").exists()
+        assert page._profiles_dir_label.text() == str(new_dir)
 
 
 # ─── DC-r: Default Dark edits persist ──────────────────────────────────────

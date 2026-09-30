@@ -57,6 +57,11 @@
 
 ### Fixed
 
+- **Demo mode can no longer move your real profiles or themes** (DEC-460, `DC-cj`). In Settings ▸
+  Path Management, **Browse…** on the Profiles or Themes row offered to move every file in your
+  real folder to the one you picked, even in demo. Browse… and Reset on those two rows are now
+  disabled in demo, as Import Config already was, with a tooltip saying why. The Default export
+  row is unchanged.
 - **A stalled fan no longer flickers when the daemon misses one reading** (DEC-459, `TS-bg`).
   Since daemon 2.55.0 an OpenFan channel's stall flag goes missing for about a second after a
   failed reply, and the app read that as "not stalled": the alert cleared and came back, and the

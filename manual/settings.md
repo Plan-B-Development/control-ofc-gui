@@ -12,7 +12,9 @@ Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-pag
 > ends. Ordinary preferences are different: **Save Changes**, the theme, window
 > size and position, chart mode and panel dividers do save, so you are never
 > trapped in demo by a setting you cannot change. **Import Config** is not
-> available in demo, because it writes your real settings, profiles and themes.
+> available in demo, because it writes your real settings, profiles and themes,
+> and neither are **Browse…** and **Reset** on the Profiles and Themes rows of
+> **Path Management**, because they change where your real files are kept.
 
 ![Settings page](https://raw.githubusercontent.com/Plan-B-Development/control-ofc-gui/main/screenshots/auto/06_settings.png)
 
@@ -40,8 +42,8 @@ These let you override where the application stores its data. Each row has a **B
 
 | Directory | Default | Description |
 |-----------|---------|-------------|
-| **Profiles** | `~/.config/control-ofc/profiles/` | Where fan profile JSON files are saved. If you change this, the GUI can optionally move existing profiles to the new location |
-| **Themes** | `~/.config/control-ofc/themes/` | Where custom theme files are stored |
+| **Profiles** | `~/.config/control-ofc/profiles/` | Where fan profile JSON files are saved. If you change this, the GUI can optionally move existing profiles to the new location. Not changeable in demo mode |
+| **Themes** | `~/.config/control-ofc/themes/` | Where custom theme files are stored. If you change this, the GUI can optionally move existing themes to the new location. Not changeable in demo mode |
 | **Default export** | Home directory | The default save location when exporting settings or support bundles |
 
 When you change the Profiles directory, the GUI registers the new path with the daemon so it can find profiles for headless activation — and, on `control-ofc-daemon` ≥ v2.23.0, retires the old one in the same step so the daemon's search path does not collect a dead entry every time you move the directory. The daemon's full search path is shown and editable under **Daemon Configuration** below.

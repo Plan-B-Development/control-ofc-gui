@@ -97,6 +97,8 @@ evaluates the active profile against them on its own 1 Hz timer (`docs/09`).
   but will not start a run: its refusal list says a report about synthetic hardware would mean
   nothing (DEC-404's D-a).
 - Settings ▸ Import Config is disabled (it writes profile files directly — see below).
+- Settings ▸ Path Management's **Browse…** and **Reset** on the Profiles and Themes rows are disabled
+  (DEC-460): Browse offers to move the real `*.json` files into the new folder.
 
 ## Demo mode restrictions
 Demo mode must never:
@@ -145,9 +147,11 @@ nine keys of `_DEMO_SEALED_KEYS`: `fan_aliases`, `fan_zones`, `hidden_chart_seri
 `cooler_notes` (DEC-404). **Profiles are sealed separately and completely**
 (DEC-431): `ProfileService(persist=False)` reads the real profile folder but never
 writes or removes a file in it, and Settings → Import Config is disabled, because it
-writes profile files directly.
+writes profile files directly. The profiles and themes directory rows are disabled too
+(DEC-460), because changing either moves the real files.
 Ordinary preferences — theme, startup page, card size, window geometry,
-`demo_on_disconnect`, the directory overrides — save normally even in demo.
+`demo_on_disconnect`, the directory overrides — save normally even in demo (the
+profiles and themes overrides simply cannot be changed there).
 Sealing everything was tried first and was wrong twice over:
 
 - **It trapped the user.** Dropped into demo involuntarily by `demo_on_disconnect`
