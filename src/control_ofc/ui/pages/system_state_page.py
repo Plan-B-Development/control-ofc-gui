@@ -38,6 +38,7 @@ from control_ofc.services.duty_drift import NO_DRIFT, DutyDriftState, duty_drift
 from control_ofc.services.health_ack import clear_key, prune, silence_key
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.pwm_report.runner import RUN_ACTIVE_REASON
+from control_ofc.services.pwm_verification import pwm_verification_tristate
 from control_ofc.services.system_state_view import (
     THERMAL_STATE_NO_CONNECTION,
     SilenceState,
@@ -227,6 +228,10 @@ class SystemStatePage(QWidget):
         #: DEC-404 S4-12: the daemon's duty-drift report from the LIVE poll,
         #: read through `_duty_drift()` by every builder on this page.
         self._duty_drift_state: DutyDriftState = NO_DRIFT
+        #: DEC-456: the tri-state the last render showed, so a headers update
+        #: that leaves it unchanged costs no re-render
+        #: (`_on_headers_for_verification`).
+        self._pwm_verified_rendered: bool | None = None
 
         self._build_ui()
 
@@ -234,6 +239,7 @@ class SystemStatePage(QWidget):
             # Re-gate the GPU restore button when the active profile changes.
             state.active_profile_changed.connect(self._update_gpu_restore_gate)
             state.fans_updated.connect(self._on_fans_for_drift)
+            state.headers_updated.connect(self._on_headers_for_verification)
 
     # ── UI construction ──────────────────────────────────────────────
 
@@ -619,10 +625,13 @@ class SystemStatePage(QWidget):
             self._pruned_for = diag
             self._prune_silences(diag)
         settings = self._settings_svc.settings
+        # DEC-456: every render is the baseline the headers handler compares to,
+        # so a value this render already showed never costs a second one.
+        self._pwm_verified_rendered = self._pwm_verified()
         vm = build_system_state_vm(
             diag,
             duty_drift=self._duty_drift(),
-            pwm_control_verified=self._pwm_verified(),
+            pwm_control_verified=self._pwm_verified_rendered,
             live_thermal_state=self._live_thermal_state,
             silence=SilenceState(
                 acknowledged=frozenset(self._session_acks),
@@ -1536,8 +1545,31 @@ class SystemStatePage(QWidget):
         "1 ACTION REQUIRED" (`SSN-l`). Threading the argument fixes those two;
         this accessor is what stops a fifth consumer repeating the omission,
         because it is the only way to obtain the value.
+
+        DEC-456: a daemon advertising ``control.pwm_verification_records`` keeps
+        each header's latest verdict itself — including verifies run from
+        elsewhere and characterisation sweeps — so the value is derived from
+        those records, and the GUI-owned setting is read only on an older daemon.
         """
+        caps = getattr(self._state, "capabilities", None) if self._state else None
+        if self._state is not None and daemon_supports("pwm_verification_records", caps) is True:
+            return pwm_verification_tristate(self._state.hwmon_headers)
         return _verified_tristate(self._settings_svc.settings.last_pwm_verify_effective)
+
+    @Slot(list)
+    def _on_headers_for_verification(self, headers: list) -> None:
+        """Re-render when fresh headers change the verification tri-state (DEC-456).
+
+        A new record reaches the GUI on ``/hwmon/headers`` — re-read one poll
+        after a verify or sweep ends (the poll worker's ``verify_active`` edge) — and
+        nothing else re-renders this page's cards, so without this a result
+        would wait for the next diagnostics fetch. Same compare-then-render
+        shape as :meth:`_on_fans_for_drift`: a steady value costs one compare.
+        """
+        del headers  # `_pwm_verified` reads AppState, so both paths agree
+        if self._pwm_verified() == self._pwm_verified_rendered:
+            return
+        self._rerender_last_diagnostics()
 
     def _duty_drift(self) -> DutyDriftState:
         """The live duty-drift state, for every derivation on this page (S4-12).

@@ -111,7 +111,8 @@
         "supported_pwm_enable_modes",
         "rpm_min_threshold",
         "rpm_max_threshold",
-        "tach_pulses_per_rev"
+        "tach_pulses_per_rev",
+        "pwm_verification"
       ],
       "must_be_read": [
         "chip_name",
@@ -132,7 +133,8 @@
         "supported_pwm_enable_modes",
         "rpm_min_threshold",
         "rpm_max_threshold",
-        "tach_pulses_per_rev"
+        "tach_pulses_per_rev",
+        "pwm_verification"
       ],
       "inert": {
         "min_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak",
@@ -142,6 +144,32 @@
         "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
         "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
       }
+    },
+    {
+      "daemon": "PwmVerificationRecord",
+      "gui": "PwmVerification",
+      "endpoints": [
+        "GET /hwmon/headers .headers[].pwm_verification"
+      ],
+      "fields": [
+        "header_id",
+        "state",
+        "method",
+        "result",
+        "run_id",
+        "verified_unix_ms"
+      ],
+      "not_assertable": {
+        "state": "the name is too common to prove a read site; pinned at its call site instead (test_pwm_verification_records.py)"
+      },
+      "unmodelled": {
+        "header_id": "DEC-456: the record sits on the header it describes, so the GUI reads the header's own id",
+        "method": "DEC-456: the reference GUI derives only the verified/failed tri-state; the verify evidence panel (G6) is where how and when would be shown",
+        "result": "DEC-456: as `method` \u2014 the tri-state needs only `state`",
+        "run_id": "DEC-456: as `method` \u2014 the tri-state needs only `state`",
+        "verified_unix_ms": "DEC-456: as `method` \u2014 the tri-state needs only `state`"
+      },
+      "note": "DEC-456 (capability control.pwm_verification_records): the header's latest conclusive PWM-control verdict. Absent = not yet verified, never failed."
     },
     {
       "daemon": "PwmHeaderEntry",
@@ -172,7 +200,8 @@
         "supported_pwm_enable_modes",
         "rpm_min_threshold",
         "rpm_max_threshold",
-        "tach_pulses_per_rev"
+        "tach_pulses_per_rev",
+        "pwm_verification"
       ],
       "must_be_read": [
         "chip_name",
@@ -193,7 +222,8 @@
         "supported_pwm_enable_modes",
         "rpm_min_threshold",
         "rpm_max_threshold",
-        "tach_pulses_per_rev"
+        "tach_pulses_per_rev",
+        "pwm_verification"
       ],
       "inert": {
         "min_pwm_percent": "parsed and never read; adjudicated in register row WIRE-ak",

@@ -324,6 +324,12 @@ class ControlCapability:
     #: ``advisories`` on ``/status``. Gate the Settings control on this: an older
     #: daemon 404s the POST and has no coolant rung at all.
     cooling_failure_detection: bool = False
+    #: DEC-456: the daemon keeps each writable hwmon header's latest conclusive
+    #: PWM-control verdict and publishes it as ``pwm_verification`` on
+    #: ``GET /hwmon/headers``. Gate on this, never on the field: the field is
+    #: absent for every header not yet verified, so its absence alone cannot
+    #: tell "not yet verified" from an older daemon that keeps no record.
+    pwm_verification_records: bool = False
     #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
     #: coalesce and rewrites a duty that moved, giving up after three
     #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then
@@ -1045,6 +1051,21 @@ class CoolingDeviceInventory:
 
 
 @dataclass
+class PwmVerification:
+    """A header's latest conclusive PWM-control verdict (DEC-456).
+
+    Published per header on ``GET /hwmon/headers`` by a daemon advertising
+    ``control.pwm_verification_records``. ``state`` is ``"verified"`` or
+    ``"failed"`` — treat any other value as an opaque token that settles
+    nothing (273-i). The record also names how and when it was earned
+    (``method``, ``result``, ``run_id``, ``verified_unix_ms``); the GUI reads
+    only ``state`` today, so those stay unmodelled (``tests/fixtures/wire_fields.json``).
+    """
+
+    state: str = ""
+
+
+@dataclass
 class HwmonHeader:
     id: str = ""
     # DEC-229: never empty, and not always real. The daemon's `read_label` tries
@@ -1130,6 +1151,12 @@ class HwmonHeader:
     # Tach pulses per revolution from `fanN_pulses`. Absent on it87 — the
     # validation board — so `None` is the common case, not an anomaly.
     tach_pulses_per_rev: int | None = None
+    # DEC-456 (`control.pwm_verification_records`): the daemon's record of this
+    # header's latest conclusive PWM-control verdict. `None` = no verdict yet —
+    # never "failed". On a daemon without the capability it is always `None`,
+    # which is why a consumer gates on the capability rather than on this field
+    # (`services/pwm_verification.pwm_verification_tristate`).
+    pwm_verification: PwmVerification | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2409,7 +2436,21 @@ def parse_fans(data: dict) -> list[FanReading]:
 
 
 def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:
-    return [HwmonHeader(**_filter_fields(HwmonHeader, h)) for h in data.get("headers", [])]
+    return [_hwmon_header_from(h) for h in data.get("headers", [])]
+
+
+def _hwmon_header_from(h: dict) -> HwmonHeader:
+    """One ``/hwmon/headers`` entry. The nested DEC-456 record is built here, so
+    a malformed one (not an object) reads as "no verdict" rather than landing
+    on the header as a raw dict."""
+    header = HwmonHeader(**_filter_fields(HwmonHeader, h))
+    record = h.get("pwm_verification")
+    header.pwm_verification = (
+        PwmVerification(**_filter_fields(PwmVerification, record))
+        if isinstance(record, dict)
+        else None
+    )
+    return header
 
 
 def parse_cooling_devices(data: dict) -> CoolingDeviceInventory:
@@ -2696,10 +2737,10 @@ def parse_hwmon_inventory(data: dict) -> HwmonInventory:
         for s in data.get("temp_sensors", [])
         if isinstance(s, dict)
     ]
+    # The same builder as `/hwmon/headers` (the same wire struct): a bare
+    # `_filter_fields` would land the nested DEC-456 record here as a raw dict.
     pwm_controls = [
-        InventoryPwmControl(**_filter_fields(InventoryPwmControl, p))
-        for p in data.get("pwm_controls", [])
-        if isinstance(p, dict)
+        _hwmon_header_from(p) for p in data.get("pwm_controls", []) if isinstance(p, dict)
     ]
     monitor_only_fans = [
         InventoryFanInput(**_filter_fields(InventoryFanInput, f))

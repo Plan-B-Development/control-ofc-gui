@@ -341,6 +341,17 @@ GUI treats every flag as false / old behaviour (AIP-180):
   **GUI use (DEC-443, GUI ≥ 3.0.0):** registered in `daemon_features` as
   `cooling_failure_detection`; gates the Settings ▸ Daemon Configuration "Coolant limit" row and
   the Hardware page's DC-pump note.
+- `pwm_verification_records` (bool, DEC-456, daemon ≥ 3.2.0) — the daemon keeps each writable
+  hwmon header's latest conclusive PWM-control verdict and publishes it as `pwm_verification`
+  on `GET /hwmon/headers` (and on `/hwmon/rescan` and `/inventory/hwmon .pwm_controls`, which
+  share the mapping); the readiness item `pwm_control_unverified` counts against it and
+  `pwm_control_failed` reports a failed one. Absent → `false`. **Gate on this, never on the
+  field:** the field is absent for every header not yet verified, so its absence alone cannot
+  tell "not yet verified" from an older daemon that keeps no record.
+  **GUI use (DEC-456, GUI ≥ 3.2.0):** registered in `daemon_features` as
+  `pwm_verification_records`; where it is `True` the System State page derives its PWM-verified
+  tri-state from the headers' records (`services/pwm_verification.py`) instead of the GUI-owned
+  `last_pwm_verify_effective` setting, and Settings stops offering to forget that setting.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -1440,6 +1451,37 @@ Use to discover:
     Most Super-I/O chips expose only the minimum.
   - `tach_pulses_per_rev` (int, optional) — from `fanN_pulses`. **Absent on `it87`**, so `null`
     is the common case on the validation hardware rather than an anomaly.
+  - `pwm_verification` (object, optional, DEC-456, daemon ≥ 3.2.0 — capability
+    `control.pwm_verification_records`) — this header's **latest conclusive** PWM-control
+    verdict. **Omitted, never `null`, when there is none** — and an omitted key means "not yet
+    verified", never "failed". Shape:
+    `{"header_id", "state", "method", "result", "run_id", "verified_unix_ms"}`.
+    - `state`: `"verified"` | `"failed"`. Treat any other value as an opaque token that
+      settles nothing.
+    - `method`: `"verify"` (`POST /hwmon/{id}/verify`) | `"characterization"` (a completed
+      `POST /hwmon/{id}/characterize` sweep). Both count whether a client or a validation
+      session started them.
+    - `result`: for `verify`, the verify's own `result` token — `effective` → `verified`;
+      `pwm_enable_reverted`, `pwm_value_clamped`, `no_rpm_effect` → `failed`. For a sweep,
+      `sweep_pass` (every point accepted, every readback held, and the fan followed —
+      `command_acceptance: "pass"`, `pwm_readback: "pass"`, `rpm_response: "responsive"`),
+      `readback_reverted` (`pwm_readback: "reverted"`) or `interference` (a point saw
+      `pwm_enable` out of manual mode).
+    - `run_id`: the sweep's run id; `""` for a verify.
+    - `verified_unix_ms`: when the verdict was earned (a sweep's `completed_unix_ms`).
+
+    **Only a conclusive result is recorded, and the latest one wins.** Every other outcome —
+    `rpm_unavailable`, `pwm_readback_unavailable`, a verify the pump watch stopped, a sweep
+    that aborted, was clamped, or saw no RPM response, a verify refused before it wrote —
+    records nothing and leaves the previous verdict in place. **So does a verify whose
+    restore did not land** (`restore_failed: true` — the thermal force evicted it, a later
+    diagnostic superseded it, or the daemon was stopping): its final read may be another
+    writer's duty, so it vouches for nothing. A verify persists its verdict **before** it
+    responds, so a client that re-reads `/hwmon/headers` after the response sees it; a client
+    that hangs up first may leave nothing recorded (the record under-claims, never
+    over-claims). Both a verify and a sweep release the write pause **before** they persist,
+    so a client watching `verify_active` should re-read one poll after it falls. The record is persisted (`{state_dir}/pwm_verification.json`),
+    survives a restart, and is dropped at boot when its header id is no longer discovered.
 
 - `role_source` (string, DEC-311, daemon ≥ 2.28.0) — how `role` was established:
   `"none"` | `"label"` | `"chip_mapping"` | `"user_assigned"`. Lets a client distinguish a
@@ -2185,10 +2227,11 @@ was true before the merge.
   to the most severe item's severity.
 - `items: list[ReadinessItem]` — each item is:
   - `code: str` — a **stable machine key** the GUI keys knowledge-base entries and
-    acknowledgement state off. The daemon emits fourteen: `cpu_sensor_missing`,
+    acknowledgement state off. The daemon emits fifteen: `cpu_sensor_missing`,
     `cpu_sensor_present`, `cpu_default_low_confidence`, `selected_cpu_sensor_missing`,
     `selected_mb_sensor_missing`, `no_pwm_controls`, `pwm_controls_present`,
-    `pwm_read_only`, `pwm_control_unverified`, `monitor_only_fans_present`,
+    `pwm_read_only`, `pwm_control_unverified`, `pwm_control_failed` (DEC-456),
+    `monitor_only_fans_present`,
     `sensors_unavailable`, `unknown_sensors_present`, and — when a Super-I/O chip is
     detected but its driver is not bound — `superio_driver_unloaded` /
     `superio_acpi_conflict` (DEC-202). Render a code you do not recognise. **`superio_driver_unloaded` covers two
@@ -2202,6 +2245,13 @@ was true before the merge.
     v2.56.4) add to `detail` that the package's Super-I/O guard declines those two
     modules on Gigabyte boards, so a `modprobe` there loads nothing. This is text
     only; no field changes.
+    **The two PWM-verification codes count against the per-header records (DEC-456,
+    daemon ≥ 3.2.0):** `pwm_control_unverified` (`info`) says how many writable headers
+    have no verdict yet ("2 of 5 …"), `pwm_control_failed` (`warning`, never
+    `blocks_control`) how many have a failed one, and neither appears once every writable
+    header is verified. An older daemon emits `pwm_control_unverified` whenever any header
+    is writable, whatever has been tested. The assessment is cached for 3 s, so a verdict
+    reaches these items within that window.
   - `severity: str` — `ok | info | warning | critical`.
   - `component: str` — `cpu | pwm | hwmon | sensor`.
   - `summary`, `detail`, `recommended_action: str`.
@@ -3326,8 +3376,9 @@ as published and logged once by the daemon.
   engine's load (`load_profile` — boot restore and `POST /profile/activate`, including the
   GUI's by-path activation). Where both spellings of one header hold a role, **the more
   protective role wins** — pump, then CPU fan, then the rest — and on a tie the suffixed one.
-  The two daemon-owned boot-pruned stores (`control_paths.json`, `pwm_baselines.json`) are
-  re-keyed when loaded, before the prune, so their records survive it.
+  The three daemon-owned boot-pruned stores (`control_paths.json`, `pwm_baselines.json`, and
+  since DEC-456 `pwm_verification.json`) are re-keyed when loaded, before the prune, so their
+  records survive it.
 - **Incoming writes.** `POST /config/header-role`, `POST /config/preferred-{cpu,mb}-sensor`,
   `POST /config/cooling-device` and `POST`/`PUT /profiles` canonicalise the ids they are sent.
   A header-role set or clear replaces **every** spelling of that header, so clearing a role a

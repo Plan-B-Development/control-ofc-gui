@@ -81,6 +81,7 @@ from control_ofc.services.openfan_calibration_view import build_channel_options
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
+from control_ofc.services.pwm_verification import verification_signature
 from control_ofc.services.verify_view import build_verify_result_view
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
@@ -259,6 +260,12 @@ class HardwarePage(QWidget):
         # user's actual re-scan then reporting nothing at all. Serialising the
         # requests is what makes the flag mean what it says.
         self._readiness_in_flight = False
+        # DEC-456: the checklist's PWM items count against the daemon's
+        # per-header verdicts, which arrive on `/hwmon/headers`. The last
+        # verdict set seen (`None` until the first headers update), and a
+        # re-fetch that waits for an in-flight one to answer first.
+        self._verification_seen: frozenset[tuple[str, str]] | None = None
+        self._readiness_refetch_pending = False
 
         # AIO-MB Phase 6 workers. Each is created lazily by `_ensure_worker`
         # and torn down in `cleanup`, exactly like the readiness worker.
@@ -296,6 +303,7 @@ class HardwarePage(QWidget):
         if self._state is not None:
             self._state.fans_updated.connect(self._refresh_cooling_section)
             self._state.headers_updated.connect(self._refresh_cooling_section)
+            self._state.headers_updated.connect(self._on_headers_for_readiness)
             self._state.capabilities_updated.connect(self._refresh_cooling_section)
             self._state.cooling_devices_updated.connect(self._refresh_cooling_section)
             # §6.3's "Last validated" row is daemon-persisted, so it must be
@@ -953,6 +961,33 @@ class HardwarePage(QWidget):
     def _refresh_readiness(self) -> None:
         self._fetch_readiness(force=True)
 
+    @Slot(list)
+    def _on_headers_for_readiness(self, headers: list) -> None:
+        """Re-fetch the checklist when a header's verdict changes (DEC-456).
+
+        The checklist is otherwise fetched once per session and on Refresh, so a
+        test run from its own "Test PWM control" action left it reading "not yet
+        verified" while System State already showed the pass. Only a change in
+        the verdict set triggers it — the headers also refresh on a profile
+        change and every capabilities interval — and only once the checklist has
+        been fetched at all; the first show fetches it fresh anyway.
+        """
+        seen = verification_signature(headers)
+        previous, self._verification_seen = self._verification_seen, seen
+        if previous is None or seen == previous or not self._readiness_auto_fetched:
+            return
+        if self._readiness_in_flight:
+            # Never emit over an outstanding request: the reply handler reads
+            # `_awaiting_rescan`, which a second request would overwrite.
+            self._readiness_refetch_pending = True
+            return
+        self._fetch_readiness()
+
+    def _run_pending_readiness_refetch(self) -> None:
+        if self._readiness_refetch_pending:
+            self._readiness_refetch_pending = False
+            self._fetch_readiness()
+
     @Slot(object)
     def _on_readiness_ok(self, result: HardwareReadiness) -> None:
         # WIRE-af: `generation` is the daemon's monotonic scan id — the "a fresh
@@ -976,6 +1011,7 @@ class HardwarePage(QWidget):
                 if rescanned
                 else "No change — the daemon served its existing assessment."
             )
+        self._run_pending_readiness_refetch()
 
     @Slot(str, str)
     def _on_readiness_error(self, category: str, message: str) -> None:
@@ -991,6 +1027,7 @@ class HardwarePage(QWidget):
             )
         else:
             self._set_status(f"Cannot fetch readiness: {message}")
+        self._run_pending_readiness_refetch()
 
     @Slot(object)
     def _on_readiness_probe_ok(self, result: SuperIoReport) -> None:

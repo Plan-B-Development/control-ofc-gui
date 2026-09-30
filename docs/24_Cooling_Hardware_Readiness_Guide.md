@@ -98,6 +98,28 @@ The daemon found writable PWM (`pwmN`) attributes, but has not confirmed that wr
 them moves a fan. Writable ≠ controllable: routed PWM pins, BIOS/EC behaviour, and
 ACPI can all override the chip. Use the fan-control verification workflow to confirm.
 
+Since daemon 3.2.0 (DEC-456) the daemon remembers each header's latest verdict, so
+this item counts what is left — "2 of 5 writable PWM header(s) have not been verified
+yet" — and disappears once every writable header has passed. A verdict survives a
+daemon restart, and is dropped when its header disappears from discovery. Both a
+single-header test and a PWM sweep (characterisation) that shows the duty held and
+the fan followed count as a pass. A test that could not decide — no tach, a readback
+that failed, a run stopped early, or a test the thermal emergency or another diagnostic
+took the header from — leaves the previous verdict in place. A test in which the fan's
+speed did not change *is* a decision: it is recorded as a failure (next section).
+
+## PWM control failed verification
+
+At least one writable header's **latest** verdict is a failure (DEC-456): a test
+wrote a duty and the fan's speed did not change, or the header did not keep the value
+written (the header's mode was switched away from manual, or its duty read back as
+something else), or a sweep found the header's `pwm_enable` out of manual mode —
+another controller, usually the BIOS or EC, has it. It is a warning, not a block — the daemon still
+drives the header — because the usual causes are fixable: a BIOS fan curve or
+"Smart Fan" mode that takes the header back, a fan plugged into a different header
+than the one tested, or no fan on that header at all. Fix the cause and test the
+header again; a pass replaces the failure.
+
 ## Fan-control verification
 
 The **Test PWM control** action scrolls to this page's own **Hardware Diagnostics**

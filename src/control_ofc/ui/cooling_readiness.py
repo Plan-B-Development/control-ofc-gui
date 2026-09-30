@@ -75,6 +75,9 @@ _DOC: dict[str, tuple[str, str]] = {
     "no_pwm_controls": _doc("loading-an-in-kernel-super-io-driver", "Loading a Super-I/O driver"),
     "pwm_read_only": _doc("read-only-pwm-headers", "Read-only PWM headers"),
     "pwm_control_unverified": _doc("fan-control-verification", "Fan-control verification"),
+    "pwm_control_failed": _doc(
+        "pwm-control-failed-verification", "PWM control failed verification"
+    ),
     "superio_driver_unloaded": _doc(
         "loading-an-in-kernel-super-io-driver", "Loading a Super-I/O driver"
     ),
@@ -96,7 +99,9 @@ def _action_for(code: str) -> ActionSpec:
         return ActionSpec(ACTION_DEEP_LINK, "Pick a CPU sensor", "preferred_cpu")
     if code == "selected_mb_sensor_missing":
         return ActionSpec(ACTION_DEEP_LINK, "Pick a motherboard sensor", "preferred_mb")
-    if code == "pwm_control_unverified":
+    if code in ("pwm_control_unverified", "pwm_control_failed"):
+        # DEC-456: a failed header is re-tested the same way an untested one is
+        # tested — the daemon keeps only the latest verdict, so a pass replaces it.
         return ActionSpec(ACTION_TAB_SWITCH, "Test PWM control", "pwm_verify")
     if code == "pwm_read_only":
         # A read-only header cannot be tested, and the Super-I/O section names
@@ -128,6 +133,7 @@ _GROUP: dict[str, str] = {
     "pwm_controls_present": GROUP_FANS,
     "pwm_read_only": GROUP_FANS,
     "pwm_control_unverified": GROUP_FANS,
+    "pwm_control_failed": GROUP_FANS,
     "monitor_only_fans_present": GROUP_FANS,
     "superio_driver_unloaded": GROUP_SUPERIO,
     "superio_acpi_conflict": GROUP_SUPERIO,

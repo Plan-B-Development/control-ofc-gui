@@ -93,6 +93,12 @@ class _PollWorker(QObject):
         # Single-threaded worker, so neither needs a lock.
         self._last_profile_key: tuple[bool | None, str | None] | None = None
         self._headers_refresh_pending = False
+        # DEC-456: a verify or characterisation sweep that just ended may have
+        # written a per-header verdict the headers carry. `verify_active` going
+        # true → false marks the end; the re-read runs one cycle LATER, because
+        # a verify or sweep persists its verdict after it releases the pause.
+        self._last_verify_active = False
+        self._headers_refresh_next_cycle = False
 
     def request_headers_refresh(self) -> None:
         """Re-read ``/hwmon/headers`` on the next cycle (`TS-ae`).
@@ -258,7 +264,8 @@ class _PollWorker(QObject):
             self._close_client()
 
     def _refresh_headers_if_due(self, client: DaemonClient, status: DaemonStatus) -> None:
-        """Re-read the headers when the active profile moved, or on request (`TS-ae`).
+        """Re-read the headers when the active profile moved, a diagnostic ended,
+        or on request (`TS-ae`, DEC-456).
 
         The profile is read from the poll's own ``(has_active_profile,
         active_profile_id)``, so a switch or deactivation made anywhere — the
@@ -274,6 +281,15 @@ class _PollWorker(QObject):
         if self._last_profile_key is not None and key != self._last_profile_key:
             self._headers_refresh_pending = True
         self._last_profile_key = key
+        # DEC-456: consume last cycle's deferred request BEFORE looking for a new
+        # edge, so each edge re-reads exactly one cycle after it was seen.
+        if self._headers_refresh_next_cycle:
+            self._headers_refresh_next_cycle = False
+            self._headers_refresh_pending = True
+        verify_active = status.verify_active is True
+        if self._last_verify_active and not verify_active:
+            self._headers_refresh_next_cycle = True
+        self._last_verify_active = verify_active
         if not self._headers_refresh_pending:
             return
         self._headers_refresh_pending = False
@@ -281,8 +297,8 @@ class _PollWorker(QObject):
             self.headers_ready.emit(client.hwmon_headers())
         except (DaemonError, ConnectionError, OSError, KeyError, ValueError, TypeError) as e:
             log.warning(
-                "Could not re-read hwmon headers after a profile change "
-                "(the %d s refresh will): %s",
+                "Could not re-read hwmon headers after a profile change or a "
+                "diagnostic (the %d s refresh will): %s",
                 CAPABILITIES_REFRESH_INTERVAL_S,
                 e,
             )

@@ -89,6 +89,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # pump stall response, the DC pump floor, the cooling advisory and
         # `POST /config/coolant-limit`. Shipped in daemon 3.0.0.
         "cooling_failure_detection": "3.0.0",
+        # DEC-456, control.pwm_verification_records. Per-header PWM-control
+        # verdicts on `/hwmon/headers`. `/ofc:release` confirms the version.
+        "pwm_verification_records": "3.2.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -143,6 +146,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "openfan_calibration": "openfan_calibration",
         "canonical_chip_names": "canonical_chip_names",
         "cooling_failure_detection": "cooling_failure_detection",
+        "pwm_verification_records": "pwm_verification_records",
     }
 )
 
@@ -171,6 +175,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
         "cooling_failure_detection": "the coolant limit and pump stall protection",
+        "pwm_verification_records": "remembering which fan headers passed verification",
     }
 )
 

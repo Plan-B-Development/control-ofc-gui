@@ -1969,8 +1969,9 @@ class SettingsPage(QWidget):
         v.addLayout(
             self._setting_row(
                 "Fan-control test result",
-                "What the last PWM write test found on this machine",
+                self._PWM_VERIFY_SUBLABEL_LOCAL,
                 self._clear_pwm_verify_btn,
+                sublabel_key="pwm_verify_result",
             )
         )
 
@@ -2156,12 +2157,26 @@ class SettingsPage(QWidget):
         self._reseed_aliases_btn.setEnabled(s.fan_aliases_seeded)
         self._reseed_series_btn.setEnabled(s.chart_series_seeded)
         # Not a count: a recorded verify outcome is one value or absent.
-        self._clear_pwm_verify_btn.setEnabled(bool(s.last_pwm_verify_effective))
-        self._clear_pwm_verify_btn.setText(
-            f"Forget result ({s.last_pwm_verify_effective})"
-            if s.last_pwm_verify_effective
-            else "Forget result"
+        # DEC-456: a daemon that keeps its own per-header records makes this
+        # setting unread, so forgetting it would change nothing on screen — the
+        # row says where the result lives instead of offering a no-op.
+        daemon_records = self._daemon_keeps_pwm_verification()
+        local = s.last_pwm_verify_effective if not daemon_records else ""
+        self._clear_pwm_verify_btn.setEnabled(bool(local))
+        self._clear_pwm_verify_btn.setText(f"Forget result ({local})" if local else "Forget result")
+        self._row_sublabels["pwm_verify_result"].setText(
+            self._PWM_VERIFY_SUBLABEL_DAEMON if daemon_records else self._PWM_VERIFY_SUBLABEL_LOCAL
         )
+
+    #: DEC-456: the Fan-control test result row's two sublabels.
+    _PWM_VERIFY_SUBLABEL_LOCAL = "What the last PWM write test found on this machine"
+    _PWM_VERIFY_SUBLABEL_DAEMON = (
+        "Recorded by the daemon for each fan header — re-run the test to replace a result"
+    )
+
+    def _daemon_keeps_pwm_verification(self) -> bool:
+        caps = self._state.capabilities if self._state else None
+        return daemon_supports("pwm_verification_records", caps) is True
 
     def _dir_picker_row(
         self,
@@ -2313,6 +2328,7 @@ class SettingsPage(QWidget):
         """
         del caps
         self._apply_openfan_presence_annotation()
+        self._refresh_reset_buttons()
 
     def _load_current_settings(self) -> None:
         s = self._settings_svc.settings

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Fan-control test results come from the daemon, per header** (DEC-456, `PTR-l`). With daemon
+  3.2.0 or newer (capability `control.pwm_verification_records`) the daemon remembers each fan
+  header's latest *Test PWM Control* or completed PWM sweep result, whichever program ran it. The
+  System State page's board-note evidence now reads those results instead of the last test this
+  app ran: one verified header marks the notes not observed, and a header whose latest result is
+  a failure raises them until it passes. The page updates within a couple of seconds of a test
+  ending. The Hardware page's readiness checklist counts the writable headers still untested,
+  shows a new *PWM control failed verification* warning whose action re-runs the test, and
+  refreshes itself when a header's result changes. Settings
+  greys out *Forget result* there, since that stored result is no longer read. On an older daemon
+  nothing changes.
+
 ### Changed
 
 - **The fan wizard uses the daemon's published diagnostic temperature limit** (`PTA-m`). It
