@@ -158,12 +158,14 @@ in `skipped_controls[]` as `backend_unavailable`) and the fans stay under the
 BIOS's control; the built-in labels and the dual-chip check stop matching too.
 Update the daemon first, or build commit `c567739` (2026-08-25), which has the
 same driver code as the last build before the rename, including PR #128. Profile
-members the GUI already dropped after a rebuild under an older daemon are not
-recovered. The manual's Driver Setup page has the commands.
+members a GUI older than DEC-461 dropped after a rebuild under an older daemon are
+not recovered; a current GUI keeps a member whose header is missing (below). The manual's Driver Setup page has the commands.
 
 **Known issue — secondary chip not enumerated.** On some systems only the primary
 chip appears in `sensors` output (5 of 8 fan headers visible on an X870E AORUS
-MASTER, etc.). On a daemon older than 3.0.0, first rule out the v2.0 rename
+MASTER, etc.). Profile members on the missing chip — on that board, both pump
+headers — are kept and marked **header missing** on the Controls page until the
+chip returns (DEC-461); a GUI before that deleted them and saved the loss. On a daemon older than 3.0.0, first rule out the v2.0 rename
 above — suffixed names mean both chips are present. Otherwise the secondary is blocked: an ITE eSPI→LPC bridge is
 latched in configuration mode and answering in place of the chip. The latch is
 written by anything that sends the Super-I/O unlock key to port 0x2E/0x4E —

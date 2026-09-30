@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
+from html import escape
+
+from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QLabel, QSizePolicy, QStyle, QWidget
+
+
+def safe_tooltip(text: str) -> str:
+    """Escape *text* for a tooltip and force Qt down the rich-text path.
+
+    Escaping alone is not enough. Qt picks plain vs rich text with
+    ``mightBeRichText()``, which looks for a ``<`` — and escaping removes every
+    one, so an escaped string is rendered *plain* and the entities show through:
+    a control named ``CPU & AIO`` displayed as ``CPU &amp; AIO``. ``&`` is common
+    in fan names ("Front & Top"); ``<`` is not, so the failure mode is the
+    ordinary case, not the adversarial one.
+
+    The wrapper makes Qt parse it, which both decodes the entities back to the
+    literal characters and keeps the escaping doing its real job — untrusted
+    profile/alias text can still never be interpreted as markup.
+
+    ``white-space: pre`` is not decoration. Two things break without it, both
+    measured: ``QTipLabel`` sets ``setWordWrap(mightBeRichText(text))``, so the
+    rich-text path alone re-shapes a 442x40 single-line tooltip into a 145x94
+    wrapped block — ruinous for a tooltip whose whole job is to show a name the
+    tile had to elide; and the HTML parser collapses runs of whitespace, so an
+    alias reading ``Front  Double  Space`` would come back single-spaced from the
+    one surface that is supposed to reproduce it verbatim.
+
+    Moved here from ``fan_control_card`` (DEC-461) when a second consumer needed
+    it: ``ElidedLabel(tooltip_when_elided=True)``.
+    """
+    return f'<html><body style="white-space: pre">{escape(text)}</body></html>'
 
 
 class ElidedLabel(QLabel):
@@ -38,13 +68,40 @@ class ElidedLabel(QLabel):
         *,
         object_name: str | None = None,
         mode: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
+        tooltip_when_elided: bool = False,
     ) -> None:
         super().__init__(text, parent)
         if object_name:
             self.setObjectName(object_name)
         self._mode = mode
+        # Opt-in (DEC-461): the tooltip is the only way back to a name the label
+        # had to shorten, so it carries the full text exactly while it is elided,
+        # and nothing when it fits — an always-on tooltip repeating a visible
+        # name is noise. The caller must not set its own tooltip as well.
+        self._tooltip_when_elided = tooltip_when_elided
         self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self._sync_elided_tooltip()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_elided_tooltip()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        # A theme or font-size change re-shapes the text at the same width.
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._sync_elided_tooltip()
+
+    def _sync_elided_tooltip(self) -> None:
+        # getattr: QLabel's constructor can run before the flag exists.
+        if not getattr(self, "_tooltip_when_elided", False):
+            return
+        full = self.text()
+        self.setToolTip(safe_tooltip(full) if self.elided_text() != full else "")
 
     def minimumSizeHint(self) -> QSize:
         fm = self.fontMetrics()

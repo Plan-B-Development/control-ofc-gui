@@ -186,9 +186,9 @@ def test_against_an_older_daemon_publishing_suffixed_ids_the_sweep_keeps_the_mem
     assert dropped == 0
     assert [m.member_label for m in profile.controls[0].members] == ["Pump"]
 
-    # The opposite branch: a header genuinely absent is still dropped.
-    other = "hwmon:nct6799:nct6775.656:pwm1:pwm1"
-    assert profile.sanitize_hwmon_members({other}, {other}) == 1
+    # The opposite branch: the same header present but read-only, spelled
+    # suffixed, is still dropped — so the canonical compare reached both sets.
+    assert profile.sanitize_hwmon_members(set(), {SUFFIXED}) == 1
 
 
 def test_identical_spellings_are_not_collapsed():

@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError
-from control_ofc.api.models import ConnectionState, DaemonStatus
+from control_ofc.api.models import ConnectionState, DaemonStatus, OperationMode
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
     aio_tag_for,
@@ -40,8 +40,10 @@ from control_ofc.services.controls_view import (
     build_sensor_choices,
     cooling_device_reservations,
     curve_min_output_floor,
+    detected_hwmon_header_ids,
     divergent_gpu_output,
     member_rpm_map,
+    missing_header_member_ids,
     override_rejection_feedback,
     parse_stored_card_size,
     prune_card_sizes,
@@ -639,6 +641,10 @@ class ControlsPage(QWidget):
             # DEC-417: a header's pump role raises the Min badge of the card that
             # holds it, so a role assigned after the cards were built repaints them.
             self._state.headers_updated.connect(self._refresh_min_pwm_badges)
+            # DEC-461: a member whose header is absent is kept and badged, so the
+            # badge follows the headers — and the mode, since demo judges none.
+            self._state.headers_updated.connect(self._refresh_member_presence)
+            self._state.mode_changed.connect(self._refresh_member_presence)
 
     def set_demo_controller(self, demo_controller: DemoController | None) -> None:
         """Inject the demo-mode mini-evaluator (DEC-165).
@@ -1203,6 +1209,7 @@ class ControlsPage(QWidget):
                 user_size=self._stored_card_size(control.id),
                 display_name=self._state.member_display_name,
                 pump_header_ids=self._pump_role_header_ids,
+                detected_hwmon_ids=self._detected_hwmon_ids,
             )
             card.selected.connect(self._on_control_selected)
             card.delete_requested.connect(self._on_delete_control)
@@ -1739,6 +1746,7 @@ class ControlsPage(QWidget):
             # radiator fan and putting it back would warn about a device the fan
             # is being restored to.
             reserved=self._cooling_reservations(exempt_ids=[m.member_id for m in control.members]),
+            missing_ids=missing_header_member_ids(control.members, self._detected_hwmon_ids()),
         )
         if dlg.exec():
             new_members = dlg.get_members()
@@ -2154,6 +2162,21 @@ class ControlsPage(QWidget):
         if self._state is None:
             return frozenset()
         return pump_role_header_ids(self._state.hwmon_headers)
+
+    def _detected_hwmon_ids(self) -> frozenset[str] | None:
+        """The hwmon headers the daemon reports, or ``None`` when not known
+        (DEC-461) — read by every card's "header missing" badge and the member
+        editor through the one shared helper."""
+        if self._state is None:
+            return None
+        return detected_hwmon_header_ids(
+            self._state.hwmon_headers, demo=self._state.mode == OperationMode.DEMO
+        )
+
+    def _refresh_member_presence(self, *_args) -> None:
+        """Repaint every control card's "header missing" badges."""
+        for card in self._control_cards.values():
+            card.refresh_member_presence()
 
     def _refresh_min_pwm_badges(self, *_args) -> None:
         """Repaint every control card's Min badge from the current headers."""

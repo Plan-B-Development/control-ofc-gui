@@ -57,6 +57,16 @@
 
 ### Fixed
 
+- **A fan header missing at startup no longer deletes its fans from your profiles** (DEC-461,
+  `BRD-v`). When a fan header was missing when the app connected — a second fan chip that did
+  not appear at boot, or a driver that loaded late — the app removed every profile fan on it and
+  saved the result to the daemon, so the fans stayed gone after the header came back. For a pump
+  that also removed its 30 % minimum. Now only a fan on a header the daemon reports but cannot
+  write is removed, as before. A fan whose header is missing stays in the profile, and the
+  Controls page marks it **HEADER MISSING** on its role card and in **Edit Members** until the
+  header returns. Fans already removed by an earlier version are not restored. On a narrow role
+  card a fan name too long to fit now ends in "…" with the full name in its tooltip, instead of
+  being cut off.
 - **Demo mode can no longer move your real profiles or themes** (DEC-460, `DC-cj`). In Settings ▸
   Path Management, **Browse…** on the Profiles or Themes row offered to move every file in your
   real folder to the one you picked, even in demo. Browse… and Reset on those two rows are now

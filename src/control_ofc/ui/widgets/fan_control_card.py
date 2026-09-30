@@ -31,8 +31,6 @@ recur here either.
 
 from __future__ import annotations
 
-from html import escape
-
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
@@ -50,6 +48,7 @@ from control_ofc.services.fan_cards_view import FanCardVM, FanState
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card
 from control_ofc.ui.components.labels import ElidedLabel
+from control_ofc.ui.components.labels import safe_tooltip as _safe_tooltip
 from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.card_metrics import fan_tile_width
@@ -67,31 +66,6 @@ _STATE_CHIP: dict[FanState, tuple[str, str]] = {
     FanState.STALL: ("Stall", "CriticalChip"),
     FanState.OFFLINE: ("Offline", "CriticalChip"),
 }
-
-
-def _safe_tooltip(text: str) -> str:
-    """Escape *text* for a tooltip and force Qt down the rich-text path.
-
-    Escaping alone is not enough. Qt picks plain vs rich text with
-    ``mightBeRichText()``, which looks for a ``<`` — and escaping removes every
-    one, so an escaped string is rendered *plain* and the entities show through:
-    a control named ``CPU & AIO`` displayed as ``CPU &amp; AIO``. ``&`` is common
-    in fan names ("Front & Top"); ``<`` is not, so the failure mode is the
-    ordinary case, not the adversarial one.
-
-    The wrapper makes Qt parse it, which both decodes the entities back to the
-    literal characters and keeps the escaping doing its real job — untrusted
-    profile/alias text can still never be interpreted as markup.
-
-    ``white-space: pre`` is not decoration. Two things break without it, both
-    measured: ``QTipLabel`` sets ``setWordWrap(mightBeRichText(text))``, so the
-    rich-text path alone re-shapes a 442x40 single-line tooltip into a 145x94
-    wrapped block — ruinous for a tooltip whose whole job is to show a name the
-    tile had to elide; and the HTML parser collapses runs of whitespace, so an
-    alias reading ``Front  Double  Space`` would come back single-spaced from the
-    one surface that is supposed to reproduce it verbatim.
-    """
-    return f'<html><body style="white-space: pre">{escape(text)}</body></html>'
 
 
 def _card_slug(control_id: str) -> str:

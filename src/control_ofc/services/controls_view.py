@@ -14,6 +14,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from control_ofc.api.models import AmdGpuCapability
+from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.sensor_knowledge import (
     classify_sensor_with_overrides,
     sensor_is_coolant,
@@ -155,6 +156,43 @@ def min_pwm_badge(control, pump_header_ids: frozenset[str]) -> MinPwmBadge:
             " GPU members in this control are not floored (the GPU firmware manages their minimum)."
         )
     return MinPwmBadge(floor, tip)
+
+
+# `BRD-v` / DEC-461: a member whose motherboard header the daemon does not report.
+MISSING_HEADER_BADGE = "header missing"
+MISSING_HEADER_TOOLTIP = (
+    "The daemon does not report this fan header right now, so this fan is not "
+    "being controlled. It stays in the profile and is controlled again when the "
+    "header comes back — for example after a driver loads, or a restart."
+)
+
+
+def detected_hwmon_header_ids(headers, *, demo: bool) -> frozenset[str] | None:
+    """The canonical ids of the hwmon headers the daemon reports, or ``None``.
+
+    ``None`` means "not known", and nothing is judged missing against it: no
+    header list yet (or an empty one), or demo mode, whose synthetic headers
+    say nothing about the real profile's members (DEC-431). Canonical, as the
+    DEC-102 sweep compares them (DEC-442).
+    """
+    if demo or not headers:
+        return None
+    return frozenset(canonical_hwmon_id(h.id) for h in headers)
+
+
+def missing_header_member_ids(members, detected: frozenset[str] | None) -> frozenset[str]:
+    """Ids of the ``hwmon`` members whose header is not in ``detected`` (DEC-461).
+
+    Motherboard members only (the user's Q3-A): an OpenFan channel or a GPU is
+    never judged here.
+    """
+    if detected is None:
+        return frozenset()
+    return frozenset(
+        m.member_id
+        for m in members
+        if m.source == "hwmon" and canonical_hwmon_id(m.member_id) not in detected
+    )
 
 
 def divergent_gpu_output(control, control_output: float, members: dict) -> float | None:

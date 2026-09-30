@@ -19,7 +19,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.services.controls_view import min_pwm_badge, skipped_control_feedback
+from control_ofc.services.controls_view import (
+    MISSING_HEADER_BADGE,
+    MISSING_HEADER_TOOLTIP,
+    min_pwm_badge,
+    missing_header_member_ids,
+    skipped_control_feedback,
+)
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_GPU,
     ControlMode,
@@ -30,6 +36,7 @@ from control_ofc.services.profile_service import (
     infer_member_role,
 )
 from control_ofc.ui.components.a11y import name_value_control
+from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.labels import ElidedLabel
 from control_ofc.ui.qt_util import repolish, set_chip_class
 from control_ofc.ui.theme import active_theme
@@ -60,6 +67,7 @@ class ControlCard(ResizableGridCard):
         parent=None,
         display_name: Callable[[str, str], str] | None = None,
         pump_header_ids: Callable[[], frozenset[str]] | None = None,
+        detected_hwmon_ids: Callable[[], frozenset[str] | None] | None = None,
     ) -> None:
         super().__init__(parent)
         # DEC-228: resolves (member_id, cached member_label) -> the name to show,
@@ -71,6 +79,11 @@ class ControlCard(ResizableGridCard):
         # assigned after the card was built still reaches it on the next repaint
         # (`refresh_min_pwm_badge`). No resolver (tests, previews) means no roles.
         self._pump_header_ids = pump_header_ids or frozenset
+        # DEC-461: the canonical ids of the hwmon headers the daemon reports, or
+        # None when that is not known (no headers yet, demo). A resolver for the
+        # same reason as `pump_header_ids`; `refresh_member_presence` repaints.
+        # No resolver (tests, previews) means nothing is judged missing.
+        self._detected_hwmon_ids = detected_hwmon_ids or (lambda: None)
         self._control = control
         self._last_output_pct: float | None = None
         # DEC-169: a daemon-held override this GUI session does NOT own (no
@@ -148,7 +161,8 @@ class ControlCard(ResizableGridCard):
         self._member_rows_layout.setContentsMargins(0, 0, 0, 0)
         self._member_rows_layout.setSpacing(1)
         self._member_row_rpm: dict[str, QLabel] = {}
-        self._member_row_name: dict[str, QLabel] = {}
+        self._member_row_name: dict[str, ElidedLabel] = {}
+        self._member_row_missing: dict[str, StatusPill] = {}
         layout.addWidget(self._member_rows)
         self._rebuild_member_rows(control)
 
@@ -465,6 +479,7 @@ class ControlCard(ResizableGridCard):
                 widget.deleteLater()
         self._member_row_rpm = {}
         self._member_row_name = {}
+        self._member_row_missing = {}
         for member in control.members:
             # Unique per-member objectNames (control id + member id) so tests and
             # tooling can address an individual member row / name / RPM cell
@@ -475,13 +490,29 @@ class ControlCard(ResizableGridCard):
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(4)
-            name = QLabel(self._display_name(mid, member.member_label))
-            name.setObjectName(f"ControlCard_MemberName_{control.id}_{mid}")
-            name.setTextFormat(Qt.TextFormat.PlainText)  # DEC-231: untrusted alias/label
+            # DEC-461: elided, with the full name as its tooltip while shortened,
+            # so the "header missing" pill beside it cannot cut a long name off
+            # mid-glyph on a compact or narrowed card. ElidedLabel renders plain
+            # text unconditionally (DEC-231: untrusted alias/label).
+            name = ElidedLabel(
+                self._display_name(mid, member.member_label),
+                object_name=f"ControlCard_MemberName_{control.id}_{mid}",
+                tooltip_when_elided=True,
+            )
             self._member_row_name[mid] = name
             name.setProperty("class", "CardMeta")
             name.setStyleSheet("background: transparent;")
             row_layout.addWidget(name, 1)
+            # DEC-461: shown only while the daemon does not report this member's
+            # header; the member is kept, so the user must be able to see it is idle.
+            missing = StatusPill(
+                MISSING_HEADER_BADGE,
+                "warn",
+                object_name=f"ControlCard_MemberMissing_{control.id}_{mid}",
+            )
+            missing.setToolTip(MISSING_HEADER_TOOLTIP)
+            row_layout.addWidget(missing)
+            self._member_row_missing[mid] = missing
             rpm = QLabel("")
             rpm.setObjectName(f"ControlCard_MemberRpm_{control.id}_{mid}")
             rpm.setProperty("class", "CardMeta")
@@ -490,6 +521,17 @@ class ControlCard(ResizableGridCard):
             self._member_rows_layout.addWidget(row)
             self._member_row_rpm[mid] = rpm
         self._member_rows.setVisible(bool(control.members))
+        self.refresh_member_presence()
+
+    def refresh_member_presence(self) -> None:
+        """Show the "header missing" badge on each member whose header is absent.
+
+        The Controls page calls this when the headers or the mode change, so a
+        header that returns (or goes) mid-session reaches the card (DEC-461).
+        """
+        missing = missing_header_member_ids(self._control.members, self._detected_hwmon_ids())
+        for mid, pill in self._member_row_missing.items():
+            pill.setVisible(mid in missing)
 
     def _apply_chip(self, text: str, cls: str, tooltip: str = "") -> None:
         """Set the status chip text + style class + tooltip, and repolish.

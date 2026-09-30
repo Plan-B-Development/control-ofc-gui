@@ -285,9 +285,10 @@ class TestProfileLoadDropsKnownDeadHwmonMembers:
 
 
 class TestProfileSanitizeAgainstHeaders:
-    """``Profile.sanitize_hwmon_members`` drops members that no current
-    writable header can satisfy. Catches non-canonical cases the syntactic
-    drop misses (e.g. a future BIOS-locked motherboard chip)."""
+    """``Profile.sanitize_hwmon_members`` drops members whose header is present
+    and read-only. Catches non-canonical cases the syntactic drop misses (e.g. a
+    future BIOS-locked motherboard chip). A missing header's member is kept
+    (DEC-461, `BRD-v`)."""
 
     def test_drops_member_targeting_unwritable_header(self):
         profile = Profile(
@@ -321,7 +322,8 @@ class TestProfileSanitizeAgainstHeaders:
         remaining = [m.member_id for m in profile.controls[0].members]
         assert remaining == ["hwmon:it8696:dev:pwm1:CPU_FAN"]
 
-    def test_drops_member_targeting_missing_header(self):
+    def test_keeps_member_targeting_missing_header(self):
+        """DEC-461 reverses the old drop: absent this session is not read-only."""
         profile = Profile(
             id="p1",
             name="Test",
@@ -342,8 +344,8 @@ class TestProfileSanitizeAgainstHeaders:
 
         dropped = profile.sanitize_hwmon_members(writable_header_ids=set(), all_header_ids=set())
 
-        assert dropped == 1
-        assert profile.controls[0].members == []
+        assert dropped == 0
+        assert [m.member_id for m in profile.controls[0].members] == ["hwmon:gone:dev:pwm1:pwm1"]
 
     def test_keeps_non_hwmon_members_unconditionally(self):
         """OpenFan and amd_gpu members are never the hwmon-discovery

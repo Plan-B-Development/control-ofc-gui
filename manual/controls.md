@@ -75,7 +75,7 @@ Each fan role appears as a card:
 | Card element | Meaning |
 |--------------|---------|
 | **Title row** | Role name plus a status chip: **Applied** (curve output being written), **Not writing** (a hardware diagnostic — a verify, PWM characterisation, OpenFan calibration or validation sweep — has the daemon's write pause, so the daemon is still working out this control's speed but is not applying it, and the fans hold their last duty), **Manual** (your own inline override active), **External** (an override held by something else — another client, or this app before it restarted), **Not controlled** (the daemon is not driving these fans — either it cannot work out a speed for this role, and they hold their last speed, or none of the role's fans are on hardware it can write (an OpenFan controller that is not connected, or a header it cannot write), and their speed is up to the hardware — the chip carries how long it has been that way, and the tooltip the reason), or **No members** |
-| **Members** | The physical outputs in the role — "Members: Front Intake 1, Front Intake 2, +1 more" |
+| **Members** | The physical outputs in the role, one row each with its live RPM. A motherboard fan whose header the daemon does not report right now — a driver that has not loaded, or a second fan chip that did not appear at boot — is marked **HEADER MISSING**. It is not being controlled, but it stays in the role and is controlled again once the header comes back. A name too long for the card ends in "…"; hover it to read the whole name |
 | **Curve** | The assigned curve and its type, or "Curve: Manual" for fixed-speed roles. A **Min: N%** badge appears when a stall-protection floor applies (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection)) |
 | **Now** | Live output and the driving sensor: "Now: 65% • Tctl 45.0°C". Mixed roles with a GPU member also show the GPU's own value ("(GPU 0%)") when it idles below the rest |
 | **Bottom row** | Measured RPM on the left; **Manual**, **Delete**, and **Edit…** buttons on the right |
@@ -148,6 +148,8 @@ When the role contains an AMD GPU fan, a **GPU fan idle behaviour** section appe
 ### Managing Members
 
 **Edit Members** shows two lists — available outputs and selected members — with **>** / **<** buttons to move fans between them. Entries are tagged by source (`[openfan]`, `[hwmon]`, `[amd_gpu]`).
+
+A member whose header the daemon does not report right now stays in the selected list, marked "(header missing)"; remove it with **<** if the header is gone for good.
 
 Each physical fan can belong to **only one role**: outputs already assigned elsewhere appear greyed out with "(Assigned to: …)" so you can see which role owns them. A GPU fan the daemon cannot drive from a profile is shown greyed out, marked "(read-only)" — usually an RX 7000/9000 that needs its [kernel setting](driver-setup.md#amd-gpu-fan-control-prerequisite-rdna3) — or "(verify only)" — an RX 6000 or older, which can be tested and reset from the System State page but keeps its own fan curve. Hover it to see why.
 

@@ -301,7 +301,7 @@ control_ofc/
                             #   thermal + cooling-readiness chips, Rescan / Export)
       gauges.py             # static radial (donut) gauge — custom-paint, never animated (DEC-211)
       glow.py               # glow + pulsing-LED primitives + decorative-animation controller
-      labels.py             # ElidedLabel — elides at paint time, so text() stays verbatim (DEC-238)
+      labels.py             # ElidedLabel — elides at paint time, so text() stays verbatim (DEC-238); opt-in full-text tooltip while elided, and safe_tooltip (DEC-461)
       tables.py             # dense data-table styling helper
       toggle_switch.py      # iOS-style on/off ToggleSwitch (QCheckBox subclass — DEC-215)
     pages/

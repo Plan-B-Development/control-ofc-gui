@@ -22,7 +22,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from control_ofc.services.controls_view import ReservationNote
+from control_ofc.services.controls_view import (
+    MISSING_HEADER_BADGE,
+    MISSING_HEADER_TOOLTIP,
+    ReservationNote,
+)
 from control_ofc.services.profile_service import ControlMember
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.dialog import ModalDialog
@@ -40,6 +44,7 @@ class MemberEditorDialog(ModalDialog):
         parent=None,
         display_name: Callable[[str, str], str] | None = None,
         reserved: dict[str, ReservationNote] | None = None,  # fan_id -> cooling note
+        missing_ids: frozenset[str] | None = None,  # members whose header is absent
     ) -> None:
         super().__init__(f"Edit Role: {role_name}" if role_name else "Edit Members", parent)
         self.setMinimumSize(560, 400)
@@ -172,10 +177,17 @@ class MemberEditorDialog(ModalDialog):
                     item.setToolTip(out["tooltip"])
                 self._available_list.addItem(item)
 
+        missing = missing_ids or frozenset()
         for m in current_members:
             shown = self._display_name(m.member_id, m.member_label)
             text = f"[{m.source}] {shown}" + self._rpm_suffix(m.member_id)
+            if m.member_id in missing:
+                # DEC-461: kept, but idle until its header returns. Display only —
+                # the row's data carries the undecorated label (DEC-228).
+                text += f"  ({MISSING_HEADER_BADGE})"
             item = QListWidgetItem(text)
+            if m.member_id in missing:
+                item.setToolTip(MISSING_HEADER_TOOLTIP)
             item.setData(
                 Qt.ItemDataRole.UserRole,
                 {

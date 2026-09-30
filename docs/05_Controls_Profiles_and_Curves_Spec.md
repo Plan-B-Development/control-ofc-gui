@@ -435,10 +435,20 @@ curve, a `Min: NN%` floor badge, the output (or the inline manual slider), and
   chip. An overridden role is never listed.
 - the Dell shared-switch warning above, for the profile as a whole.
 
+A member row carries an amber **HEADER MISSING** pill when the member is a hwmon header the
+daemon does not report (DEC-461, `BRD-v`): the DEC-102 startup sweep no longer deletes such a
+member, so the card says it is idle. Motherboard members only; nothing is judged before the
+first header list arrives, against an empty one, or in demo. The comparison is on canonical ids
+(DEC-442), as the sweep's is. The pill follows `headers_updated` and `mode_changed`. The member
+name beside it is an `ElidedLabel`: on a compact or narrowed card a long name ends in `…` and
+carries its full text as the tooltip, rather than being cut off mid-glyph.
+
 ### Member picker drops
 The Edit Fan Role dialog offers only fans a role can drive:
 - a hwmon header the daemon reports `is_writable: false` is **not listed** (DEC-102) — it
-  stays visible on the hardware surfaces;
+  stays visible on the hardware surfaces. The startup sweep also drops a profile member on
+  such a header; a member whose header is **absent** is kept, and shown in Selected Members
+  as `(header missing)` (DEC-461);
 - Intel and NVIDIA GPU fans are not listed (no kernel write path, DEC-121/DEC-204);
 - an AMD GPU fan no profile can drive is listed, **disabled**, with its reason
   (DEC-445): `(read-only)` for an RX 7000/9000 without its PMFW `fan_curve` (fixable,

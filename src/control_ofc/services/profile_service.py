@@ -696,54 +696,52 @@ class Profile:
     def sanitize_hwmon_members(
         self,
         writable_header_ids: set[str],
-        all_header_ids: set[str] | None = None,
+        all_header_ids: set[str],
     ) -> int:
-        """Drop ``hwmon:`` members that no current header can satisfy (DEC-102).
+        """Drop ``hwmon:`` members whose header is present and read-only (DEC-102, DEC-461).
 
         Args:
             writable_header_ids: Header ids the daemon reports as
                 ``is_writable=True``. Members targeting these are kept.
-            all_header_ids: Optional superset including read-only headers,
-                used to distinguish "header is gone" from "header is
-                read-only" in the log line. When None, every dropped
-                member is logged simply as not-currently-writable.
+            all_header_ids: Every header id the daemon reports, read-only
+                ones included. A member whose header is not in it is KEPT.
 
         Returns:
             Number of members dropped across all controls. Callers
             should re-save affected profiles when this is non-zero so
             the cleanup persists across restarts.
 
+        A header that is only absent this session — a secondary chip that
+        latched absent at boot, a driver loaded late, a USB cooler not yet
+        enumerated — is not DEC-102's read-only case. Deleting its member
+        deleted it for good, a pump's 30 % floor with it, once the result was
+        saved (`BRD-v`). The daemon skips a member it cannot resolve and lists
+        a control with none left as ``backend_unavailable``; the Controls page
+        badges the member "header missing".
+
         Ids are compared canonical on both sides (DEC-442): a daemon older
         than DEC-442 on an it87 v2.0 driver publishes the suffixed chip
         spelling while this GUI holds the canonical one, and the same header
-        must not read as missing — that would delete the member.
+        must not read as read-only or missing.
         """
         writable = {canonical_hwmon_id(i) for i in writable_header_ids}
-        every = None if all_header_ids is None else {canonical_hwmon_id(i) for i in all_header_ids}
+        present = {canonical_hwmon_id(i) for i in all_header_ids}
         dropped = 0
         for control in self.controls:
             kept: list[ControlMember] = []
             for m in control.members:
-                if m.source != "hwmon":
+                canonical = canonical_hwmon_id(m.member_id)
+                if m.source != "hwmon" or canonical in writable or canonical not in present:
                     kept.append(m)
                     continue
-                if canonical_hwmon_id(m.member_id) in writable:
-                    kept.append(m)
-                    continue
-                # Member targets an hwmon header that is either missing
-                # entirely or present-but-read-only. Both cases mean the
-                # control loop will fail every cycle — drop the member.
-                reason = (
-                    "missing from current hwmon discovery"
-                    if every is not None and canonical_hwmon_id(m.member_id) not in every
-                    else "is not writable"
-                )
+                # The header is present and read-only: the daemon can never
+                # write it (DEC-102), so the member is dead weight.
                 log.warning(
-                    "DEC-102: removing member '%s' (label=%r) from control '%s' — header %s",
+                    "DEC-102: removing member '%s' (label=%r) from control '%s' — "
+                    "header is not writable",
                     m.member_id,
                     m.member_label,
                     control.name or control.id,
-                    reason,
                 )
                 dropped += 1
             control.members = kept

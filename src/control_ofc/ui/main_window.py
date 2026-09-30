@@ -1371,12 +1371,14 @@ class MainWindow(QWidget):
         self.settings_page.run_profile_import(auto=True)
 
     def _sanitize_profiles_against_headers(self, headers) -> None:
-        """Drop profile members that target unknown / read-only hwmon headers.
+        """Drop profile members whose hwmon header is present and read-only.
 
         DEC-102: pairs with the load-time ``_drop_dead_hwmon_members``
         sanitizer. Load-time sanitization knows only the canonical
         pre-DEC-102 ``hwmon:amdgpu:`` shape; this runtime pass uses the
         daemon's authoritative writability flag to catch every other case.
+        A member whose header is absent is kept (DEC-461, `BRD-v`): absent
+        this session is not read-only, and the result is saved to the daemon.
 
         Runs once per session: the first non-empty ``headers_updated``
         emission triggers the sweep. Subsequent emissions are ignored to
