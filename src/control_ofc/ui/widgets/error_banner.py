@@ -46,25 +46,32 @@ class ErrorBanner(QWidget):
         self._icon_label.setText("[!]")
         self._message_label.setText(message)
         set_chip_class(self._message_label, "CriticalChip")
-        self.setVisible(True)
-        if auto_dismiss_ms > 0:
-            self._auto_dismiss_timer.start(auto_dismiss_ms)
+        self._arm_auto_dismiss(auto_dismiss_ms)
 
     def show_warning(self, message: str, auto_dismiss_ms: int = 0) -> None:
         self._icon_label.setText("[*]")
         self._message_label.setText(message)
         set_chip_class(self._message_label, "WarningChip")
-        self.setVisible(True)
-        if auto_dismiss_ms > 0:
-            self._auto_dismiss_timer.start(auto_dismiss_ms)
+        self._arm_auto_dismiss(auto_dismiss_ms)
 
     def show_info(self, message: str, auto_dismiss_ms: int = 5000) -> None:
         self._icon_label.setText("[i]")
         self._message_label.setText(message)
         set_chip_class(self._message_label, "SuccessChip")
+        self._arm_auto_dismiss(auto_dismiss_ms)
+
+    def _arm_auto_dismiss(self, auto_dismiss_ms: int) -> None:
+        """Show the banner and (re)arm or cancel the one dismiss timer.
+
+        A message with no auto-dismiss must cancel a timer an earlier message
+        started (DEC-462 review), or that timer hides it: a failure shown within
+        10 s of the Stop banner, or within 3 s of "Connected", vanished on its own.
+        """
         self.setVisible(True)
         if auto_dismiss_ms > 0:
             self._auto_dismiss_timer.start(auto_dismiss_ms)
+        else:
+            self._auto_dismiss_timer.stop()
 
     def hide_banner(self) -> None:
         self._auto_dismiss_timer.stop()

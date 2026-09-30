@@ -322,6 +322,7 @@ class TestForceOneIsNamed:
         for q in crit:
             flat = " ".join(q.details)
             assert "deactivate the active profile" in flat
+            assert "Stop under the sidebar's profile selector" in flat  # DEC-462
             assert "Stop profile control" in flat
             assert "write pwm" not in flat.lower()
 
@@ -330,6 +331,7 @@ class TestForceOneIsNamed:
         through a collision — the instruction is to deactivate the profile."""
         text = next(t for a, b, t in CONFLICTING_MODULE_SETS if {a, b} == {"nct6687", "nct6775"})
         assert "deactivate the active profile" in text
+        assert "Stop under the sidebar's profile selector" in text  # DEC-462
         assert "Stop profile control" in text
         assert "thermal emergency" in text
         assert "write pwm" not in text.lower()

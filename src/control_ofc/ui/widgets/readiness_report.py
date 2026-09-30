@@ -149,8 +149,9 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
                     # DC-x (DEC-433): the daemon keeps writing through a
                     # collision, so the first step is the one that stops it.
                     "Two drivers are fighting for the same chip. Now: deactivate "
-                    "the active profile (the tray's Stop profile control) and run "
-                    "no fan tests. Then blacklist the wrong driver and reboot (see "
+                    "the active profile (Stop under the sidebar's profile selector, "
+                    "or the tray's Stop profile control) and run no fan tests. Then "
+                    "blacklist the wrong driver and reboot (see "
                     "the per-pair remediation below) — deactivating stops the "
                     "curve, but only removing that driver stops writes to the chip."
                 ),

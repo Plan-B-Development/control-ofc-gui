@@ -41,8 +41,9 @@ Below the header the page is a **three-pane** workspace:
 
 - **Selecting** a profile in the dropdown *shows* it. The Controls page immediately renders that profile's fan roles and curves, and **Save** writes to it. Nothing is sent to the daemon — your fans keep doing exactly what they were doing.
 - **Apply** hands the selected profile to the daemon, whose profile engine then evaluates its curves every second and drives the fans, so they stay controlled even with the GUI closed.
+- **Stop**, beside Apply, stops profile control without deleting anything. The daemon stops running the active profile: each fan goes back to what was driving it before the daemon took it — usually the BIOS, or an AMD GPU's own fan curve — and OpenFan fans stay at their last speed or the **Exit minimum** (Settings), whichever is higher. Thermal protection still applies. There is no confirmation — press **Apply** to start a profile again. A banner says what happened. Stop is available only while a profile is running.
 
-The profile the daemon is actually running is marked **(active)** in the dropdown. That marker — not the current selection — is what tells you which profile is driving your fans.
+The profile the daemon is actually running is marked **(active)** in the dropdown. That marker — not the current selection — is what tells you which profile is driving your fans. After **Stop** no entry is marked, and the Controls page keeps showing the profile you were on, unsaved edits included.
 
 If the Controls page has unsaved edits when you select a different profile, the GUI first asks whether to discard them; cancel, and the dropdown snaps back to the profile you were looking at.
 

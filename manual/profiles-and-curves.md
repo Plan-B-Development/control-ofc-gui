@@ -203,8 +203,8 @@ back when it ends — see
 back to exactly what it was doing before the daemon first took it — usually the BIOS curve
 — within a second. So is an AMD GPU the new profile does not name: it goes back to its
 firmware fan curve (daemon 3.0.0 and newer; older daemons leave it at the old profile's
-speed until the daemon stops). The same happens to both when no profile is left active — the
-tray's **Stop profile control**, or deleting the active profile. An OpenFan channel, or a
+speed until the daemon stops). The same happens to both when no profile is left active — **Stop** under the
+sidebar's profile selector, the tray's **Stop profile control**, or deleting the active profile. An OpenFan channel, or a
 motherboard header with no automatic mode to go back to (an ARCTIC fan hub's channels, for
 example), that the new profile does not name is left at its last speed or at the **Exit
 minimum** (Settings, 50 % by default), whichever is higher — or at full speed if the daemon has

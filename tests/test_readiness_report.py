@@ -175,7 +175,8 @@ class TestDetectProblems:
         # remediation where the card renders it (its detail, below the fix) —
         # not at the "alert" the redesign retired.
         assert "deactivate the active profile" in coll[0]["fix"]
-        # The GUI has no deactivate control, so the fix names the route (F2).
+        # The fix names both routes: the sidebar's Stop (DEC-462) and the tray's.
+        assert "Stop under the sidebar's profile selector" in coll[0]["fix"]
         assert "Stop profile control" in coll[0]["fix"]
         assert "alert" not in coll[0]["fix"]
 

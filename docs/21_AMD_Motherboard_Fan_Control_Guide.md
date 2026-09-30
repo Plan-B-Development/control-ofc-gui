@@ -221,7 +221,8 @@ The System State page surfaces this as a critical *Driver module
 collision* condition (`module_collisions`) when both modules are loaded at
 once. The daemon does not stop writing while it is reported (DEC-433).
 First, until you have rebooted and it is no longer reported, deactivate the
-active profile (the tray's *Stop profile control*) and run no fan tests.
+active profile (**Stop** under the GUI sidebar's profile selector, or the tray's
+*Stop profile control*) and run no fan tests.
 That stops the curve, not every write: the daemon restores each header's
 original mode once (100 % if it cannot confirm it), and a thermal emergency
 still drives writable headers to 100 %. Only removing the wrong driver —

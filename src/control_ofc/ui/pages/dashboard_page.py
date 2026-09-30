@@ -73,6 +73,9 @@ if TYPE_CHECKING:
 # show; narrower windows start collapsed so the chart keeps room (DEC-182, 3A).
 _INSPECTOR_WIDE_THRESHOLD_PX = 1100
 
+# DEC-462: the title-row combo's text while no profile is active.
+NO_ACTIVE_PROFILE_TEXT = "No active profile"
+
 # DEC-245: settings store the chart mode as its string value — the settings layer
 # must not import a UI-facing service — so the page owns the lookup back.
 _CHART_MODE_BY_VALUE = {m.value: m for m in ChartMode}
@@ -459,6 +462,9 @@ class DashboardPage(QWidget):
         # Sits in the title row with no label of its own — without a name it
         # announces only the profile it happens to be showing (273-g).
         name_value_control(self._profile_combo, "Active profile")
+        # DEC-462: with no profile active the combo shows this, at index -1,
+        # rather than naming the last or first profile as if it were running.
+        self._profile_combo.setPlaceholderText(NO_ACTIVE_PROFILE_TEXT)
         self._profile_combo.setMinimumWidth(160)
         title_row.addWidget(self._profile_combo)
         self._apply_btn = QPushButton("Apply")
@@ -1184,9 +1190,10 @@ class DashboardPage(QWidget):
         self._push_chart_context()
         # A different profile means different controls — rebuild the cards.
         self._refresh_fan_cards()
-        # Sync combo selection to active profile
-        idx = self._profile_combo.findText(name)
-        if idx >= 0:
+        # Sync combo selection to active profile; none active shows the
+        # placeholder (DEC-462) instead of leaving the last profile named.
+        idx = self._profile_combo.findText(name) if name else -1
+        if idx >= 0 or not name:
             with block_signals(self._profile_combo):
                 self._profile_combo.setCurrentIndex(idx)
 
@@ -1246,9 +1253,10 @@ class DashboardPage(QWidget):
 
     def _on_active_id_changed(self, profile_id: str) -> None:
         """Reflect a service-side active-profile change in the combo by id
-        (blocking signals so it never re-triggers apply)."""
-        idx = self._profile_combo.findData(profile_id)
-        if idx >= 0:
+        (blocking signals so it never re-triggers apply). A cleared id shows
+        the "No active profile" placeholder (DEC-462)."""
+        idx = self._profile_combo.findData(profile_id) if profile_id else -1
+        if idx >= 0 or not profile_id:
             with block_signals(self._profile_combo):
                 self._profile_combo.setCurrentIndex(idx)
 
@@ -1263,7 +1271,8 @@ class DashboardPage(QWidget):
         Wired to ``ProfileService.profiles_changed`` so profile CRUD on the
         Controls page keeps this combo current. Preserves the current selection
         across the rebuild where possible, else falls back to the active
-        profile."""
+        profile, else shows the "No active profile" placeholder (DEC-462) — not
+        the first entry, which named a profile that was not running."""
         if not self._profile_service:
             return
         with block_signals(self._profile_combo):
@@ -1280,10 +1289,7 @@ class DashboardPage(QWidget):
             # If the remembered selection is gone, fall back to the active profile.
             if select_idx < 0 and active_id:
                 select_idx = self._profile_combo.findData(active_id)
-            if select_idx < 0 and self._profile_combo.count() > 0:
-                select_idx = 0
-            if select_idx >= 0:
-                self._profile_combo.setCurrentIndex(select_idx)
+            self._profile_combo.setCurrentIndex(select_idx)
 
     def _show_content(self) -> None:
         if not self._has_data:

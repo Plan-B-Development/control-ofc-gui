@@ -1436,8 +1436,9 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "non-volatile state. Same chip family is used on AM4 400-series "
             "MSI boards.",
             "If diagnostics detected the (nct6687, nct6775) collision, deactivate "
-            "the active profile (the tray's 'Stop profile control') and run no fan "
-            "tests until you have rebooted and it is no longer reported. That "
+            "the active profile (Stop under the sidebar's profile selector, or the "
+            "tray's 'Stop profile control') and run no fan tests until you have "
+            "rebooted and it is no longer reported. That "
             "stops the curve, not every write through the wrong driver; only "
             "removing that driver does.",
             "Workaround: identify which chip the board actually has "
@@ -1469,8 +1470,9 @@ VENDOR_QUIRKS_DB: list[VendorQuirk] = [
             "attaches to every chip ID in 0xD000-0xDFFF — leaves the wrong driver "
             "bound, and its writes can scribble into non-volatile fan registers.",
             "If diagnostics detected the (nct6687, nct6775) collision, deactivate "
-            "the active profile (the tray's 'Stop profile control') and run no fan "
-            "tests until you have rebooted and it is no longer reported. That "
+            "the active profile (Stop under the sidebar's profile selector, or the "
+            "tray's 'Stop profile control') and run no fan tests until you have "
+            "rebooted and it is no longer reported. That "
             "stops the curve, not every write through the wrong driver; only "
             "removing that driver does.",
             "Workaround: blacklist nct6687 unless you are intentionally "
@@ -2232,8 +2234,9 @@ CONFLICTING_MODULE_SETS: list[tuple[str, str, str]] = [
         "0xd450 by default (removed 2026-05-19, nct6687d PR #164), and any build "
         "loaded with force=1 claims every Nuvoton ID from 0xD000 to 0xDFFF. "
         "FIRST, until you have rebooted and this is no longer reported, "
-        "deactivate the active profile (the tray's 'Stop profile control') and "
-        "run no fan tests. That stops the curve, not every write: the daemon does "
+        "deactivate the active profile (Stop under the sidebar's profile selector, "
+        "or the tray's 'Stop profile control') and run no fan tests. That stops "
+        "the curve, not every write: the daemon does "
         "not stop on its own, it restores each header's original mode once (100 % "
         "if it cannot confirm it), and a thermal emergency still drives "
         "writable headers to 100 %. Only removing the wrong driver (blacklist it, "

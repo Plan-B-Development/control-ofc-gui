@@ -408,7 +408,9 @@ ControlsPage (QVBoxLayout)
 ```
 
 - **Profile selection and activation live in the sidebar** (DEC-208/214): its combo
-  chooses which profile this page edits, and its **Apply** activates it. The header
+  chooses which profile this page edits, and its **Apply** activates it. **Stop**
+  beside it deactivates (DEC-462); a deactivation, from there or anywhere else, leaves
+  this page on the profile it was showing, unsaved edits included. The header
   names the profile being edited so it is always clear what **Save** writes.
 - **Save** (Ctrl+S) validates and uploads the profile to the daemon's store; saving the
   active profile re-applies it (DEC-188). **Revert** is enabled only while there are
@@ -545,6 +547,12 @@ There is no Activate button on this page. The sidebar's **Apply** and the Dashbo
 2. Calls `POST /profile/activate` with the path of the profile's local copy
 3. Updates local state (AppState, the sidebar) only after the daemon confirms
 4. Otherwise reports the failure without marking the profile active
+
+The sidebar's **Stop** (DEC-462) is the reverse: `ProfileService.deactivate` calls
+`POST /profile/deactivate` and clears the active id only after the daemon confirms. It has
+no confirmation dialog (stopping is undone by Apply); a 10 s info banner says what the fans
+do now, and a failure shows `Could not stop profile control: <reason>`. Deleting the active
+profile deactivates through the same method first.
 
 A failure is shown in the main window's banner as `Could not activate "<name>": <reason>`
 (DEC-416, `CTRL-k`); a later successful Apply takes it down. Step 1 can refuse (DEC-403): a

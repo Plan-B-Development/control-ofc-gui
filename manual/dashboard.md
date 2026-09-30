@@ -194,7 +194,8 @@ fan at a time so you can see which one slows down.
 ## Profile Selector
 
 The profile selector in the page header lists all available profiles (the sidebar
-carries the same selector). Pick one and click **Apply** to activate it. Activating hands the profile to the daemon, whose
+carries the same selector). It reads **No active profile** when none is running — before
+you apply one, or after **Stop** in the sidebar. Pick one and click **Apply** to activate it. Activating hands the profile to the daemon, whose
 profile engine then evaluates its curves every second and drives the fans — so your
 fans stay controlled whether the GUI is open or closed. See
 [The Daemon Drives the Fans](profiles-and-curves.md#the-daemon-drives-the-fans).

@@ -60,7 +60,7 @@ class TestViewedProfile:
         page = _page(qtbot, app_state, profile_service)
         p = profile_service.create_profile("Draft")
         page.select_profile(p.id)
-        page._on_active_profile_changed()
+        page._on_active_profile_changed(p.id)  # an activation (DEC-462: "" is a stop)
         assert page._viewed_profile_id is None
 
 

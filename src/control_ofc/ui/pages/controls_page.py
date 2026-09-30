@@ -826,11 +826,26 @@ class ControlsPage(QWidget):
         changes prompt relocated there from the removed page profile combo."""
         return self._has_unsaved
 
-    def _on_active_profile_changed(self, _profile_id: str = "") -> None:
+    def _on_active_profile_changed(self, profile_id: str) -> None:
         """Follow a sidebar/service activation: view the now-active profile and
         rebuild (the rebuild releases live overrides — DEC-189). Clears unsaved
         because the switch is authoritative (the sidebar apply flow prompts
-        first via ``has_unsaved_changes``)."""
+        first via ``has_unsaved_changes``).
+
+        A deactivation (``""`` — the sidebar's Stop, the tray, another client)
+        has no profile to follow (DEC-462): the page keeps the profile it was
+        showing, pinned so the empty active id cannot pull it away, and keeps
+        its unsaved edits. It still rebuilds, because the daemon has dropped
+        every override (DEC-218) and the "Editing:" label's active marker moved.
+        No default for ``profile_id``: ``""`` means a deactivation now, so a
+        caller that omitted it would silently get that branch.
+        """
+        if not profile_id:
+            if self._viewed_profile_id is None:
+                self._viewed_profile_id = self._loaded_profile_id
+            self._refresh_all()
+            self.viewed_profile_changed.emit(self.viewed_profile_id)
+            return
         self._viewed_profile_id = None  # fall back to the active profile
         self._refresh_all()
         self._set_unsaved(False)
@@ -965,10 +980,10 @@ class ControlsPage(QWidget):
             # writes targeting a profile that no longer exists on disk.
             was_active_locally = self._profile_service.active_id == profile_id
             if was_active_locally and self._client is not None:
-                try:
-                    self._client.deactivate_profile()
-                except DaemonError as exc:
-                    self._log.warning("Daemon deactivate before delete failed: %s", exc)
+                # DEC-462: the one deactivation path, shared with the sidebar's Stop.
+                outcome = self._profile_service.deactivate(client=self._client)
+                if not outcome.deactivated:
+                    self._log.warning("Daemon deactivate before delete failed: %s", outcome.error)
                     # Continue with the local delete — the file is the
                     # canonical source for the next activation, and the
                     # daemon will surface the error itself.

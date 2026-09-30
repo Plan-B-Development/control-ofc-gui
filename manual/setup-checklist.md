@@ -104,7 +104,7 @@ Also worth knowing:
 1. Run the [Fan Wizard](fan-wizard.md) to identify and label each fan — it changes one fan at a time so you can match headers to physical fans. Ordinary fans are stopped briefly; a pump has its speed shifted instead, never stopped.
 2. On [Controls](controls.md), create fan roles and assign curves. Concepts: [Profiles and Curves](profiles-and-curves.md).
 3. Click **Save** on the Controls page. Nothing you edit reaches the daemon until you do.
-4. Pick the profile in the selector (page header or sidebar) and click **Apply**. The daemon then runs it — and keeps running it after you close the GUI, and after a reboot — until you apply another. Until you apply a profile, no curve controls any fan.
+4. Pick the profile in the selector (page header or sidebar) and click **Apply**. The daemon then runs it — and keeps running it after you close the GUI, and after a reboot — until you apply another or press **Stop** in the sidebar. Until you apply a profile, no curve controls any fan.
 
 ## When to redo what
 

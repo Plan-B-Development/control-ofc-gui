@@ -175,7 +175,7 @@ class TestProfileActivateStability:
         profile = page._get_current_profile()
         count_before = len(_curve_ids(page))
         profile_service.activate(profile.id, client=mock_client)
-        page._on_active_profile_changed()  # simulate the active_changed follow
+        page._on_active_profile_changed(profile.id)  # simulate the active_changed follow
         count_after = len(_curve_ids(page))
         assert count_before == count_after
 
@@ -190,7 +190,7 @@ class TestProfileActivateStability:
         profile = page._get_current_profile()
         ids_before = _curve_ids(page)
         profile_service.activate(profile.id, client=mock_client)
-        page._on_active_profile_changed()  # simulate the active_changed follow
+        page._on_active_profile_changed(profile.id)  # simulate the active_changed follow
         ids_after = _curve_ids(page)
         assert ids_before == ids_after
 

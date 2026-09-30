@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Stop profile control from the app** (DEC-462, `DC-co`). A **Stop** button beside **Apply**
+  under the sidebar's profile selector stops the daemon running the active profile, without
+  deleting it. Each fan goes back to what was driving it before — usually the BIOS, or an AMD
+  GPU's own fan curve — and OpenFan fans stay at their last speed or the Exit minimum. Thermal protection still applies. A
+  banner says so, and **Apply** starts a profile again. Before this, the only way to stop from
+  the app was to delete the active profile; the driver-collision advice now names this button
+  as well as the tray. After a stop, from here or anywhere else, the Controls page keeps showing
+  the profile you were on, unsaved edits included, instead of going blank.
+
 - **Fan-control test results come from the daemon, per header** (DEC-456, `PTR-l`). With daemon
   3.2.0 or newer (capability `control.pwm_verification_records`) the daemon remembers each fan
   header's latest *Test PWM Control* or completed PWM sweep result, whichever program ran it. The
@@ -57,6 +66,13 @@
 
 ### Fixed
 
+- **A warning no longer disappears on its own after a short notice** (DEC-462). A warning shown
+  within a few seconds of an auto-dismissing notice ("Connected to daemon", or the new Stop
+  notice) was hidden by that notice's timer; a failed Apply right after a Stop could vanish
+  before you read it.
+- **The Dashboard no longer names a profile when none is running** (DEC-462). With no profile
+  active, its profile selector — read out as "Active profile" — kept showing the last or the
+  first profile. It now reads **No active profile**.
 - **A fan header missing at startup no longer deletes its fans from your profiles** (DEC-461,
   `BRD-v`). When a fan header was missing when the app connected — a second fan chip that did
   not appear at boot, or a driver that loaded late — the app removed every profile fan on it and

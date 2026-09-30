@@ -141,7 +141,21 @@ class Sidebar(QWidget):
             "Apply", "secondary", object_name="Sidebar_Btn_applyProfile"
         )
         self.apply_profile_btn.setToolTip("Run the selected profile on the daemon")
-        layout.addWidget(self.apply_profile_btn)
+        # DEC-462: stop profile control without deleting a profile — before this
+        # the only GUI route was deleting the active profile (`DC-co`). Enabled
+        # only while a profile is active; main_window keeps it current.
+        self.stop_profile_btn = make_button(
+            "Stop",
+            "secondary",
+            object_name="Sidebar_Btn_stopProfile",
+            accessible_name="Stop profile control",
+        )
+        apply_row = QHBoxLayout()
+        apply_row.setContentsMargins(0, 0, 0, 0)
+        apply_row.setSpacing(4)
+        apply_row.addWidget(self.apply_profile_btn)
+        apply_row.addWidget(self.stop_profile_btn)
+        layout.addLayout(apply_row)
 
         # `CTRL-c`: add/remove live beside the selector. Both delegate to the
         # Controls page's existing handlers — the capability was never missing,

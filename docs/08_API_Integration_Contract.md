@@ -1716,8 +1716,8 @@ and the GUI parser defaults to `[]`):
   writing through it. The remediation therefore tells the user, first,
   to **deactivate the active profile and run no fan tests** until they
   have rebooted and the collision is no longer reported, and names the
-  routes: the tray's *Stop profile control*, or `POST /profile/deactivate`
-  on the socket (the reference GUI has no deactivate control; `DC-co`).
+  routes: the reference GUI's sidebar **Stop** (DEC-462), the tray's *Stop profile
+  control*, or `POST /profile/deactivate` on the socket.
   That stops the curve, **not every write**: with no profile active the
   engine still restores each header's original mode once (DEC-382 — a
   header found in manual mode gets its old duty back, and one whose
@@ -2920,8 +2920,10 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
   - Idempotent: returns `{"deactivated": true, "previous_profile_id": null,
     "previous_profile_name": null}` when no profile was active. With an
     active profile, the previous values are populated.
-  - The GUI calls this when the user deletes the active profile so the
-    daemon stops driving fans from a curve whose JSON has been removed.
+  - The GUI calls this from the sidebar's **Stop** (DEC-462), and when the user deletes the
+    active profile so the daemon stops driving fans from a curve whose JSON has been removed.
+    Both go through `ProfileService.deactivate`, which clears the GUI's active id only after
+    the daemon confirms (as `activate` does).
 - `GET /profile/active` — returns current active profile or `{"active": false}`
   - GUI queries on connect/reconnect (`PollingService._PollWorker`), and the
     response carries both `profile_id` and `profile_name`.

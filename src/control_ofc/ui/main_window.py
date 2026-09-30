@@ -392,6 +392,9 @@ class MainWindow(QWidget):
         self._profile_service.active_changed.connect(self._reflect_sidebar_active_profile)
         self.sidebar.profile_combo.currentIndexChanged.connect(self._on_sidebar_profile_selected)
         self.sidebar.apply_profile_btn.clicked.connect(self._on_sidebar_apply_profile)
+        self.sidebar.stop_profile_btn.clicked.connect(self._on_sidebar_stop_profile)
+        self._profile_service.active_changed.connect(self._refresh_stop_profile_button)
+        self._refresh_stop_profile_button()
         self.sidebar.new_profile_btn.clicked.connect(self._on_sidebar_new_profile)
         self.sidebar.delete_profile_btn.clicked.connect(self._on_sidebar_delete_profile)
         self.controls_page.viewed_profile_changed.connect(self._reflect_sidebar_viewed_profile)
@@ -677,9 +680,12 @@ class MainWindow(QWidget):
         """Follow an activation: re-mark ``(active)`` and select it (DEC-208).
 
         A full repopulate, because the marker moves between entries — selecting
-        the right row is no longer enough on its own.
+        the right row is no longer enough on its own. A deactivation has nothing
+        to select (DEC-462): the marker is dropped and the selection kept, or the
+        empty id would fall through to the first entry and move the Controls page
+        off the profile it was showing.
         """
-        self._populate_sidebar_profiles(select_id=self._profile_service.active_id)
+        self._populate_sidebar_profiles(select_id=self._profile_service.active_id or None)
 
     def _reflect_sidebar_viewed_profile(self, profile_id: str) -> None:
         """Follow the Controls page's own profile change (`CTRL-c`).
@@ -778,6 +784,53 @@ class MainWindow(QWidget):
         # forcing it would drag the user out of the profile they were browsing,
         # which is a thing selection no longer implies. `CTRL-c`.
         self._populate_sidebar_profiles()
+
+    # The info banner after a Stop (DEC-462) — what the daemon does with each kind
+    # of fan once no profile is active (docs/08 `POST /profile/deactivate`): each
+    # header goes back to what it was doing before the daemon took it (DEC-382 —
+    # usually the BIOS curve), an AMD GPU to its firmware curve (DEC-448), an
+    # OpenFan channel to max(last duty, Exit minimum) (DEC-451).
+    STOP_PROFILE_MESSAGE = (
+        "Profile control stopped. Each fan goes back to what was driving it before — "
+        "usually the BIOS or the GPU's own curve; OpenFan fans stay at their last speed "
+        "or the Exit minimum. Thermal protection still applies. Choose a profile and "
+        "press Apply to resume."
+    )
+    # Demo hands nothing back: its fans are synthetic and simply stop following a curve.
+    STOP_PROFILE_MESSAGE_DEMO = (
+        "Profile control stopped (demo). Choose a profile and press Apply to resume."
+    )
+    STOP_PROFILE_MESSAGE_MS = 10_000
+
+    def _refresh_stop_profile_button(self, *_args) -> None:
+        """Enable the sidebar's Stop only while a profile is active (DEC-462)."""
+        active = bool(self._profile_service.active_id)
+        btn = self.sidebar.stop_profile_btn
+        btn.setEnabled(active)
+        btn.setToolTip(
+            "Stop profile control: the daemon stops running the active profile "
+            "and hands the fans back"
+            if active
+            else "No profile is running"
+        )
+
+    def _on_sidebar_stop_profile(self) -> None:
+        """Stop profile control without deleting anything (DEC-462, `DC-co`).
+
+        No confirmation (the user's Q5-A): stopping is undone by Apply. The
+        banner says what the fans do now and how to resume.
+        """
+        res = self._profile_service.deactivate(client=self._client)
+        if not res.deactivated:
+            self.error_banner.show_warning(
+                f"Could not stop profile control: {res.error or 'unknown error'}"
+            )
+            return
+        # As Apply does (DEC-214): bridge into AppState so the status banner and
+        # the Dashboard say "no profile" now rather than on the next poll.
+        self._state.set_active_profile("")
+        message = self.STOP_PROFILE_MESSAGE_DEMO if res.local_only else self.STOP_PROFILE_MESSAGE
+        self.error_banner.show_info(message, self.STOP_PROFILE_MESSAGE_MS)
 
     def _show_activation_failure(self, message: str) -> None:
         """Show a failed activation's reason (`CTRL-k`), remembering the text so

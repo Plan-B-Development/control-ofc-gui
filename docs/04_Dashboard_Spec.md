@@ -23,7 +23,9 @@ one view nothing else duplicates.
 ### Page header
 The page title row carries a **profile selector + Apply**. The sidebar has one too;
 this one is kept deliberately so the landing page can switch profiles without
-navigating away.
+navigating away. With no profile active the selector shows the placeholder
+**No active profile** at index −1 (DEC-462) — a rebuild never falls back to the first
+entry, which named a profile that was not running.
 
 Five banners sit below it, each shown only while it applies:
 - **hwmon** absent or all read-only;

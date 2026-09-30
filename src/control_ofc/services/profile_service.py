@@ -1839,6 +1839,18 @@ class ProfileActivateOutcome:
         return f"Could not activate “{profile_name}”: {reason}"
 
 
+@dataclass
+class ProfileDeactivateOutcome:
+    """Result of :meth:`ProfileService.deactivate` (DEC-462) — the activate
+    outcome's twin. ``deactivated`` is the only success signal; ``error`` is a
+    human-readable reason on failure; ``local_only`` marks the no-client (demo)
+    path, where only the local active id was cleared."""
+
+    deactivated: bool
+    error: str | None = None
+    local_only: bool = False
+
+
 class ProfileService(QObject):
     """Manages profile loading, saving, and selection.
 
@@ -2294,6 +2306,39 @@ class ProfileService(QObject):
         if self._state is not None:
             self._state.request_hwmon_headers_refresh()
         return ProfileActivateOutcome(activated=True)
+
+    def deactivate(self, *, client: DaemonClient | None) -> ProfileDeactivateOutcome:
+        """Stop profile control end-to-end (DEC-462): ask the daemon, then clear
+        the active id *locally* — in that order, as :meth:`activate` does.
+
+        The one deactivation path, shared by the sidebar's **Stop** and the
+        delete-the-active-profile flow. With no client (demo) only the local id
+        is cleared. Otherwise the local id is cleared only after the daemon
+        confirms, so a failed stop never shows "no profile" while the daemon is
+        still running one. Never raises for a daemon error — the reason is
+        captured into :attr:`ProfileDeactivateOutcome.error`.
+
+        On success the daemon evaluates no curve from its next tick: it hands
+        back every motherboard header it took (DEC-382), puts each AMD GPU it
+        drove back on its firmware curve (DEC-448), and drops every
+        control-override (DEC-218); its thermal emergency still acts.
+        """
+        if client is None:
+            self.set_active("")
+            log.debug("No daemon client — profile control stopped locally only")
+            return ProfileDeactivateOutcome(deactivated=True, local_only=True)
+        try:
+            result = client.deactivate_profile()
+        except DaemonError as exc:
+            return ProfileDeactivateOutcome(deactivated=False, error=exc.message or "unknown error")
+        if not result.deactivated:
+            return ProfileDeactivateOutcome(deactivated=False, error="Rejected by the daemon")
+        self.set_active("")
+        # `TS-ae`: which headers the daemon protects as pumps follows the active
+        # profile (DEC-384), and there is none now — refresh the headers.
+        if self._state is not None:
+            self._state.request_hwmon_headers_refresh()
+        return ProfileDeactivateOutcome(deactivated=True)
 
     def create_profile(self, name: str) -> Profile:
         p = Profile(name=name)
