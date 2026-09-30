@@ -19,8 +19,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ..api.models import HardwareDiagnosticsResult, HwmonHeader, HwmonVerifyResult
+from ..api.models import (
+    GpuVerifyResult,
+    HardwareDiagnosticsResult,
+    HwmonHeader,
+    HwmonVerifyResult,
+)
 from ..ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
+from .verify_evidence import VerifyEvidence, gpu_verify_evidence, hwmon_verify_evidence
 
 # `VERDICT_PASS` / `VERDICT_WARN` / `VERDICT_FAIL` used to live here, as "the
 # compact per-header verdict shown on a Hardware card (§7)". That badge was
@@ -259,6 +265,9 @@ class VerifyResultView:
     lines: list[str] = field(default_factory=list)
     #: True when the daemon could not put the header back where it found it.
     restore_failed: bool = False
+    #: What the test did and read (`WIRE-f`). Its ``summary`` is already in
+    #: ``lines``; its ``rows`` are the table behind "Show test evidence".
+    evidence: VerifyEvidence = field(default_factory=VerifyEvidence)
 
     @property
     def text(self) -> str:
@@ -311,12 +320,12 @@ def build_verify_result_view(
     if result.details:
         lines.append(result.details)
 
-    init, final = result.initial_state, result.final_state
-    # A verify stopped for a mid-run pump never completed its settle, so its
-    # before/after RPM is not a measurement (DEC-418 review `C2`).
-    stopped_early = result.result == "pump_protected_mid_run"
-    if init.rpm is not None and final.rpm is not None and not stopped_early:
-        lines.append(f"RPM: {init.rpm} → {final.rpm}")
+    # `WIRE-f`: the one-line evidence summary replaces the bare RPM line. A
+    # verify stopped for a mid-run pump never completed its settle, so the
+    # builder claims no after-reading for it (DEC-418 review `C2`).
+    evidence = hwmon_verify_evidence(result)
+    if evidence.summary:
+        lines.append(evidence.summary)
     restore_failed = bool(getattr(result, "restore_failed", False))
     if restore_failed:
         lines.append(restore_failed_line(result))
@@ -345,6 +354,7 @@ def build_verify_result_view(
         chip_class=chip_class,
         lines=lines,
         restore_failed=restore_failed,
+        evidence=evidence,
     )
 
 
@@ -388,8 +398,11 @@ _GPU_OUTCOMES: dict[str, GpuVerifyOutcome] = {
         "GPU fan control is working — the fan responded to the test.",
         "SuccessChip",
     ),
+    # Reached through `gpu_result_outcome` only when the card reported
+    # `zero_rpm_enabled: true` — the fact that makes a stopped fan normal here.
     "zero_rpm_suppressed": GpuVerifyOutcome(
-        "GPU fan control works; the fan is in zero-RPM idle (normal).",
+        "GPU fan control works; zero-RPM idle is enabled on this card, so the fan "
+        "stays stopped until the GPU warms past its stop temperature (normal).",
         "SuccessChip",
     ),
     "rpm_unavailable": GpuVerifyOutcome(
@@ -413,6 +426,62 @@ _GPU_OUTCOMES: dict[str, GpuVerifyOutcome] = {
         "CriticalChip",
     ),
 }
+
+
+#: `zero_rpm_suppressed` when the card did not report zero-RPM idle as ON. The
+#: daemon (`gpu.rs`) emits the token only when `zero_rpm_enabled` is `true`, so
+#: this is a newer or different daemon's case; the summary then must not call a
+#: stopped fan "normal" on the strength of a setting nobody read (`WIRE-f`).
+_GPU_ZERO_RPM_UNCONFIRMED = GpuVerifyOutcome(
+    "The fan curve was applied and the fan stayed stopped; the daemon put it down to "
+    "zero-RPM idle, but this card did not report zero-RPM idle as enabled. Re-test "
+    "with the GPU under load.",
+    "WarningChip",
+)
+
+
+def gpu_result_outcome(result: GpuVerifyResult) -> GpuVerifyOutcome:
+    """The row for a whole GPU result — :func:`gpu_outcome_for`, except that
+    ``zero_rpm_suppressed`` is called normal only when the card's own
+    ``zero_rpm_enabled`` says zero-RPM idle is on (`WIRE-f`)."""
+    if result.result == "zero_rpm_suppressed" and result.final_state.zero_rpm_enabled is not True:
+        return _GPU_ZERO_RPM_UNCONFIRMED
+    return gpu_outcome_for(result.result)
+
+
+@dataclass(frozen=True)
+class GpuVerifyResultView:
+    """Render-ready GPU verify result: the lines above the evidence table."""
+
+    chip_class: str
+    lines: list[str] = field(default_factory=list)
+    evidence: VerifyEvidence = field(default_factory=VerifyEvidence)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+def build_gpu_verify_result_view(
+    result: GpuVerifyResult, fix_lines: Sequence[str] = ()
+) -> GpuVerifyResultView:
+    """Assemble one GPU verify result (`WIRE-f`): the verdict, the one-line
+    evidence summary, the page's "To fix" lines, and the restore note.
+
+    Moved from ``system_state_page._show_gpu_verify_result`` so the summary
+    line and the evidence table come from the same builder as the hwmon path's
+    — the two used to report the same test differently. ``fix_lines`` stays the
+    caller's (``readiness_report.gpu_verify_problems`` is a widget-layer module).
+    """
+    outcome = gpu_result_outcome(result)
+    lines = [f"Result: {outcome.summary}"]
+    evidence = gpu_verify_evidence(result)
+    if evidence.summary:
+        lines.append(evidence.summary)
+    lines.extend(f"• To fix: {fix}" for fix in fix_lines)
+    if result.restore_failed:
+        lines.append("Note: the GPU fan could not be restored — set it manually if needed.")
+    return GpuVerifyResultView(chip_class=outcome.chip_class, lines=lines, evidence=evidence)
 
 
 def gpu_outcome_for(result: str) -> GpuVerifyOutcome:

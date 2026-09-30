@@ -47,8 +47,8 @@ from control_ofc.services.system_state_view import (
     daemon_version_at_least,
 )
 from control_ofc.services.verify_view import (
+    build_gpu_verify_result_view,
     build_verify_result_view,
-    gpu_outcome_for,
     outcome_for,
     verify_sweep_chip_class,
     verify_sweep_outcome,
@@ -75,6 +75,7 @@ from control_ofc.ui.widgets.system_state_cards import (
     RegistryCard,
     SafetyCard,
 )
+from control_ofc.ui.widgets.verify_evidence_panel import VerifyEvidencePanel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -479,6 +480,9 @@ class SystemStatePage(QWidget):
         self._verify_result_label.setWordWrap(True)
         self._verify_result_label.setVisible(False)
         section.add_widget(self._verify_result_label)
+        # WIRE-f: the before/after table behind the one-line summary above.
+        self._verify_evidence = VerifyEvidencePanel("SystemState_Section_verifyEvidence")
+        section.add_widget(self._verify_evidence)
         self._verify_all_progress_label = QLabel("")
         self._verify_all_progress_label.setObjectName("SystemState_Label_verifyAllProgress")
         self._verify_all_progress_label.setWordWrap(True)
@@ -507,6 +511,8 @@ class SystemStatePage(QWidget):
         self._gpu_verify_result_label.setWordWrap(True)
         self._gpu_verify_result_label.setVisible(False)
         section.add_widget(self._gpu_verify_result_label)
+        self._gpu_verify_evidence = VerifyEvidencePanel("SystemState_Section_verifyGpuEvidence")
+        section.add_widget(self._gpu_verify_evidence)
         self._gpu_restore_result_label = QLabel("")
         self._gpu_restore_result_label.setObjectName("SystemState_Label_restoreGpuResult")
         self._gpu_restore_result_label.setWordWrap(True)
@@ -1195,6 +1201,9 @@ class SystemStatePage(QWidget):
     # ── PWM verify (ported) ──────────────────────────────────────────
 
     def _run_pwm_verify(self) -> None:
+        # Every message this path can show replaces the last result, so its
+        # evidence goes too — a table under a verdict it does not describe.
+        self._verify_evidence.set_evidence(None)
         header_id = self._verify_combo.currentData()
         if not header_id:
             self._verify_result_label.setText("No writable header selected")
@@ -1268,6 +1277,7 @@ class SystemStatePage(QWidget):
         else:
             self._verify_result_label.setText(f"Verify error: {message}")
         self._verify_result_label.setVisible(True)
+        self._verify_evidence.set_evidence(None)
         self._verify_active_header = None  # before the gate reads it — see `_on_verify_ok`
         self._verify_btn.setText("Test PWM Control")
         self._sync_verify_buttons()
@@ -1289,6 +1299,7 @@ class SystemStatePage(QWidget):
         self._verify_result_label.setText(view.text)
         set_chip_class(self._verify_result_label, view.chip_class)
         self._verify_result_label.setVisible(True)
+        self._verify_evidence.set_evidence(view.evidence)
 
     def _run_pwm_verify_all(self) -> None:
         if not self._state:
@@ -1379,6 +1390,7 @@ class SystemStatePage(QWidget):
         self._gpu_verify_btn.setVisible(show)
         if not show:
             self._gpu_verify_result_label.setVisible(False)
+            self._gpu_verify_evidence.set_evidence(None)
         show_restore = bool(self._gpu_verify_bdf)
         self._gpu_restore_btn.setVisible(show_restore)
         if show_restore:
@@ -1387,6 +1399,7 @@ class SystemStatePage(QWidget):
             self._gpu_restore_result_label.setVisible(False)
 
     def _run_gpu_verify(self) -> None:
+        self._gpu_verify_evidence.set_evidence(None)
         bdf = self._gpu_verify_bdf
         if not bdf:
             self._gpu_verify_result_label.setText("No GPU with a writable fan-control path.")
@@ -1415,6 +1428,7 @@ class SystemStatePage(QWidget):
 
     @Slot(str, str)
     def _on_gpu_verify_error(self, category: str, message: str) -> None:
+        self._gpu_verify_evidence.set_evidence(None)
         if category == "unsupported":
             self._gpu_verify_unsupported = True
             self._gpu_verify_btn.setVisible(False)
@@ -1429,31 +1443,20 @@ class SystemStatePage(QWidget):
         self._gpu_verify_btn.setText("Test GPU Fan Control")
 
     def _show_gpu_verify_result(self, result: GpuVerifyResult) -> None:
-        # REWRITE (the vocabulary left, the assembly stayed): the seven-token
-        # `summary_map` that lived here is now `verify_view._GPU_OUTCOMES`, for
-        # DEC-276's reason — a rule inside one consumer is a rule no other
-        # consumer can follow (row `ACK-k`). It is a table of its own and must
-        # stay one: it shares four token names with the hwmon set and disagrees
-        # with it on `rpm_unavailable`. The line assembly below is GPU-specific
-        # (test speed, `gpu_verify_problems`, the restore note) and has one
-        # consumer, so it stays on the page.
-        outcome = gpu_outcome_for(result.result)
-        summary, css_class = outcome.summary, outcome.chip_class
-        lines = [f"Result: {summary}"]
-        init, final = result.initial_state, result.final_state
-        if init.rpm is not None and final.rpm is not None:
-            lines.append(f"RPM: {init.rpm} → {final.rpm}")
-        if result.test_speed_pct:
-            lines.append(
-                f"Test: drove the fan to {result.test_speed_pct}%, waited {result.wait_seconds}s"
-            )
-        for prob in gpu_verify_problems(result):
-            lines.append(f"• To fix: {prob['fix']}")
-        if result.restore_failed:
-            lines.append("Note: the GPU fan could not be restored — set it manually if needed.")
-        self._gpu_verify_result_label.setText("\n".join(lines))
-        set_chip_class(self._gpu_verify_result_label, css_class)
+        # REWRITE (W-DIAGG Run C, `WIRE-f`): the line assembly moved to
+        # `verify_view.build_gpu_verify_result_view`, joining the vocabulary that
+        # moved there for `ACK-k`. It had one consumer, but its RPM line was a
+        # second copy of what the shared evidence summary now says, and the
+        # `zero_rpm_suppressed` verdict needs the card's zero-RPM state, which
+        # only the view reads. The fixes stay page-supplied: `gpu_verify_problems`
+        # lives beside the readiness report that also renders them.
+        view = build_gpu_verify_result_view(
+            result, fix_lines=[prob["fix"] for prob in gpu_verify_problems(result)]
+        )
+        self._gpu_verify_result_label.setText(view.text)
+        set_chip_class(self._gpu_verify_result_label, view.chip_class)
         self._gpu_verify_result_label.setVisible(True)
+        self._gpu_verify_evidence.set_evidence(view.evidence)
 
     def _active_profile_controls_gpu(self) -> bool:
         ps = self._profile_service

@@ -82,6 +82,7 @@ from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
 from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
 from control_ofc.services.pwm_verification import verification_signature
+from control_ofc.services.verify_evidence import VerifyEvidence
 from control_ofc.services.verify_view import build_verify_result_view
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
@@ -113,6 +114,7 @@ from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizati
 from control_ofc.ui.widgets.pwm_header_card import PwmHeaderCard
 from control_ofc.ui.widgets.pwm_report_window import PwmReportWindow
 from control_ofc.ui.widgets.validation_session_dialog import ValidationSessionDialog
+from control_ofc.ui.widgets.verify_evidence_panel import VerifyEvidencePanel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -574,6 +576,10 @@ class HardwarePage(QWidget):
         self._diag_result.setWordWrap(True)
         self._diag_result.setVisible(False)
         v.addWidget(self._diag_result)
+        # WIRE-f: the before/after table behind a verify result's summary line.
+        # Every other diagnostic message here clears it (`_show_diag_message`).
+        self._diag_evidence = VerifyEvidencePanel("Hardware_Section_diagEvidence", card)
+        v.addWidget(self._diag_evidence)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -1466,7 +1472,7 @@ class HardwarePage(QWidget):
             result, header=header, diagnostics=getattr(self._diag, "last_hw_diagnostics", None)
         )
         # The same colour System State gives the same result (`TS-bk`).
-        self._show_diag_message(view.text, chip_class=view.chip_class)
+        self._show_diag_message(view.text, chip_class=view.chip_class, evidence=view.evidence)
 
     @Slot(str, str, str)
     def _on_verify_error(self, category: str, message: str, requested_header_id: str) -> None:
@@ -2083,16 +2089,22 @@ class HardwarePage(QWidget):
             svc.update(confirmed_label_prompts=[*stored, key])
         self._refresh_label_prompt(self._state.hwmon_headers if self._state else [])
 
-    def _show_diag_message(self, text: str, *, chip_class: str = "") -> None:
+    def _show_diag_message(
+        self, text: str, *, chip_class: str = "", evidence: VerifyEvidence | None = None
+    ) -> None:
         """Show *text* in the diagnostics result line.
 
         The line is shared by every diagnostic here, so the chip class is set on
         every message — a message with none resets it, rather than inheriting
-        the colour of the verify result before it.
+        the colour of the verify result before it. The evidence panel follows
+        the same rule: only a verify result passes any, so every other message
+        hides the previous result's table rather than leaving it under a line it
+        does not describe.
         """
         set_chip_class(self._diag_result, chip_class, skip_if_unchanged=True)
         self._diag_result.setText(text)
         self._diag_result.setVisible(bool(text))
+        self._diag_evidence.set_evidence(evidence if text else None)
         self._scroll.ensureWidgetVisible(self._diagnostics_card)
 
     def _confirm_probe(self) -> None:

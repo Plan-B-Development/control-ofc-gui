@@ -263,7 +263,15 @@ class TestGpuVerifyResultRendering:
                 gpu_id="0000:2d:00.0",
                 result=verdict,
                 initial_state=GpuVerifyState(rpm=0),
-                final_state=GpuVerifyState(applied_speed_pct=75, rpm=1600),
+                # The daemon emits `zero_rpm_suppressed` only with
+                # `zero_rpm_enabled: true` (`gpu.rs`), and since DEC-457 the
+                # verdict reads it; the unconfirmed arm is pinned in
+                # `test_verify_evidence_wire_f.py`.
+                final_state=GpuVerifyState(
+                    applied_speed_pct=75,
+                    rpm=1600,
+                    zero_rpm_enabled=True if verdict == "zero_rpm_suppressed" else None,
+                ),
                 test_speed_pct=75,
                 wait_seconds=6,
             )

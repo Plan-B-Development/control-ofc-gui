@@ -25,6 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..api.models import CharacterizationRun, HwmonHeader
+from .fan_mode import pwm_enable_label
 from .run_step_view import step_timing
 
 # The brief's mandated pre-run wording. Generic on purpose: the validation
@@ -129,25 +130,18 @@ def _fmt_rpm(value: int | None) -> str:
     return "—" if value is None else f"{value}"
 
 
-#: `pwmN_enable` values every hwmon driver agrees on. Anything above 1 is
-#: driver-specific automatic control, which is what makes it evidence of
-#: interference — the daemon writes 1 when it takes a header over, so a point
-#: reporting 2 during a sweep means something else wrote it back.
-_PWM_ENABLE_LABELS = {0: "no control", 1: "manual", 2: "automatic"}
-
-
 def _fmt_pwm_enable(mode: int | None) -> str:
-    """Render a point's `pwmN_enable` (`WIRE-u`).
+    """Render a point's `pwmN_enable` (`WIRE-u`) in the shared fan-mode
+    vocabulary (`services/fan_mode`).
 
-    ``None`` means the daemon did not report it — never "no control", which is
-    the *value 0* and a materially different statement. An unrecognised value is
-    rendered as itself rather than dropped: modes above 2 are driver-specific
-    and a newer driver may use one (the 273-i rule).
+    ``None`` means the daemon did not report it — never "Full speed (no
+    control)", which is the *value 0* and a materially different statement.
+    Anything from 2 up is automatic control, which is what makes it evidence of
+    interference: the daemon writes 1 when it takes a header over, so a point
+    reporting 2+ during a sweep means something else wrote it back.
     """
-    if mode is None:
-        return UNKNOWN_TEXT
-    known = _PWM_ENABLE_LABELS.get(mode)
-    return known if known is not None else f"mode {mode}"
+    label = pwm_enable_label(mode)
+    return UNKNOWN_TEXT if label is None else label
 
 
 def _humanise_token(token: str) -> str:

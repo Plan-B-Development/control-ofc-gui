@@ -84,7 +84,11 @@ def test_the_sentence_makes_no_claim_about_the_restore():
 
 def test_a_cut_short_settle_shows_no_rpm_change_but_a_completed_one_does():
     """DEC-418 review `C2`: the before/after RPM of a stopped verify is not a
-    measurement. The opposite arm: a completed verify keeps its RPM line."""
+    measurement. The opposite arm: a completed verify keeps its RPM change.
+
+    Since `WIRE-f` the change is in the evidence summary line ("Test: RPM a → b")
+    and the evidence table; a stopped verify has neither the change nor an
+    after-reading."""
     stopped = build_verify_result_view(
         HwmonVerifyResult(
             header_id="h",
@@ -93,7 +97,8 @@ def test_a_cut_short_settle_shows_no_rpm_change_but_a_completed_one_does():
             final_state=HwmonVerifyState(rpm=900),
         )
     )
-    assert "RPM:" not in stopped.text
+    assert "900" not in stopped.text
+    assert all(row.after == "not measured" for row in stopped.evidence.rows)
     completed = build_verify_result_view(
         HwmonVerifyResult(
             header_id="h",
@@ -102,7 +107,7 @@ def test_a_cut_short_settle_shows_no_rpm_change_but_a_completed_one_does():
             final_state=HwmonVerifyState(rpm=900),
         )
     )
-    assert "RPM: 1200 → 900" in completed.text
+    assert "RPM 1200 → 900" in completed.text
 
 
 def test_the_rendered_result_carries_the_daemon_details_and_one_prefix():

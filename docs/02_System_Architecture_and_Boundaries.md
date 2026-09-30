@@ -205,7 +205,17 @@ control_ofc/
                                #   and `_GPU_OUTCOMES` for POST /gpu/{id}/fan/verify.
                                #   They share four token names and disagree on two —
                                #   do not merge them. A row's `summary` is bare; the
-                               #   caller owns the "Result: " prefix.
+                               #   caller owns the "Result: " prefix. Since DEC-457
+                               #   it also assembles the GPU result
+                               #   (`build_gpu_verify_result_view`).
+    verify_evidence.py         # A verify result's evidence — DEC-457 (`WIRE-f`): the
+                               #   one-line "Test: …" summary and the before/after
+                               #   rows (fan mode, duty, RPM; GPU applied speed,
+                               #   zero-RPM idle). Unreported values render as "—".
+    fan_mode.py                # THE pwmN_enable vocabulary — DEC-457. Kernel wording:
+                               #   0 full speed, 1 manual, 2+ automatic (firmware).
+                               #   Characterisation, header inspector and verify
+                               #   evidence all read it.
     pump_protection.py         # THE pump-protection predicate + the enforced-floor
                                #   lookup. Daemon-first since DEC-316: prefers the
                                #   header's reported stop_permitted /
@@ -348,6 +358,8 @@ control_ofc/
       control_path_dialog.py   # "Discover Control Path" — DEC-333. First state is the
                                #   safety preflight; a blocked verdict disables Start.
       collapsible_section.py
+      verify_evidence_panel.py # "Show test evidence" — DEC-457. A CollapsibleSection
+                               #   over verify_evidence's rows; System State + Hardware
       cooling_device_card.py   # One cooling assembly, thin renderer — DEC-318
       pwm_header_card.py       # One PWM header, thin renderer — DEC-318
       header_role_dialog.py    # "Set role…" — DEC-444; plus the one "Remove pump

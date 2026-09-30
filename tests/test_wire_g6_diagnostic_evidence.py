@@ -2,8 +2,8 @@
 
 Three rows, one theme (`WIRE-u`, `WIRE-v`, `WIRE-w`): the GUI showed a
 conclusion and discarded the observation the daemon sent to justify it. `WIRE-f`
-(a verify evidence panel) is the fourth and was split out to `/ofc:new-feature`
-as feature work.
+(a verify evidence panel) is the fourth; it shipped in W-DIAGG Run C and is
+pinned in `test_verify_evidence_wire_f.py`.
 """
 
 from __future__ import annotations
@@ -138,7 +138,16 @@ def test_the_evidence_column_is_populated_in_the_table(qtbot, qapp) -> None:
 
 @pytest.mark.parametrize(
     ("mode", "expected"),
-    [(0, "no control"), (1, "manual"), (2, "automatic"), (5, "mode 5")],
+    # W-DIAGG Run C: the kernel's vocabulary, shared with the header inspector
+    # and the verify evidence (`services/fan_mode`). Every value from 2 up is
+    # automatic — nct6775's 5 included, which used to render as "mode 5".
+    [
+        (0, "Full speed (no control)"),
+        (1, "Manual"),
+        (2, "Automatic (firmware)"),
+        (5, "Automatic (firmware)"),
+        (-1, "mode -1"),
+    ],
 )
 def test_each_point_reports_its_pwm_enable_mode(mode: int, expected: str) -> None:
     run = CharacterizationRun(points=[CharPoint(requested_pct=40, pwm_enable=mode)])
@@ -151,7 +160,7 @@ def test_an_unreported_mode_is_not_rendered_as_no_control() -> None:
     them would assert interference that was never observed."""
     run = CharacterizationRun(points=[CharPoint(requested_pct=40, pwm_enable=None)])
     (row,) = build_characterization_view(run, header_label="x").rows
-    assert row.control_mode != "no control"
+    assert row.control_mode != "Full speed (no control)"
     assert row.control_mode == "—"
 
 

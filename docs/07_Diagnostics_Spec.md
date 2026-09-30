@@ -632,6 +632,14 @@ combo arrow, the chip knowledge base).
   it, which verifies every writable header in turn and reports its progress. The board notes'
   **Test fan control** button (`SystemState_Btn_verifyBoardNotes`, inside *Board notes for this
   hardware*) runs the same Verify All sweep — one write path, not a second one.
+  **Since DEC-457 (`WIRE-f`)** a result reads as the verdict, one `Test: …` summary line
+  (the duty the test set and how long it waited, the RPM change, and whether the fan mode stayed
+  manual), and a **Show test evidence** disclosure (`SystemState_Section_verifyEvidence`,
+  a `VerifyEvidencePanel`, collapsed on every new result) holding the before/after table:
+  fan mode (`pwm_enable`, labelled from `services/fan_mode` with the raw value beside it),
+  the duty read back, and RPM. A value the daemon did not report is `—`; a verify stopped
+  for a mid-run pump shows its after-column as *not measured*. Any other message in the
+  result line hides the table.
 - **Characterise PWM Response** (DEC-313, `SystemState_Btn_characterize`) — the deeper PWM/RPM
   sweep, a sibling of the quick verify, never a replacement. It is gated on
   `control.pwm_characterization` and hidden entirely without it. It opens
@@ -658,7 +666,11 @@ combo arrow, the chip knowledge base).
   twice as long as before; a validation session's per-diagnostic estimates say so.
 - **Test GPU Fan Control** (DEC-120, `SystemState_Btn_verifyGpu`), with its own result label —
   shown only when a writable AMD GPU is present and the daemon supports the verify route
-  (≥ 1.11.0). Beside it sits **Restore GPU Fan to Automatic** (DEC-147:
+  (≥ 1.11.0). Since DEC-457 its result has the same shape as the hwmon one (the summary line
+  names the write path, and `SystemState_Section_verifyGpuEvidence` holds applied speed, RPM,
+  and — only where the card reports them — fan mode or zero-RPM idle), and
+  `zero_rpm_suppressed` is called normal only when the card's `zero_rpm_enabled` is `true`;
+  otherwise it is a warning asking for a re-test under load. Beside it sits **Restore GPU Fan to Automatic** (DEC-147:
   `POST /gpu/{id}/fan/reset`), shown for any writable AMD GPU with **no** daemon version floor
   (the reset route predates every supported daemon), and **disabled with an explanatory
   tooltip while the active profile owns an `amd_gpu:` member** (the daemon engine would
@@ -1051,7 +1063,10 @@ in their tooltip while a PWM Test Report runs (`set_diagnostics_blocked`):
 
 - **Test Control** — the same quick verify as System State's *Test PWM Control*. The page
   counts its own verifies in flight, so the PWM Test Report's Start refuses while one runs
-  rather than waiting for the poll to show it (DEC-415, `PTA-l`).
+  rather than waiting for the poll to show it (DEC-415, `PTA-l`). Its result renders in the
+  diagnostics card's result line with the same summary and **Show test evidence** disclosure
+  (`Hardware_Section_diagEvidence`) as System State (DEC-457); every other diagnostic message
+  in that line hides the table (`_show_diag_message`).
 - **Characterise** — opens the same `PwmCharacterizationDialog` as System State's
   *Characterise PWM Response* ([Advanced actions](#advanced-actions-system-state)); a cooling
   device's card offers **Characterise Pump**, which opens it on the pump's header.

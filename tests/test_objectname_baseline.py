@@ -86,6 +86,16 @@ SYSTEM_STATE_OBJECTNAMES = frozenset(
         "SystemState_Label_verifyAllProgress",
         "SystemState_Label_verifyGpuResult",
         "SystemState_Label_verifyResult",
+        "SystemState_Section_verifyEvidence",
+        "SystemState_Section_verifyEvidence_Content",
+        "SystemState_Section_verifyEvidence_Header",
+        "SystemState_Section_verifyEvidence_Persistent",
+        "SystemState_Section_verifyEvidence_Table",
+        "SystemState_Section_verifyGpuEvidence",
+        "SystemState_Section_verifyGpuEvidence_Content",
+        "SystemState_Section_verifyGpuEvidence_Header",
+        "SystemState_Section_verifyGpuEvidence_Persistent",
+        "SystemState_Section_verifyGpuEvidence_Table",
         # DEC-234: health overview ↕ registry gained a resize handle; the health
         # row is wrapped in a named pane so it can be a splitter child.
         "SystemState_Pane_healthOverview",

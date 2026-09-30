@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from ..api.models import Capabilities, ControlPathRecord, FanReading, HwmonHeader
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from .daemon_features import daemon_supports, unsupported_feature_message
+from .fan_mode import PWM_ENABLE_MANUAL, pwm_enable_label
 from .pump_protection import header_effective_floor_pct, header_is_pump_protected
 
 # ── The capability vocabulary the brief mandates (§4) ────────────────────────
@@ -63,18 +64,9 @@ OWNER_DAEMON = "Control-OFC"
 OWNER_EXTERNAL = "BIOS / firmware"
 OWNER_UNKNOWN = UNKNOWN
 
-#: `pwmN_enable == 1` is manual mode, which is what the daemon writes when it
-#: takes a header over. Any other value means something else is driving it.
-PWM_ENABLE_MANUAL = 1
-
-_ENABLE_MODE_LABELS = {
-    0: "Full speed (no control)",
-    1: "Manual",
-    2: "Automatic (firmware curve)",
-    3: "Automatic (firmware curve)",
-    4: "Automatic (firmware curve)",
-    5: "Automatic (firmware curve)",
-}
+# `pwmN_enable == 1` (`fan_mode.PWM_ENABLE_MANUAL`) is manual mode, which is
+# what the daemon writes when it takes a header over. Any other value means
+# something else is driving it.
 
 _ROLE_LABELS = {
     "pump": "Pump",
@@ -319,7 +311,7 @@ def build_header_inspector_view(
     live.append(
         InfoRow(
             "Control mode",
-            _ENABLE_MODE_LABELS.get(mode, UNKNOWN) if mode is not None else UNKNOWN,
+            pwm_enable_label(mode) or UNKNOWN,
         )
     )
     live.append(InfoRow("Control ownership", ownership))

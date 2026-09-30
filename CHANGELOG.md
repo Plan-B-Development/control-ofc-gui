@@ -15,8 +15,24 @@
   refreshes itself when a header's result changes. Settings
   greys out *Forget result* there, since that stored result is no longer read. On an older daemon
   nothing changes.
+- **Fan-control test results show their evidence** (DEC-457, `WIRE-f`). A *Test PWM Control*
+  result, on the System State page or a Hardware page header card, now has a **Test:** line
+  saying what duty the test set, how long it waited, the RPM before and after, and whether the
+  header's fan mode stayed manual. **Show test evidence** opens the before/after table the daemon already
+  sent and the GUI used to drop: fan mode (`pwm_enable`) with its raw value, the duty read back,
+  and RPM. *Test GPU Fan Control* gets the same line and table (applied speed, RPM, and zero-RPM
+  idle or fan mode where the card reports them). This makes the manual's long-standing claim that
+  the result shows the `pwm_enable` values true.
 
 ### Changed
+
+- **One set of fan-mode names** (DEC-457). The PWM sweep's **Mode** column said "no control",
+  "manual" and "automatic" and showed modes above 2 as "mode 5"; a header card said "Automatic
+  (firmware curve)" for 2–5 and nothing for higher values. Both now use the kernel's meanings:
+  *Full speed (no control)* for 0, *Manual* for 1, *Automatic (firmware)* for 2 and above.
+- **A GPU fan left stopped is called zero-RPM idle only when the card says zero-RPM idle is on**
+  (DEC-457). Otherwise the result is a warning asking for a re-test under load, rather than
+  "normal".
 
 - **The fan wizard uses the daemon's published diagnostic temperature limit** (`PTA-m`). It
   checked a copy of 85 °C built into the GUI; it now reads `limits.diagnostic_max_temp_c`, the
