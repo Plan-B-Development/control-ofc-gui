@@ -132,6 +132,11 @@ class DiagnosticsService(QObject):
     event_appended = Signal(object)  # DiagEvent
     # Emitted when ``clear_events`` is called so the view can flush its rows.
     events_cleared = Signal()
+    # Emitted by ``set_hw_diagnostics`` after the cache and its arrival time
+    # change (`VOLT-a`), so a panel that renders the cache redraws when any of
+    # its writers — the poll worker, System State, the Hardware page — lands a
+    # new result, instead of only on its own next show.
+    hw_diagnostics_changed = Signal()
 
     def __init__(
         self,
@@ -151,6 +156,12 @@ class DiagnosticsService(QObject):
         # remove.
         self._seq = 0
         self.last_hw_diagnostics: HardwareDiagnosticsResult | None = None
+        #: Wall-clock epoch at which ``last_hw_diagnostics`` arrived (`VOLT-a`).
+        #: The cache has three writers at different times, so without this no
+        #: consumer can say how old a snapshot is. ``None`` until the first
+        #: ``set_hw_diagnostics``; a direct assignment to the cache leaves it
+        #: unset, and a consumer must then say nothing about the reading's age.
+        self.last_hw_diagnostics_at: float | None = None
 
     @property
     def events(self) -> list[DiagEvent]:
@@ -203,13 +214,19 @@ class DiagnosticsService(QObject):
         Overwriting on one would silently revert every hwmon fan to ``pwmN``
         mid-session and hand ``_role_preserving_label`` a role-less name again —
         re-opening the very floor bug this change closes, from a button click.
+
+        It also stamps ``last_hw_diagnostics_at`` and emits
+        ``hw_diagnostics_changed`` (`VOLT-a`), for the same reason: a writer
+        that bypassed this method would leave both stale.
         """
         self.last_hw_diagnostics = result
-        if self._state is None:
-            return
-        incoming, known = result.board, self._state.board_info
-        if (incoming.vendor or incoming.name) or not (known.vendor or known.name):
-            self._state.board_info = incoming
+        self.last_hw_diagnostics_at = time.time()
+        if self._state is not None:
+            incoming, known = result.board, self._state.board_info
+            if (incoming.vendor or incoming.name) or not (known.vendor or known.name):
+                self._state.board_info = incoming
+        # Last, so a listener reads the cache, its time and the board together.
+        self.hw_diagnostics_changed.emit()
 
     def log_event(
         self,

@@ -1081,6 +1081,11 @@ class MainWindow(QWidget):
         self._state.set_capabilities(self._demo_service.capabilities())
         self._state.set_status(self._demo_service.status())
         self._state.set_hwmon_headers(self._demo_service.hwmon_headers())
+        # `VOLT-c`: demo has no daemon, so nothing else ever fills the shared
+        # diagnostics cache — System State and the Hardware page's Voltages
+        # panel would render "no daemon connection" / an empty note all
+        # session. Through the single writer (DEC-229), like a real fetch.
+        self._diag.set_hw_diagnostics(self._demo_service.hardware_diagnostics())
 
         # Demo polling timer
         self._demo_timer = QTimer(self)

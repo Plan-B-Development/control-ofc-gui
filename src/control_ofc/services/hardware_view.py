@@ -15,6 +15,7 @@ real per-chip fields (no fabricated per-channel/address/poll-age columns).
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from control_ofc.api.models import HardwareReadiness, SuperIoReport
@@ -446,13 +447,17 @@ class VoltagePanelVM:
     rows: tuple[VoltageRowVM, ...]
     #: Count line, e.g. "10 channels · 3 identified".
     summary_text: str
-    #: Says where the readings came from. The GUI fetches
-    #: ``/diagnostics/hardware`` once per connection, so these are a snapshot
-    #: rather than a live reading, and a panel that did not say so would let a
-    #: user read hours-old millivolts as current ones.
+    #: Says when the readings were taken and that they are not live. The GUI
+    #: reads ``/diagnostics/hardware`` on connect, on the Hardware page's
+    #: Re-scan and on a System State refresh or rescan (`VOLT-a`), so these are
+    #: a snapshot, and a panel that did not say so would let a user read
+    #: hours-old millivolts as current ones.
     provenance_text: str
     #: Shown under the table when any row is unidentified; empty otherwise.
     footnote: str
+    #: Why the last re-read failed, shown while the previous readings (or the
+    #: empty note) stay on screen; empty when it did not fail.
+    refresh_error_text: str
 
 
 _UNIDENTIFIED_CAVEAT = (
@@ -460,17 +465,22 @@ _UNIDENTIFIED_CAVEAT = (
     "chip's pin, not a known rail."
 )
 
+# `VOLT-b`: the last sentence used to say an /etc/sensors.d file "is what names
+# them". It does not, for this table: libsensors reads that file in user space,
+# the kernel driver never does, so `inN_label` — the only label the daemon reads
+# — is unchanged by it.
 _VOLTAGE_FOOTNOTE = (
     "Channels the driver did not name are shown as measured at the chip's input "
     "pin. Boards feed rails through resistor dividers the driver knows nothing "
-    "about, so those readings are real voltages but not the rail voltage. "
-    "Installing an /etc/sensors.d file for this board is what names them."
+    "about, so those readings are real voltages but not the rail voltage. An "
+    "/etc/sensors.d file names them for the sensors command, not here — lm_sensors "
+    "reads it, and the kernel driver this table reads from does not."
 )
 
-_VOLTAGE_PROVENANCE = (
-    "Measured when the GUI connected to the daemon — voltages are not on the live "
-    "poll, because a rail moves by millivolts."
-)
+#: `VOLT-a`: the half of the provenance line that holds whatever the read time.
+#: It used to say the readings were "measured when the GUI connected", which
+#: stopped being true once System State's refresh and rescan could replace them.
+_VOLTAGE_NOT_LIVE = "Voltages are not on the live poll — Re-scan reads them again."
 
 _VOLTAGE_EMPTY_NOTE = (
     "No voltage rails reported. The daemon publishes them from the hwmon chip's "
@@ -479,14 +489,36 @@ _VOLTAGE_EMPTY_NOTE = (
 )
 
 
-def build_voltage_panel(rails) -> VoltagePanelVM:
+def _read_at_text(read_at: float, now: float) -> str:
+    """Say "Read at 14:03." today, and "Read on 29 Sep at 23:58." on any other day.
+
+    A clock time rather than an age, so the line cannot go stale while the page
+    is open. The date is added off the day because a session can outlive one.
+    """
+    at, today = time.localtime(read_at), time.localtime(now)
+    clock = time.strftime("%H:%M", at)
+    if (at.tm_year, at.tm_yday) == (today.tm_year, today.tm_yday):
+        return f"Read at {clock}."
+    return f"Read on {at.tm_mday} {time.strftime('%b', at)} at {clock}."
+
+
+def build_voltage_panel(
+    rails, *, read_at: float | None, now: float, refresh_error: str
+) -> VoltagePanelVM:
     """Build the Hardware page's Voltages panel from ``HardwareDiagnosticsResult.voltages``.
 
     Display-only by construction: nothing here is offered as a control input,
     and the ``identified`` distinction is carried into the row rather than
     flattened, because presenting a divided reading with the same authority as a
     direct one is the specific failure the daemon's flag exists to prevent.
+
+    ``read_at`` is ``DiagnosticsService.last_hw_diagnostics_at`` (epoch seconds),
+    ``None`` when nothing recorded when the snapshot arrived — the line then
+    says nothing about its age rather than guessing. ``refresh_error`` is the
+    last failed re-read's message, or ``""``. All three are keyword-only with no
+    default, so a caller cannot silently omit one (DEC-379).
     """
+    error_text = f"Could not re-read voltages: {refresh_error}" if refresh_error else ""
     ordered = sorted(rails, key=lambda r: (r.chip_name, r.channel))
     rows = tuple(
         VoltageRowVM(
@@ -506,14 +538,19 @@ def build_voltage_panel(rails) -> VoltagePanelVM:
             summary_text="",
             provenance_text="",
             footnote="",
+            refresh_error_text=error_text,
         )
     identified = sum(1 for r in rows if r.identified)
     channel_word = "channel" if len(rows) == 1 else "channels"
+    provenance = _VOLTAGE_NOT_LIVE
+    if read_at is not None:
+        provenance = f"{_read_at_text(read_at, now)} {_VOLTAGE_NOT_LIVE}"
     return VoltagePanelVM(
         has_rails=True,
         empty_note="",
         rows=rows,
         summary_text=f"{len(rows)} {channel_word} · {identified} identified",
-        provenance_text=_VOLTAGE_PROVENANCE,
+        provenance_text=provenance,
         footnote=_VOLTAGE_FOOTNOTE if identified < len(rows) else "",
+        refresh_error_text=error_text,
     )

@@ -38,6 +38,7 @@ from control_ofc.api.models import (
     SubsystemStatus,
     ThermalSafetyInfo,
     UnsupportedCapability,
+    VoltageRail,
 )
 
 # ---------------------------------------------------------------------------
@@ -211,6 +212,39 @@ _DEMO_ZONES: dict[str, str] = {
 }
 
 
+# `VOLT-c`: the demo board's it8696 voltage channels, with the reference host's
+# real shape — `in0` to `in6` unlabelled raw ADC pins (the ~2 V on `in1` to `in3` is
+# a divided rail, which is why they must read as unnamed), and the three the
+# driver labels. Mixed on purpose: the Voltages panel exists to draw exactly
+# that distinction, and a demo showing only one kind would hide it.
+_DEMO_VOLTAGES: tuple[tuple[int, str, float], ...] = (
+    (0, "", 1.224),
+    (1, "", 2.004),
+    (2, "", 1.992),
+    (3, "", 1.992),
+    (4, "", 1.260),
+    (5, "", 1.128),
+    (6, "", 1.440),
+    (7, "3VSB", 3.312),
+    (8, "Vbat", 3.216),
+    (9, "+3.3V", 3.072),
+)
+
+
+def _demo_voltages() -> list[VoltageRail]:
+    return [
+        VoltageRail(
+            id=f"hwmon:it8696:pci0:in{channel}",
+            chip_name="it8696",
+            channel=channel,
+            label=label or f"in{channel}",
+            value_v=value_v,
+            identified=bool(label),
+        )
+        for channel, label, value_v in _DEMO_VOLTAGES
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Demo service
 # ---------------------------------------------------------------------------
@@ -382,6 +416,9 @@ class DemoService:
     def hardware_diagnostics(self) -> HardwareDiagnosticsResult:
         """Synthetic /diagnostics/hardware payload for demo / screenshot use.
 
+        ``MainWindow._start_demo_mode`` loads it into the shared diagnostics
+        cache (`VOLT-c`), so System State and the Voltages panel render in demo.
+
         Models a realistic Gigabyte X870E AORUS MASTER reading: IT8696E primary
         chip via the out-of-tree it87 driver, k10temp and amdgpu mainline,
         no ACPI conflicts, healthy thermal safety, and a discrete RDNA3 GPU
@@ -463,6 +500,7 @@ class DemoService:
                 name="X870E AORUS MASTER",
                 bios_version="F4 (demo)",
             ),
+            voltages=_demo_voltages(),
         )
 
     def set_fan_pwm(self, fan_id: str, pwm_percent: int) -> None:

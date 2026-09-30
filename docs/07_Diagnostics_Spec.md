@@ -1029,7 +1029,16 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    it) and the measured liability note, then **Advanced detection**, a collapsed section with
    the opt-in **Probe ports (advanced)** button behind an explicit confirmation. Its
    prerequisites are in [Session and probe prerequisites](#session-and-probe-prerequisites).
-6. **Voltages** (`Hardware_Card_voltages`, `WIRE-ag`) — display-only reference readings.
+6. **Voltages** (`Hardware_Card_voltages`, `WIRE-ag`) — display-only reference readings from
+   the shared `DiagnosticsService.last_hw_diagnostics`. **Re-scan** also re-reads
+   `/diagnostics/hardware` on the page's own `_HwDiagWorker` (`VOLT-a`, DEC-463), and the panel
+   redraws on `DiagnosticsService.hw_diagnostics_changed`, so a System State refresh or rescan
+   updates it too. The provenance line gives the clock time the snapshot arrived
+   (`last_hw_diagnostics_at`; the date is added on another day) and says nothing about age when
+   nothing stamped it. A failed re-read keeps the previous readings and adds
+   `Hardware_Label_voltagesRefreshError`, cleared by the next result from any writer. Demo mode
+   loads `DemoService.hardware_diagnostics()` at start, so the panel shows the demo board's ten
+   `it8696` channels (`VOLT-c`).
 
 ### Setting a header's role (DEC-444)
 **Set role…** on each header card opens `HeaderRoleDialog` (`ui/widgets/header_role_dialog.py`)

@@ -1658,9 +1658,12 @@ empty) is the board's voltage rails, discovered from hwmon `inN_input`
 `{id, chip_name, channel, label, value_v, identified}`.
 
 - `id` — `hwmon:<chip>:<device_id>:in<N>`. The label is deliberately **not**
-  embedded: a rail's label appears or changes when the user installs an
-  `/etc/sensors.d` file, and an id that moved with it would break any client
-  that had stored one.
+  embedded: a rail's label can appear or change with a driver update that
+  starts publishing `inN_label`, and an id that moved with it would break any
+  client that had stored one. (An `/etc/sensors.d` file does **not** change it:
+  libsensors reads that file in user space, the kernel driver never does, so
+  `inN_label` in sysfs — the only label the daemon reads — is unaffected.
+  Corrected by DEC-463, `VOLT-b`.)
 - `label` — `inN_label` where the driver publishes one, else `in{N}`.
 - `value_v` — volts **at the chip's input pin**, after whatever scaling the
   *driver* applies.

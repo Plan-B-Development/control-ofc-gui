@@ -58,6 +58,12 @@ def _rails() -> list[VoltageRail]:
     return parse_hardware_diagnostics({"voltages": _WIRE_RAILS}).voltages
 
 
+def _panel(rails):
+    """The builder with no read time and no error — what these tests are not about
+    (`VOLT-a`'s read-time and error lines: `test_volt_a_c_voltage_refresh.py`)."""
+    return build_voltage_panel(rails, read_at=None, now=0.0, refresh_error="")
+
+
 # ── Model ────────────────────────────────────────────────────────────────
 
 
@@ -102,7 +108,7 @@ def test_a_malformed_rail_is_dropped_without_taking_its_siblings():
 
 
 def test_panel_carries_the_distinction_and_counts_only_identified_rails():
-    panel = build_voltage_panel(_rails())
+    panel = _panel(_rails())
     assert panel.has_rails
     assert panel.summary_text == "2 channels · 1 identified"
     raw = next(r for r in panel.rows if r.name == "in0")
@@ -115,8 +121,8 @@ def test_panel_carries_the_distinction_and_counts_only_identified_rails():
 
 
 def test_footnote_appears_only_while_some_channel_is_unnamed():
-    mixed = build_voltage_panel(_rails())
-    all_named = build_voltage_panel([r for r in _rails() if r.identified])
+    mixed = _panel(_rails())
+    all_named = _panel([r for r in _rails() if r.identified])
     assert mixed.footnote
     assert not all_named.footnote
     # Precondition: the two panels really do differ in the way under test,
@@ -124,13 +130,16 @@ def test_footnote_appears_only_while_some_channel_is_unnamed():
     assert len(all_named.rows) < len(mixed.rows)
 
 
-def test_a_populated_panel_says_the_readings_are_a_connect_time_snapshot():
-    """The GUI fetches `/diagnostics/hardware` once per connection, so a panel
-    that said nothing would let a user read hours-old millivolts as current."""
-    panel = build_voltage_panel(_rails())
-    assert "connected" in panel.provenance_text
+def test_a_populated_panel_says_the_readings_are_not_live():
+    """Voltages are a snapshot, not on the poll, so a panel that said nothing
+    would let a user read hours-old millivolts as current. `VOLT-a` retracted the
+    old "measured when the GUI connected" wording, which a System State refresh
+    or rescan had already made false."""
+    panel = _panel(_rails())
+    assert "not on the live poll" in panel.provenance_text
+    assert "connected" not in panel.provenance_text
     # And the empty panel must not claim a provenance it does not have.
-    assert build_voltage_panel([]).provenance_text == ""
+    assert _panel([]).provenance_text == ""
 
 
 def test_rows_are_ordered_by_chip_then_numeric_channel():
@@ -141,7 +150,7 @@ def test_rows_are_ordered_by_chip_then_numeric_channel():
         VoltageRail(id="a", chip_name="nct6799", channel=2, label="in2", value_v=2.0),
         VoltageRail(id="c", chip_name="it8696", channel=1, label="in1", value_v=3.0),
     ]
-    panel = build_voltage_panel(rails)
+    panel = _panel(rails)
     assert [(r.chip, r.name) for r in panel.rows] == [
         ("it8696", "in1"),
         ("nct6799", "in2"),
@@ -152,12 +161,12 @@ def test_rows_are_ordered_by_chip_then_numeric_channel():
 def test_the_row_vm_carries_no_unrendered_id():
     """`WIRE-ak`: a VM field no renderer reads is invisible decoration, and
     having it in the type is what hides the gap."""
-    row = build_voltage_panel(_rails()).rows[0]
+    row = _panel(_rails()).rows[0]
     assert not hasattr(row, "id")
 
 
 def test_empty_panel_explains_itself_rather_than_rendering_an_empty_table():
-    panel = build_voltage_panel([])
+    panel = _panel([])
     assert not panel.has_rails
     assert panel.rows == ()
     assert "2.37.0" in panel.empty_note

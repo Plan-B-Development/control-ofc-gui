@@ -66,6 +66,20 @@
 
 ### Fixed
 
+- **The Hardware page's Voltages table can be refreshed, and says when it was read** (DEC-463,
+  `VOLT-a`). **Re-scan** now reads the voltages again as well as re-running the hardware
+  assessment, and the table redraws whenever the readings change, including after a refresh or
+  rescan on System State. It said the readings were "measured when the GUI connected", which
+  stopped being true once System State could replace them; it now gives the time they were read
+  ("Read at 14:03."). If a Re-scan cannot read them, the previous readings stay and a line says
+  why.
+- **The Voltages footnote no longer says an `/etc/sensors.d` file names the channels** (DEC-463,
+  `VOLT-b`). It does not: `lm_sensors` reads that file for the `sensors` command, and the kernel
+  driver the table reads from never does. The footnote and the manual now say so.
+- **Demo mode shows System State and the Voltages table** (DEC-463, `VOLT-c`). Both were empty
+  in demo because nothing loaded the demo's hardware diagnostics. They now show a synthetic
+  Gigabyte X870E AORUS MASTER, with the voltage channels named and unnamed the way that board's
+  are. A support bundle exported in demo carries those synthetic readings.
 - **A warning no longer disappears on its own after a short notice** (DEC-462). A warning shown
   within a few seconds of an auto-dismissing notice ("Connected to daemon", or the new Stop
   notice) was hidden by that notice's timer; a failed Apply right after a Stop could vanish

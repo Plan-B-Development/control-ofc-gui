@@ -405,11 +405,11 @@ the voltage *at the chip's pin*, and it is not the voltage of whatever rail that
 pin is wired to — a +12V rail commonly reads around 2 V there. Rows the table
 marks **Identified rail** are the ones you can read at face value.
 
-Naming the rest is a per-board job that `lm_sensors` handles, not Control-OFC:
-if a configuration exists for your board under `/etc/sensors.d/`, it supplies
-both the labels and the divider maths, and the driver then publishes the names
-the Voltages table shows. A board with an empty `/etc/sensors.d/` gets unnamed
-channels.
+The names come from the kernel driver alone. An `lm_sensors` configuration for
+your board under `/etc/sensors.d/` names the channels and applies the divider
+maths **for the `sensors` command only**: `lm_sensors` reads that file, the kernel
+driver never does, so installing one changes nothing in this table. If you want
+the rail voltages today, `sensors` with your board's configuration shows them.
 
 Two things the table deliberately does not show, because on real hardware they
 mislead:
@@ -421,9 +421,11 @@ mislead:
   anyone configured for your board.
 
 Voltages are informational only. They are never offered as a fan-curve source,
-and nothing in fan control reads them. The readings are taken when the GUI
-connects to the daemon — the table says so, because rails move by millivolts and
-they are not on the live poll.
+and nothing in fan control reads them. They are not on the live poll, because
+rails move by millivolts: the GUI reads them when it connects to the daemon, when
+you press **Re-scan** on the Hardware page, and when you refresh or rescan on
+**System State**. The table says when its readings were taken ("Read at 14:03."),
+and if a Re-scan cannot read them it keeps the previous readings and says why.
 
 ## Common situations
 

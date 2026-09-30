@@ -8,10 +8,11 @@ and the Super-I/O table (real per-chip columns only, with a per-chip "How to
 enable" + copy-command) + the opt-in port probe.
 
 Owns its own ``_HardwareReadinessWorker`` (fetch/refresh/probe) — the same
-``_SocketWorker`` class the old tab uses. Presentation-only: no daemon/API/schema/
-control/safety change. Action deep-links are re-pointed to the already-migrated
-pages (System State / Overview / Settings). The old ``CoolingReadinessView`` +
-Diagnostics Readiness tab are left untouched.
+``_SocketWorker`` class the old tab uses — and a ``_HwDiagWorker`` with which
+Re-scan re-reads ``/diagnostics/hardware`` for the Voltages panel (`VOLT-a`).
+Presentation-only: no daemon/API/schema/control/safety change. Action deep-links
+are re-pointed to the already-migrated pages (System State / Overview / Settings).
+The old ``CoolingReadinessView`` + Diagnostics Readiness tab are left untouched.
 
 **AIO-MB Phase 6 (DEC-318)** adds two sections between Recommended Actions and
 Super-I/O — *Cooling Hardware* (cooling-device assemblies + per-header cards) and
@@ -31,6 +32,7 @@ lower a floor or stop a pump even by accident (§23).
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QUrl, Signal, Slot
@@ -93,6 +95,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _CharacterizationWorker,
     _ControlPathWorker,
     _HardwareReadinessWorker,
+    _HwDiagWorker,
     _OpenFanCalibrationWorker,
     _ValidationWorker,
     _VerifyWorker,
@@ -185,6 +188,9 @@ class HardwarePage(QWidget):
     _readiness_request = Signal()
     _readiness_refresh_request = Signal()
     _readiness_probe_request = Signal()
+    #: `VOLT-a`: Re-scan also re-reads `/diagnostics/hardware` for the Voltages
+    #: panel, on its own worker — the same class System State uses.
+    _hw_diag_request = Signal()
     _verify_request = Signal(str)
     _char_start_request = Signal(str, object, object, object, object)
     #: AIO Phase 8 Batch 1 §6.1, wired by DEC-334 (header_id, diagnostic).
@@ -268,6 +274,15 @@ class HardwarePage(QWidget):
         # re-fetch that waits for an in-flight one to answer first.
         self._verification_seen: frozenset[tuple[str, str]] | None = None
         self._readiness_refetch_pending = False
+        # `VOLT-a`: the Voltages panel's own re-read. Independent of the
+        # readiness request (different endpoint, different reply slot), so it
+        # has its own in-flight guard rather than sharing `_readiness_in_flight`.
+        self._hw_diag_thread: QThread | None = None
+        self._hw_diag_worker: _HwDiagWorker | None = None
+        self._hw_diag_in_flight = False
+        #: The last failed re-read's message; cleared by the next result from
+        #: any writer of the shared cache.
+        self._voltage_refresh_error = ""
 
         # AIO-MB Phase 6 workers. Each is created lazily by `_ensure_worker`
         # and torn down in `cleanup`, exactly like the readiness worker.
@@ -298,6 +313,11 @@ class HardwarePage(QWidget):
         self._header_cards: dict[str, PwmHeaderCard] = {}
 
         self._build_ui()
+
+        # `VOLT-a`: redraw the Voltages panel whenever ANY writer lands a new
+        # diagnostics result — the poll worker's connect-time fetch, System
+        # State's refresh or rescan, or this page's Re-scan.
+        self._diag.hw_diagnostics_changed.connect(self._on_hw_diagnostics_changed)
 
         # Live data comes entirely from signals AppState already emits — no new
         # polling is introduced for any dynamic field (§19). Topology arrives on
@@ -351,7 +371,7 @@ class HardwarePage(QWidget):
         header_row.addLayout(head)
         header_row.addStretch(1)
         self._refresh_btn = make_button("Re-scan", "secondary", object_name="Hardware_Btn_refresh")
-        self._refresh_btn.clicked.connect(self._refresh_readiness)
+        self._refresh_btn.clicked.connect(self._rescan)
         header_row.addWidget(self._refresh_btn)
         layout.addLayout(header_row)
 
@@ -968,6 +988,45 @@ class HardwarePage(QWidget):
     def _refresh_readiness(self) -> None:
         self._fetch_readiness(force=True)
 
+    def _rescan(self) -> None:
+        """The Re-scan button: a forced readiness assessment and a voltage re-read."""
+        self._fetch_voltages()
+        self._refresh_readiness()
+
+    def _fetch_voltages(self) -> None:
+        """Re-read `/diagnostics/hardware` for the Voltages panel (`VOLT-a`).
+
+        Silent when there is no daemon: the readiness half of the same press
+        already says so on the page's status line, and demo mode has no daemon
+        to ask. The result goes through `DiagnosticsService.set_hw_diagnostics`
+        — the cache's single writer — and the panel redraws from its signal.
+        """
+        if self._hw_diag_in_flight or not self._client:
+            return
+        if not self._ensure_hw_diag_worker():
+            return
+        self._hw_diag_in_flight = True
+        self._hw_diag_request.emit()
+
+    @Slot(object)
+    def _on_hw_diag_ok(self, result) -> None:
+        self._hw_diag_in_flight = False
+        # DEC-229: the one writer, which also emits `hw_diagnostics_changed`.
+        self._diag.set_hw_diagnostics(result)
+
+    @Slot(str, str)
+    def _on_hw_diag_error(self, _category: str, message: str) -> None:
+        # The previous readings stay: a failed re-read says nothing about the
+        # rails, and the read time already shows how old they are.
+        self._hw_diag_in_flight = False
+        self._voltage_refresh_error = message or "the daemon did not answer"
+        self._render_voltages()
+
+    @Slot()
+    def _on_hw_diagnostics_changed(self) -> None:
+        self._voltage_refresh_error = ""
+        self._render_voltages()
+
     @Slot(list)
     def _on_headers_for_readiness(self, headers: list) -> None:
         """Re-fetch the checklist when a header's verdict changes (DEC-456).
@@ -1307,23 +1366,29 @@ class HardwarePage(QWidget):
     def _render_voltages(self) -> None:
         """Render the Voltages panel from the cached hardware diagnostics.
 
-        `WIRE-ag`. The source is `DiagnosticsService.last_hw_diagnostics`, which
-        the poll worker fetches **once per connection** behind a latch — the same
-        object this page already reads for the PWM test. Rails move by
-        millivolts, so a connect-time snapshot is representative, but it is a
-        snapshot: this re-renders on every page show, it does not re-fetch.
-        `VoltagePanelVM.provenance_text` is what says so on screen, and the panel
-        must keep rendering it — without it a user reads hours-old millivolts as
-        current ones. A refresh control is register row `VOLT-a`.
+        `WIRE-ag`. The source is `DiagnosticsService.last_hw_diagnostics` — the
+        same object this page already reads for the PWM test. It is a snapshot,
+        not a live reading: the poll worker fetches it on connect, and System
+        State's refresh/rescan and this page's Re-scan replace it (`VOLT-a`).
+        This redraws on every page show and on `hw_diagnostics_changed`.
+        `VoltagePanelVM.provenance_text` says when the readings were taken, and
+        the panel must keep rendering it — without it a user reads hours-old
+        millivolts as current ones.
         """
         _clear_layout(self._voltages_layout)
         diag = getattr(self._diag, "last_hw_diagnostics", None)
-        panel = build_voltage_panel(getattr(diag, "voltages", []) or [])
+        panel = build_voltage_panel(
+            getattr(diag, "voltages", []) or [],
+            read_at=getattr(self._diag, "last_hw_diagnostics_at", None),
+            now=time.time(),
+            refresh_error=self._voltage_refresh_error,
+        )
 
         if not panel.has_rails:
             self._voltages_layout.addWidget(
                 _note_label(panel.empty_note, "Hardware_Label_voltagesEmpty")
             )
+            self._add_voltage_error_note(panel)
             return
 
         self._voltages_layout.addWidget(
@@ -1360,6 +1425,13 @@ class HardwarePage(QWidget):
         if panel.footnote:
             self._voltages_layout.addWidget(
                 _note_label(panel.footnote, "Hardware_Label_voltagesFootnote")
+            )
+        self._add_voltage_error_note(panel)
+
+    def _add_voltage_error_note(self, panel) -> None:
+        if panel.refresh_error_text:
+            self._voltages_layout.addWidget(
+                _note_label(panel.refresh_error_text, "Hardware_Label_voltagesRefreshError")
             )
 
     def _build_advanced(self, panel) -> QWidget:
@@ -2164,6 +2236,17 @@ class HardwarePage(QWidget):
         )
         return ok
 
+    def _ensure_hw_diag_worker(self) -> bool:
+        def connect(w: _HwDiagWorker) -> None:
+            self._hw_diag_request.connect(w.do_fetch, Qt.ConnectionType.QueuedConnection)
+            w.fetch_ok.connect(self._on_hw_diag_ok, Qt.ConnectionType.QueuedConnection)
+            w.fetch_error.connect(self._on_hw_diag_error, Qt.ConnectionType.QueuedConnection)
+
+        self._hw_diag_worker, self._hw_diag_thread, ok = self._ensure_worker(
+            self._hw_diag_worker, self._hw_diag_thread, _HwDiagWorker, connect
+        )
+        return ok
+
     def _ensure_verify_worker(self) -> bool:
         def connect(w: _VerifyWorker) -> None:
             self._verify_request.connect(w.do_verify, Qt.ConnectionType.QueuedConnection)
@@ -2351,6 +2434,7 @@ class HardwarePage(QWidget):
         # start can be minutes long — so none of them may be joined first.
         for worker, thread, label in (
             (self._readiness_worker, self._readiness_thread, "Readiness"),
+            (self._hw_diag_worker, self._hw_diag_thread, "HwDiag"),
             (self._verify_worker, self._verify_thread, "Verify"),
             (self._char_worker, self._char_thread, "Characterization"),
             (self._discover_worker, self._discover_thread, "ControlPath"),
@@ -2359,6 +2443,8 @@ class HardwarePage(QWidget):
         ):
             self._teardown_worker(worker, thread, label)
         self._readiness_worker = self._readiness_thread = None
+        self._hw_diag_worker = self._hw_diag_thread = None
+        self._hw_diag_in_flight = False  # the torn-down worker answers nothing more
         self._verify_worker = self._verify_thread = None
         self._verifies_in_flight = 0  # the torn-down worker answers nothing more
         self._char_worker = self._char_thread = None
