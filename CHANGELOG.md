@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.2.0] — 2026-09-30
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Per-header
+fan-control test results from the daemon need control-ofc-daemon 3.2.0 or newer.
+
 ### Added
 
 - **Stop profile control from the app** (DEC-462, `DC-co`). A **Stop** button beside **Apply**
