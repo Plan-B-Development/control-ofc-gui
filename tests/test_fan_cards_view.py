@@ -29,6 +29,14 @@ from control_ofc.services.profile_service import (
     LogicalControl,
     Profile,
 )
+from control_ofc.services.stall_hold import StallHold
+
+
+def _cards(fans, **kw):
+    """``build_fan_card_vms`` with the stalled set AppState would hold for this one
+    poll — a fresh ``StallHold`` over the same fans — unless a test passes its own."""
+    kw.setdefault("stalled_ids", StallHold().update(fans, 0.0))
+    return build_fan_card_vms(fans, **kw)
 
 
 def _fan(fan_id="openfan:ch00", source="openfan", rpm=1200, pwm=45, age_ms=100, **kw):
@@ -56,7 +64,7 @@ class TestControlGrouping:
         fans in one control are ONE card that names its blast radius."""
         control = _control(member_ids=("f1", "f2", "f3"))
         fans = [_fan("f1", rpm=1000, pwm=40), _fan("f2", rpm=1400, pwm=50), _fan("f3", rpm=1200)]
-        cards = build_fan_card_vms(fans, active_profile=_profile(control), overrides=[])
+        cards = _cards(fans, active_profile=_profile(control), overrides=[])
         assert len(cards) == 1
         assert cards[0].control_id == "c1"
         assert cards[0].fan_count == 3
@@ -65,7 +73,7 @@ class TestControlGrouping:
     def test_aggregates_are_means_over_reporting_members(self):
         control = _control(member_ids=("f1", "f2"))
         fans = [_fan("f1", rpm=1000, pwm=40), _fan("f2", rpm=1400, pwm=50)]
-        card = build_fan_card_vms(fans, active_profile=_profile(control), overrides=[])[0]
+        card = _cards(fans, active_profile=_profile(control), overrides=[])[0]
         assert card.rpm == 1200
         assert card.pwm_pct == 45
 
@@ -73,12 +81,12 @@ class TestControlGrouping:
         """A profile member the daemon isn't reporting must degrade the card, not
         vanish from it — the truthfulness rule."""
         control = _control(member_ids=("f1", "missing"))
-        card = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])[0]
+        card = _cards([_fan("f1")], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.OFFLINE
         assert card.fan_count == 2
 
     def test_control_label_falls_back_to_id_when_unnamed(self):
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1")],
             active_profile=_profile(_control(name="", member_ids=("f1",))),
             overrides=[],
@@ -88,7 +96,7 @@ class TestControlGrouping:
     def test_curve_and_temp_come_from_the_controls_own_curve(self):
         curve = CurveConfig(id="cv", name="C", sensor_id="cpu0", points=[CurvePoint(30, 20)])
         control = _control(member_ids=("f1",), curve_id="cv")
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1")],
             active_profile=_profile(control, curves=[curve]),
             overrides=[],
@@ -106,7 +114,7 @@ class TestControlGrouping:
         for curve_type in (CurveType.MIX, CurveType.SYNC):
             curve = CurveConfig(id="cv", name="Composite", type=curve_type, sensor_id="cpu0")
             control = _control(member_ids=("f1",), curve_id="cv")
-            card = build_fan_card_vms(
+            card = _cards(
                 [_fan("f1")],
                 active_profile=_profile(control, curves=[curve]),
                 overrides=[],
@@ -118,7 +126,7 @@ class TestControlGrouping:
         """A Mix/Sync curve has no single sensor, so borrowing one would be a lie."""
         curve = CurveConfig(id="cv", name="Mix", sensor_id="")
         control = _control(member_ids=("f1",), curve_id="cv")
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1")],
             active_profile=_profile(control, curves=[curve]),
             overrides=[],
@@ -130,7 +138,7 @@ class TestControlGrouping:
 class TestOverrideAndState:
     def test_override_on_the_control_marks_the_card(self):
         control = _control(member_ids=("f1",))
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1")],
             active_profile=_profile(control),
             overrides=[OverrideStatusEntry(control_id="c1", pwm_percent=70)],
@@ -140,7 +148,7 @@ class TestOverrideAndState:
 
     def test_an_override_on_another_control_does_not_leak(self):
         control = _control(member_ids=("f1",))
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1")],
             active_profile=_profile(control),
             overrides=[OverrideStatusEntry(control_id="other", pwm_percent=70)],
@@ -153,7 +161,7 @@ class TestOverrideAndState:
         control = _control(member_ids=("f1",))
         fan = _fan("f1", rpm=0)
         fan.stall_detected = True
-        card = build_fan_card_vms(
+        card = _cards(
             [fan],
             active_profile=_profile(control),
             overrides=[OverrideStatusEntry(control_id="c1", pwm_percent=70)],
@@ -164,7 +172,7 @@ class TestOverrideAndState:
         control = _control(member_ids=("f1",))
         fan = _fan("f1", age_ms=60_000)
         assert fan.freshness is not Freshness.FRESH
-        card = build_fan_card_vms([fan], active_profile=_profile(control), overrides=[])[0]
+        card = _cards([fan], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.STALE
 
 
@@ -176,9 +184,9 @@ class TestLowRpmDerivation:
         """A fan commanded above its floor but reading 0 RPM is the whole point
         of the heuristic — it is spinning down or unplugged."""
         control = _control(member_ids=("f1",))
-        card = build_fan_card_vms(
-            [_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[]
-        )[0]
+        card = _cards([_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[])[
+            0
+        ]
         assert card.state is FanState.LOW_RPM
 
     def test_zero_rpm_at_or_below_the_floor_is_not_low_rpm(self):
@@ -186,15 +194,15 @@ class TestLowRpmDerivation:
         so 0 RPM is expected rather than suspicious."""
         control = _control(member_ids=("f1",))
         control.minimum_pct = 60.0  # floor above the commanded value
-        card = build_fan_card_vms(
-            [_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[]
-        )[0]
+        card = _cards([_fan("f1", rpm=0, pwm=50)], active_profile=_profile(control), overrides=[])[
+            0
+        ]
         assert card.state is not FanState.LOW_RPM
 
     def test_no_commanded_pwm_is_not_low_rpm(self):
         """Without a commanded value there is nothing to contradict."""
         control = _control(member_ids=("f1",))
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("f1", rpm=0, pwm=None)], active_profile=_profile(control), overrides=[]
         )[0]
         assert card.state is not FanState.LOW_RPM
@@ -204,7 +212,7 @@ class TestLowRpmDerivation:
         """Zero-RPM idle is normal for a GPU (DEC-047) — flagging it would cry
         wolf on every cool GPU in the machine."""
         control = _control(member_ids=("g1",))
-        card = build_fan_card_vms(
+        card = _cards(
             [_fan("g1", source=source, rpm=0, pwm=50)],
             active_profile=_profile(control),
             overrides=[],
@@ -214,14 +222,14 @@ class TestLowRpmDerivation:
     def test_low_rpm_outranks_override_but_yields_to_stale(self):
         """Middle of the precedence chain: LOW_RPM > OVERRIDE, STALE > LOW_RPM."""
         control = _control(member_ids=("f1",))
-        overridden = build_fan_card_vms(
+        overridden = _cards(
             [_fan("f1", rpm=0, pwm=50)],
             active_profile=_profile(control),
             overrides=[OverrideStatusEntry(control_id="c1", pwm_percent=50)],
         )[0]
         assert overridden.state is FanState.LOW_RPM
 
-        stale = build_fan_card_vms(
+        stale = _cards(
             [_fan("f1", rpm=0, pwm=50, age_ms=60_000)],
             active_profile=_profile(control),
             overrides=[],
@@ -230,21 +238,22 @@ class TestLowRpmDerivation:
 
 
 class TestStatePrecedence:
-    """The full worst-of chain: OFFLINE > STALL > STALE > LOW_RPM > OVERRIDE > NORMAL.
+    """The full worst-of chain: OFFLINE > STALL > STALE > LOW_RPM > DRIVER_ALARM > OVERRIDE
+    > NORMAL (DRIVER_ALARM, DEC-459, is pinned in `test_w_alert_dec459.py`).
     A transposition in _STATE_RANK must fail a test."""
 
     def test_offline_outranks_stall(self):
         control = _control(member_ids=("f1", "missing"))
         stalling = _fan("f1", rpm=0)
         stalling.stall_detected = True
-        card = build_fan_card_vms([stalling], active_profile=_profile(control), overrides=[])[0]
+        card = _cards([stalling], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.OFFLINE
 
     def test_stall_outranks_stale(self):
         control = _control(member_ids=("f1", "f2"))
         stalling = _fan("f1", rpm=0)
         stalling.stall_detected = True
-        card = build_fan_card_vms(
+        card = _cards(
             [stalling, _fan("f2", age_ms=60_000)],
             active_profile=_profile(control),
             overrides=[],
@@ -253,9 +262,7 @@ class TestStatePrecedence:
 
     def test_healthy_control_is_normal(self):
         control = _control(member_ids=("f1", "f2"))
-        card = build_fan_card_vms(
-            [_fan("f1"), _fan("f2")], active_profile=_profile(control), overrides=[]
-        )[0]
+        card = _cards([_fan("f1"), _fan("f2")], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.NORMAL
 
 
@@ -267,15 +274,13 @@ class TestMemberlessControl:
     Controls page is where an unconfigured role is visible and finished."""
 
     def test_empty_control_gets_no_card(self):
-        cards = build_fan_card_vms(
-            [], active_profile=_profile(_control(member_ids=())), overrides=[]
-        )
+        cards = _cards([], active_profile=_profile(_control(member_ids=())), overrides=[])
         assert cards == []
 
     def test_an_empty_control_does_not_suppress_its_siblings(self):
         empty = _control(control_id="new", name="New Role", member_ids=())
         live = _control(control_id="c1", name="Chassis", member_ids=("f1",))
-        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(empty, live), overrides=[])
+        cards = _cards([_fan("f1")], active_profile=_profile(empty, live), overrides=[])
         assert [c.control_id for c in cards] == ["c1"]
 
 
@@ -287,9 +292,7 @@ class TestCardKeyUniqueness:
     def test_duplicate_control_ids_get_distinct_card_keys(self):
         a = _control(control_id="dup", name="A", member_ids=("f1",))
         b = _control(control_id="dup", name="B", member_ids=("f2",))
-        cards = build_fan_card_vms(
-            [_fan("f1"), _fan("f2")], active_profile=_profile(a, b), overrides=[]
-        )
+        cards = _cards([_fan("f1"), _fan("f2")], active_profile=_profile(a, b), overrides=[])
         assert len(cards) == 2
         assert cards[0].card_key != cards[1].card_key
         # control_id stays truthful so the Edit deep-link still names the control.
@@ -301,13 +304,13 @@ class TestCardKeyUniqueness:
         is nothing left for it to collide with — but it must still render, and
         ``control_id`` must stay the truthful value the Edit deep-link needs."""
         empty_id = _control(control_id="", name="Oddly Named", member_ids=("f1",))
-        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(empty_id), overrides=[])
+        cards = _cards([_fan("f1")], active_profile=_profile(empty_id), overrides=[])
         assert [c.control_id for c in cards] == [""]
         assert cards[0].card_key == ""
 
     def test_card_key_equals_control_id_in_the_normal_case(self):
         control = _control(member_ids=("f1",))
-        card = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])[0]
+        card = _cards([_fan("f1")], active_profile=_profile(control), overrides=[])[0]
         assert card.card_key == card.control_id == "c1"
 
 
@@ -319,14 +322,14 @@ class TestUnassignedFansGetNoCard:
 
     def test_no_profile_yields_no_cards_at_all(self):
         """The state a fresh install is in. Was one pooled "Unassigned" card."""
-        cards = build_fan_card_vms(
+        cards = _cards(
             [_fan("openfan:ch00"), _fan("openfan:ch01")], active_profile=None, overrides=[]
         )
         assert cards == []
 
     def test_a_controllable_fan_no_control_claims_gets_no_card(self):
         control = _control(member_ids=("f1",))
-        cards = build_fan_card_vms(
+        cards = _cards(
             [_fan("f1"), _fan("openfan:ch09")], active_profile=_profile(control), overrides=[]
         )
         assert [c.control_id for c in cards] == ["c1"]
@@ -335,7 +338,7 @@ class TestUnassignedFansGetNoCard:
 
     def test_a_claimed_fan_still_gets_its_control_card(self):
         control = _control(member_ids=("f1",))
-        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])
+        cards = _cards([_fan("f1")], active_profile=_profile(control), overrides=[])
         assert [c.control_id for c in cards] == ["c1"]
 
 
@@ -345,23 +348,19 @@ class TestOnlyLiveControlsGetCards:
     cost; a *partly* live control still reports its missing members."""
 
     def test_a_control_with_no_members_assigned_gets_no_card(self):
-        cards = build_fan_card_vms(
-            [_fan("f1")], active_profile=_profile(_control(member_ids=())), overrides=[]
-        )
+        cards = _cards([_fan("f1")], active_profile=_profile(_control(member_ids=())), overrides=[])
         assert cards == []
 
     def test_a_control_whose_members_are_all_absent_gets_no_card(self):
         control = _control(member_ids=("f1", "f2"))
-        cards = build_fan_card_vms(
-            [_fan("openfan:ch09")], active_profile=_profile(control), overrides=[]
-        )
+        cards = _cards([_fan("openfan:ch09")], active_profile=_profile(control), overrides=[])
         assert cards == []
 
     def test_a_partly_live_control_keeps_its_card_and_reports_offline(self):
         """The opposite branch — without it a predicate stuck at "never render"
         would pass the two tests above."""
         control = _control(member_ids=("f1", "f2"))
-        cards = build_fan_card_vms([_fan("f1")], active_profile=_profile(control), overrides=[])
+        cards = _cards([_fan("f1")], active_profile=_profile(control), overrides=[])
         assert [c.control_id for c in cards] == ["c1"]
         assert cards[0].state is FanState.OFFLINE
         assert cards[0].fan_count == 2  # still names its full blast radius
@@ -400,7 +399,7 @@ class TestReadOnlyCards:
             _fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None, duty_pct=55),
             _fan("nvidia_gpu:b", source="nvidia_gpu", pwm=None, duty_pct=70),
         ]
-        cards = build_fan_card_vms(fans, active_profile=None, overrides=[])
+        cards = _cards(fans, active_profile=None, overrides=[])
         assert [c.control_id for c in cards] == [
             f"{READ_ONLY_PREFIX}nvidia_gpu:a",
             f"{READ_ONLY_PREFIX}nvidia_gpu:b",
@@ -414,7 +413,7 @@ class TestReadOnlyCards:
         read-only fan is kept, because no page can ever assign it (DEC-102) and
         its firmware duty would otherwise have nowhere to show."""
         fans = [_fan("openfan:ch00"), _fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None)]
-        cards = build_fan_card_vms(fans, active_profile=None, overrides=[])
+        cards = _cards(fans, active_profile=None, overrides=[])
         assert [c.control_id for c in cards] == [f"{READ_ONLY_PREFIX}nvidia_gpu:a"]
         assert cards[0].member_fan_ids == ("nvidia_gpu:a",)
 
@@ -422,7 +421,7 @@ class TestReadOnlyCards:
         """A hand-edited profile can place one in a control; the control genuinely
         exists, so it is not also given a standalone card."""
         control = _control(member_ids=("nvidia_gpu:a",))
-        cards = build_fan_card_vms(
+        cards = _cards(
             [_fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None, duty_pct=55)],
             active_profile=_profile(control),
             overrides=[],
@@ -431,7 +430,7 @@ class TestReadOnlyCards:
         assert cards[0].is_read_only is False
 
     def test_display_name_labels_the_read_only_card(self):
-        cards = build_fan_card_vms(
+        cards = _cards(
             [_fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None)],
             active_profile=None,
             overrides=[],
@@ -440,7 +439,7 @@ class TestReadOnlyCards:
         assert cards[0].label == "RTX 4080 Fan"
 
     def test_label_falls_back_to_the_fan_id_without_a_resolver(self):
-        cards = build_fan_card_vms(
+        cards = _cards(
             [_fan("nvidia_gpu:a", source="nvidia_gpu", pwm=None)],
             active_profile=None,
             overrides=[],
@@ -456,14 +455,14 @@ class TestPurity:
             _fan("openfan:ch09"),  # unassigned and controllable → no card (DEC-356)
             _fan("f1"),
         ]
-        cards = build_fan_card_vms(fans, active_profile=_profile(control), overrides=[])
+        cards = _cards(fans, active_profile=_profile(control), overrides=[])
         assert [c.control_id for c in cards] == ["c1", f"{READ_ONLY_PREFIX}nvidia_gpu:z"]
 
     def test_repeated_calls_are_stable(self):
         control = _control(member_ids=("f1",))
         args = ([_fan("f1")],)
         kwargs = {"active_profile": _profile(control), "overrides": []}
-        assert build_fan_card_vms(*args, **kwargs) == build_fan_card_vms(*args, **kwargs)
+        assert _cards(*args, **kwargs) == _cards(*args, **kwargs)
 
     def test_empty_input_yields_no_cards(self):
-        assert build_fan_card_vms([], active_profile=None, overrides=[]) == []
+        assert _cards([], active_profile=None, overrides=[]) == []

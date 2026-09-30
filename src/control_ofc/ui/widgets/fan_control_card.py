@@ -61,6 +61,7 @@ from control_ofc.ui.widgets.curve_card import CurvePreview
 _STATE_CHIP: dict[FanState, tuple[str, str]] = {
     FanState.NORMAL: ("Auto", "SuccessChip"),
     FanState.OVERRIDE: ("Override active", "WarningChip"),
+    FanState.DRIVER_ALARM: ("Driver alarm", "WarningChip"),
     FanState.LOW_RPM: ("Low RPM", "WarningChip"),
     FanState.STALE: ("Stale", "WarningChip"),
     FanState.STALL: ("Stall", "CriticalChip"),
@@ -395,6 +396,9 @@ class FanControlCard(Card):
             text, css = "Read-only", "InfoChip"
         self._state_chip.setText(text)
         set_chip_class(self._state_chip, css, skip_if_unchanged=True)
+        # DEC-459: the chip says what; the tooltip says which fan and against
+        # what limit. Escaped — it carries user aliases.
+        self._state_chip.setToolTip(_safe_tooltip(vm.state_detail) if vm.state_detail else "")
 
         # The band shows one of its two widgets; the stack hides the other, so
         # the tile's height is identical either way.

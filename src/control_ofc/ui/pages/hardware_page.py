@@ -732,6 +732,7 @@ class HardwarePage(QWidget):
             # validated" row that survives a GUI restart.
             control_paths=self._control_paths,
             board_vendor=self._board_vendor(),
+            stalled_ids=state.stalled_fan_ids if state else frozenset(),
         )
         self._sync_header_cards(header_views)
         self._refresh_label_prompt(headers)

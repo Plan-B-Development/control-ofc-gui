@@ -1044,8 +1044,10 @@ class DashboardPage(QWidget):
         if fans:
             self._show_content()
             self._seen_fans = True
-            # Fan-stall onset → annotation (poll-diff, DEC-181). Onset only.
-            stalled_now = {f.id for f in fans if f.stall_detected}
+            # Fan-stall onset → annotation (poll-diff, DEC-181). Onset only, and
+            # from AppState's held set (`TS-bg`): a flag missing for one poll is
+            # not a recovery, so it must not post a second "Stall:" line.
+            stalled_now = set(self._state.stalled_fan_ids) if self._state else set()
             for fid in sorted(stalled_now - self._last_stalled_fan_ids):
                 name = self._state.fan_display_name(fid) if self._state else fid
                 self._annotate(f"Stall: {name}")
@@ -1099,6 +1101,7 @@ class DashboardPage(QWidget):
             caps=self._state.capabilities,
             sensor_values={s.id: s.value_c for s in (self._state.sensors or [])},
             display_name=self._state.fan_display_name,
+            stalled_ids=self._state.stalled_fan_ids,
         )
 
         # Keyed by vm.card_key, not vm.control_id: a malformed profile can repeat

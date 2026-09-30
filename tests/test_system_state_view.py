@@ -466,6 +466,7 @@ def test_thermal_state_maps_cover_the_wire_vocabulary():
     away from the same guarantee.
     """
     from control_ofc.api.models import THERMAL_STATE_VALUES
+    from control_ofc.services.cooling_watch import THERMAL_ALERTS
     from control_ofc.services.dashboard_view import _THERMAL_REASONS
     from control_ofc.services.system_state_view import _THERMAL_STATE
     from control_ofc.ui.status_banner import THERMAL_STATES
@@ -475,6 +476,7 @@ def test_thermal_state_maps_cover_the_wire_vocabulary():
         ("status_banner.THERMAL_STATES", THERMAL_STATES),
         ("dashboard_view._THERMAL_REASONS", _THERMAL_REASONS),
         ("system_state_view._THERMAL_STATE", _THERMAL_STATE),
+        ("cooling_watch.THERMAL_ALERTS", THERMAL_ALERTS),
     ):
         keys = set(mapping)
         assert not wire - keys, (

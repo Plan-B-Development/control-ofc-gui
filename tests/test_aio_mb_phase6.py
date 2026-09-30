@@ -640,7 +640,9 @@ def test_characterisation_hidden_when_the_daemon_lacks_the_capability():
 
 
 def test_pumps_are_listed_first():
-    views = build_header_inspector_views([_fan_header(), _pump_header()], capabilities=_caps())
+    views = build_header_inspector_views(
+        [_fan_header(), _pump_header()], capabilities=_caps(), stalled_ids=frozenset()
+    )
     assert views[0].pump_protected is True
 
 

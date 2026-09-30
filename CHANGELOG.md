@@ -23,6 +23,17 @@
   and RPM. *Test GPU Fan Control* gets the same line and table (applied speed, RPM, and zero-RPM
   idle or fan mode where the card reports them). This makes the manual's long-standing claim that
   the result shows the `pwm_enable` values true.
+- **A thermal emergency is now an alert** (DEC-459, `DC-cz`). When the daemon's thermal
+  protection runs the fans at full speed, you get an error alert naming what tripped it (the CPU,
+  the coolant, or both). When it has no current CPU temperature, you get a warning. Both are
+  written to the event log and counted in the footer's health summary, which used to read "All
+  systems nominal" beside a *Thermal: Emergency* chip. Acknowledging the alert quietens the badge
+  but not the footer. It clears once the daemon has been unreachable for five seconds, because
+  nothing current is known; one missed reading does not clear it.
+- **Fan cards show the fan chip's own alarm** (DEC-459, `WIRE-o`). A card whose fan the chip
+  flags (usually a fan below the low-speed limit the BIOS set) reads *Driver alarm*; hovering
+  the chip names the fan and that limit. It is not an alert: what raises it depends on the chip,
+  so on some machines it is normal. *Low RPM* outranks it on a card.
 
 ### Changed
 
@@ -46,6 +57,12 @@
 
 ### Fixed
 
+- **A stalled fan no longer flickers when the daemon misses one reading** (DEC-459, `TS-bg`).
+  Since daemon 2.55.0 an OpenFan channel's stall flag goes missing for about a second after a
+  failed reply, and the app read that as "not stalled": the alert cleared and came back, and the
+  chart gained a second "Stall:" marker. A stall is now held for up to five seconds while the
+  flag is missing, and ends early if the fan reads any RPM. The alert, the chart marker, the fan
+  card and the Hardware page's header status all follow the same rule.
 - **A PWM Test Report step refused for safety no longer says another test was running**
   (`DC-cl`). The daemon sends a refusal for heat, an active thermal force or stale temperatures
   as `409`, the same status as a busy slot, so every such step read "Another diagnostic was

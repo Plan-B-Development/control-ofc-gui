@@ -89,6 +89,7 @@ def test_every_wording_map_covers_the_wire_vocabulary():
     assert set(cooling_watch.ADVISORY_TITLES) == set(ADVISORY_CODE_VALUES)
     assert set(cooling_watch.EMERGENCY_CAUSE_PHRASES) == set(EMERGENCY_CAUSE_VALUES)
     assert set(cooling_watch.EMERGENCY_CAUSE_SUBJECTS) == set(EMERGENCY_CAUSE_VALUES)
+    assert set(cooling_watch.EMERGENCY_CAUSE_NAMES) == set(EMERGENCY_CAUSE_VALUES)
 
 
 class TestEmergencyResume:

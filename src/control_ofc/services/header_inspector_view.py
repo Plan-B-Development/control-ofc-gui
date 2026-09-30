@@ -31,6 +31,7 @@ places where a naive rendering would lie:
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from ..api.models import Capabilities, ControlPathRecord, FanReading, HwmonHeader
@@ -262,6 +263,7 @@ def build_header_inspector_view(
     enable_revert_count: int = 0,
     control_path: ControlPathRecord | None = None,
     board_vendor: str = "",
+    stalled: bool = False,
 ) -> HeaderInspectorView:
     """Build the render-ready inspection of one PWM header.
 
@@ -270,6 +272,8 @@ def build_header_inspector_view(
     ``enable_revert_count`` comes from ``GET /diagnostics/hardware``, which the
     poll worker already fetches — no extra request is made for it.
     ``board_vendor`` is the DMI vendor, read only for the `BRD-h` label caveat.
+    ``stalled`` is ``AppState.stalled_fan_ids`` membership (`TS-bg`), passed by
+    :func:`build_header_inspector_views`, which requires the set.
     """
     # Local import: `header_role_view` imports this module's label helpers.
     from .header_role_view import nct6687_label_note, role_editable
@@ -326,7 +330,7 @@ def build_header_inspector_view(
         status, status_state = STATUS_UNAVAILABLE, "neutral"
     elif reading is None:
         status, status_state = STATUS_UNKNOWN, "neutral"
-    elif reading.fan_alarm or reading.stall_detected:
+    elif reading.fan_alarm or stalled:
         status, status_state = STATUS_NEEDS_ATTENTION, "critical"
     elif enable_revert_count > 0 and ownership == OWNER_EXTERNAL:
         # The header was taken back and is currently NOT ours. A historical
@@ -536,8 +540,12 @@ def build_header_inspector_views(
     enable_revert_counts: dict[str, int] | None = None,
     control_paths: dict[str, ControlPathRecord] | None = None,
     board_vendor: str = "",
+    stalled_ids: Collection[str],
 ) -> list[HeaderInspectorView]:
     """Build views for every header, pumps first then daemon order.
+
+    ``stalled_ids`` is ``AppState.stalled_fan_ids`` (`TS-bg`). Required, so the
+    page cannot fall back to the raw ``stall_detected`` by leaving it out.
 
     Pumps lead because §2 and §5 both treat the pump as the header a user is
     looking for; the rest keep the daemon's ordering so the list is stable.
@@ -555,6 +563,7 @@ def build_header_inspector_views(
             enable_revert_count=reverts.get(h.id, 0),
             control_path=paths.get(h.id),
             board_vendor=board_vendor,
+            stalled=h.id in stalled_ids,
         )
         for h in headers
     ]

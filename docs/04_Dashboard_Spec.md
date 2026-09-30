@@ -80,8 +80,10 @@ could reflect or act on.
 Each card shows:
 - the control name, with **Edit** beside it (DEC-238) — a ghost button opening the
   Controls page focused on that control
-- a **read-only state chip** — Auto / Override active / Low RPM / Stale / Stall /
-  Offline, and **Read-only** in place of Auto on a read-only fan's card, since nothing
+- a **read-only state chip** — Auto / Override active / Driver alarm / Low RPM / Stale /
+  Stall / Offline (worst member wins, in the reverse of that order; **Driver alarm**, DEC-459,
+  is the driver's `fan_alarm` bit, a state and never an alert, with a tooltip naming each
+  alarmed fan and its `rpm_min_threshold`), and **Read-only** in place of Auto on a read-only fan's card, since nothing
   drives it (text always paired with colour, WCAG 1.4.1) — alongside how many fans the
   control covers, so the blast radius of anything done to it is explicit
 - **RPM / SPEED / TEMP** — means across reporting members; `—` where unknown, never a
@@ -227,6 +229,18 @@ If a fan or sensor is stale:
 - mark the affected fan card's state chip Stale
 - visually soften or mark stale values
 - do not silently continue to present the value as fully healthy
+
+If a fan is stalled (DEC-459, `TS-bg`): every surface reads `AppState.stalled_fan_ids`, which
+holds a stall through a missing `stall_detected` for up to 5 s (ending early on RPM above 0) —
+so the alert, the chart's single "Stall:" onset marker and the card's Stall chip do not blink
+when the daemon misses one reading. `null` means *not evaluated*, never *not stalled*.
+
+If the daemon's `thermal_state` is not normal (DEC-459): an alert — `emergency` an error naming
+its causes, `no_sensor_fallback`, `recovery` (an older daemon) and an unknown token a warning —
+counted in the footer's health rollup, so the footer never reads "All systems nominal" beside a
+Thermal: Emergency chip. It clears once the daemon has been unreachable for 5 s (nothing current is
+known); not at once, because the poll reports a disconnect on its first failed cycle and one
+timeout would otherwise log a false recovery and re-raise the alert unacknowledged.
 
 If the daemon is disconnected, the page is replaced by the **Not Connected** state (below): the
 fan cards are cleared rather than kept as stale values, so nothing implies active control.

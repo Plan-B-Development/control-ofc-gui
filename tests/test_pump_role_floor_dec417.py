@@ -247,6 +247,7 @@ def test_dashboard_card_uses_the_role_floor():
         active_profile=profile,
         overrides=[],
         headers=[header],
+        stalled_ids=(),
     )
     assert card.state is not FanState.LOW_RPM
 
@@ -259,5 +260,6 @@ def test_dashboard_card_without_the_role_still_flags_low_rpm():
         active_profile=profile,
         overrides=[],
         headers=[header],
+        stalled_ids=(),
     )
     assert card.state is FanState.LOW_RPM

@@ -43,7 +43,7 @@ Honesty notes (GUI-derived data; daemon fields are never invented):
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from enum import Enum
 
@@ -90,20 +90,25 @@ class FanState(Enum):
     """Per-fan / per-card state. Text labels — never colour-only (WCAG 1.4.1);
 
     the renderer pairs each with a glyph. Worst-of precedence for a card chip is
-    highest rank first: OFFLINE > STALL > STALE > LOW_RPM > OVERRIDE > NORMAL
-    (a fault always beats the informational OVERRIDE; OFFLINE = no reading at
-    all). Preserved verbatim from the retired ``fan_grouping`` module so the
-    state vocabulary did not silently change with the Dashboard rebuild.
+    highest rank first: OFFLINE > STALL > STALE > LOW_RPM > DRIVER_ALARM >
+    OVERRIDE > NORMAL (a fault always beats the informational OVERRIDE; OFFLINE =
+    no reading at all). The order before DEC-459 is preserved from the retired
+    ``fan_grouping`` module; DEC-459 added DRIVER_ALARM below LOW_RPM (the user's
+    choice, 2026-09-30).
     """
 
     NORMAL = "Normal"
     OVERRIDE = "Override"  # manually pinned via a daemon override on its control
+    # DEC-459 (`WIRE-o`, Q2-C): the driver's own `fanN_alarm` bit. A state, not an
+    # alert: what sets it is chip-dependent and the BIOS sets the limit it is
+    # measured against, so on some machines it is normal.
+    DRIVER_ALARM = "Driver alarm"
     LOW_RPM = "Low RPM"  # rpm==0 while commanded above the floor (non-GPU only)
     STALE = "Stale"  # reading older than the FRESH window
-    # Daemon-confirmed stall: rpm==0 while the header reported a duty above the
-    # daemon's stall threshold. Deliberately not worded "while PWM commanded" —
-    # the daemon derives it from `last_commanded_pwm`, which for an uncontrolled
-    # hwmon header is the readback (`AIO5-a` / `WIRE-j`).
+    # Daemon-confirmed stall, held through a missing flag (`TS-bg`,
+    # `services.stall_hold`): rpm==0 under a duty above the daemon's stall
+    # threshold. Deliberately not worded "while PWM commanded" — on an
+    # uncontrolled hwmon header that duty is the readback (`AIO5-a`, DEC-458).
     STALL = "Stall"
     OFFLINE = "Offline"  # expected fan with no live reading
 
@@ -112,10 +117,11 @@ class FanState(Enum):
 _STATE_RANK: dict[FanState, int] = {
     FanState.NORMAL: 0,
     FanState.OVERRIDE: 1,
-    FanState.LOW_RPM: 2,
-    FanState.STALE: 3,
-    FanState.STALL: 4,
-    FanState.OFFLINE: 5,
+    FanState.DRIVER_ALARM: 2,
+    FanState.LOW_RPM: 3,
+    FanState.STALE: 4,
+    FanState.STALL: 5,
+    FanState.OFFLINE: 6,
 }
 
 
@@ -151,6 +157,9 @@ class FanCardVM:
     state: FanState
     overridden: bool
     curve: CurveConfig | None
+    # Why the card is in its state, for the chip's tooltip. Set only for
+    # DRIVER_ALARM, where it names each alarmed fan and the firmware's low limit.
+    state_detail: str = ""
 
 
 def is_fan_controllable(
@@ -166,9 +175,14 @@ def is_fan_controllable(
     return fan_control_method(fan, headers, caps) not in _READ_ONLY_METHODS
 
 
-def _derive_state(fan: FanReading, *, overridden: bool, floor: float) -> FanState:
-    """State for a *present* fan, following the pinned precedence order."""
-    if fan.stall_detected is True:
+def _derive_state(fan: FanReading, *, overridden: bool, floor: float, stalled: bool) -> FanState:
+    """State for a *present* fan, following the pinned precedence order.
+
+    ``stalled`` is ``AppState.stalled_fan_ids`` membership — the held answer
+    (`TS-bg`), never the raw ``stall_detected``, which is ``None`` for a poll
+    after a failed OpenFan reply.
+    """
+    if stalled:
         return FanState.STALL
     if fan.freshness != Freshness.FRESH:
         return FanState.STALE
@@ -189,9 +203,42 @@ def _derive_state(fan: FanReading, *, overridden: bool, floor: float) -> FanStat
         and commanded > floor
     ):
         return FanState.LOW_RPM
+    if fan.fan_alarm is True:
+        return FanState.DRIVER_ALARM
     if overridden:
         return FanState.OVERRIDE
     return FanState.NORMAL
+
+
+def _driver_alarm_detail(
+    fans: list[FanReading], headers: list[HwmonHeader], name: Callable[[str], str]
+) -> str:
+    """The DRIVER_ALARM tooltip: one line per alarmed fan, with its low limit.
+
+    The limit is ``fanN_min`` (``rpm_min_threshold``), which the BIOS sets. What
+    raises the alarm is chip-dependent (kernel hwmon sysfs-interface), so the
+    wording says what usually raises it and never claims more.
+    """
+    limits = {h.id: h.rpm_min_threshold for h in headers}
+    lines = []
+    for fan in fans:
+        if fan.fan_alarm is not True:
+            continue
+        limit = limits.get(fan.id)
+        if limit:
+            lines.append(
+                f"{name(fan.id)}: the fan chip reports an alarm. Its low-speed limit, "
+                f"set by the firmware, is {limit} RPM, and a fan below it usually "
+                f"raises one."
+            )
+        else:
+            lines.append(
+                f"{name(fan.id)}: the fan chip reports an alarm. What raises it depends "
+                f"on the chip; the Hardware page shows this header's readings."
+            )
+    if lines:
+        lines.append("This is the hardware's own flag; the daemon does not act on it.")
+    return "\n".join(lines)
 
 
 def _avg(values: list[int]) -> int | None:
@@ -230,6 +277,7 @@ def build_fan_card_vms(
     caps: Capabilities | None = None,
     sensor_values: dict[str, float] | None = None,
     display_name: Callable[[str], str] | None = None,
+    stalled_ids: Collection[str],
 ) -> list[FanCardVM]:
     """Build one card VM per *live* logical control, plus one per read-only fan.
 
@@ -249,8 +297,11 @@ def build_fan_card_vms(
             fill each card's ``temp_c`` from its curve's sensor. Keeps this
             module Qt-free and free of any daemon call.
         display_name: resolves a fan id to its best display name
-            (``AppState.fan_display_name``), used to label read-only fan cards.
-            Falls back to the raw id.
+            (``AppState.fan_display_name``), used to label read-only fan cards
+            and the DRIVER_ALARM tooltip. Falls back to the raw id.
+        stalled_ids: ``AppState.stalled_fan_ids`` — which fans are stalled, held
+            through a missing flag (`TS-bg`). Required, so a caller cannot fall
+            back to the raw flag by leaving it out (the DEC-379 trap).
 
     Returns:
         Live controls in profile order, then one card per read-only fan.
@@ -258,6 +309,7 @@ def build_fan_card_vms(
     """
     by_id = {f.id: f for f in fans}
     sv = sensor_values or {}
+    name = display_name or (lambda fid: fid)
     hdrs = headers or []
     # DEC-417: a header's pump role is the daemon's third floor term; without it a
     # member authored before the assignment reads a 20% floor the daemon holds at 30.
@@ -289,6 +341,7 @@ def build_fan_card_vms(
         pwms: list[int] = []
         duties: list[int] = []
         states: list[FanState] = []
+        present: list[FanReading] = []
 
         for member in control.members:
             fan = by_id.get(member.member_id)
@@ -296,8 +349,13 @@ def build_fan_card_vms(
                 # A profile member with no live reading is OFFLINE, never hidden.
                 states.append(FanState.OFFLINE)
                 continue
+            present.append(fan)
             floor = member_minimum_pct(control, member, pump_ids)
-            states.append(_derive_state(fan, overridden=overridden, floor=floor))
+            states.append(
+                _derive_state(
+                    fan, overridden=overridden, floor=floor, stalled=fan.id in stalled_ids
+                )
+            )
             if fan.rpm is not None:
                 rpms.append(fan.rpm)
             if fan.last_commanded_pwm is not None:
@@ -315,6 +373,7 @@ def build_fan_card_vms(
         if curve is not None and curve.sensor_id and curve.type not in _COMPOSITE_CURVE_TYPES:
             temp = sv.get(curve.sensor_id)
 
+        state = _worst(states)
         cards.append(
             FanCardVM(
                 control_id=control.id,
@@ -327,9 +386,14 @@ def build_fan_card_vms(
                 pwm_pct=_avg(pwms),
                 duty_pct=_avg(duties),
                 temp_c=temp,
-                state=_worst(states),
+                state=state,
                 overridden=overridden,
                 curve=curve,
+                state_detail=(
+                    _driver_alarm_detail(present, hdrs, name)
+                    if state is FanState.DRIVER_ALARM
+                    else ""
+                ),
             )
         )
 
@@ -344,11 +408,12 @@ def build_fan_card_vms(
         (f for f in unclaimed if not is_fan_controllable(f, hdrs, caps)),
         key=lambda f: f.id,
     ):
+        state = _derive_state(fan, overridden=False, floor=0.0, stalled=fan.id in stalled_ids)
         cards.append(
             FanCardVM(
                 control_id=f"{READ_ONLY_PREFIX}{fan.id}",
                 card_key=_unique_key(f"{READ_ONLY_PREFIX}{fan.id}", keys),
-                label=display_name(fan.id) if display_name else fan.id,
+                label=name(fan.id),
                 is_read_only=True,
                 fan_count=1,
                 member_fan_ids=(fan.id,),
@@ -356,9 +421,14 @@ def build_fan_card_vms(
                 pwm_pct=fan.last_commanded_pwm,
                 duty_pct=fan.duty_pct,
                 temp_c=None,
-                state=_derive_state(fan, overridden=False, floor=0.0),
+                state=state,
                 overridden=False,
                 curve=None,
+                state_detail=(
+                    _driver_alarm_detail([fan], hdrs, name)
+                    if state is FanState.DRIVER_ALARM
+                    else ""
+                ),
             )
         )
 

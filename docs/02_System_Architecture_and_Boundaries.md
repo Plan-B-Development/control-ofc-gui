@@ -136,6 +136,9 @@ control_ofc/
     daemon_service_check.py    # systemd unit-state probe behind the no-daemon hint
     alerts.py                  # alert lifecycle (raise / acknowledge / clear) — v2.47.0
     alerts_view.py             # Qt-free alert-list VM, shared by the status bar + alert centre
+    stall_hold.py              # which fans are stalled now, held through a missing
+                               #   stall_detected for up to 5 s; the ONE stall answer every
+                               #   consumer reads via AppState.stalled_fan_ids — DEC-459
     fan_alias_seed.py          # first-run seeding of user fan aliases
     id_migration.py            # stable-id migration across schema/daemon upgrades
     layout_state.py            # persisted per-page layout state

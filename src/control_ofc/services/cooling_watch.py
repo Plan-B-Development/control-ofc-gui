@@ -61,6 +61,52 @@ EMERGENCY_CAUSE_SUBJECTS: dict[str, str] = {
     "coolant": "the coolant",
 }
 
+#: ``emergency_causes[]`` token → the name the thermal alert's title gives it,
+#: e.g. "Thermal emergency (CPU and coolant)".
+EMERGENCY_CAUSE_NAMES: dict[str, str] = {
+    "cpu": "CPU",
+    "coolant": "coolant",
+}
+
+# What an emergency does, after the clause naming its trigger (DEC-443). One copy,
+# read by the Dashboard's Safety detail and the thermal alert alike.
+EMERGENCY_REACH = (
+    ", so the daemon's thermal protection is "
+    "active: it runs every OpenFan fan and every writable fan header it can drive — on "
+    "the motherboard, or on a USB fan controller or AIO cooler — at full speed until "
+    "temperatures fall. GPU fans are not included; the GPU protects itself."
+)
+
+#: ``thermal_state`` ``recovery`` (a daemon before DEC-386) explained.
+RECOVERY_REASON = (
+    "Temperature exceeded the safety threshold. The daemon forced fans up and is holding "
+    "a recovery speed until the system cools further."
+)
+
+# DEC-269: "reachable" was true when the only trigger was a sensor that had
+# vanished. Since DEC-267 a sensor that is still listed but has STOPPED UPDATING
+# also reaches this state, so the wording is true of both triggers without a
+# daemon-version gate. DEC-382: the floor reaches only the fans a profile
+# controls, so with no profile active nothing is forced — "wherever it controls
+# the fans" is true of every daemon.
+#: ``thermal_state`` ``no_sensor_fallback`` explained.
+NO_SENSOR_REASON = (
+    "No current CPU temperature reading, so the daemon cannot confirm the system is "
+    "cool and holds a safe minimum fan speed wherever it controls the fans — a "
+    "reading may still be listed, but it has stopped updating."
+)
+
+#: ``thermal_state`` → (alert level, alert title); ``normal`` raises nothing
+#: (``("", "")``). DEC-459: a thermal state other than normal is an alert — the
+#: daemon is forcing fans because of a condition on this machine. An emergency is
+#: an error; the no-sensor floor and an older daemon's recovery hold are warnings.
+THERMAL_ALERTS: dict[str, tuple[str, str]] = {
+    "normal": ("", ""),
+    "recovery": ("warning", "Thermal recovery hold"),
+    "emergency": ("error", "Thermal emergency"),
+    "no_sensor_fallback": ("warning", "No current CPU temperature"),
+}
+
 
 @dataclass(frozen=True)
 class CoolingAlert:
@@ -147,3 +193,32 @@ def emergency_resume(causes: Sequence[str]) -> str:
     if len(subjects) == 1:
         return f"once {subjects[0]} cools"
     return f"once {' and '.join(subjects)} cool"
+
+
+def thermal_alert(state: str | None, causes: Sequence[str]) -> CoolingAlert | None:
+    """The alert for a non-normal ``thermal_state``, or ``None`` (DEC-459).
+
+    Keyed on the state, so a change from the no-sensor floor to an emergency
+    closes one alert and raises the other, and the event log records both. An
+    emergency's title names its causes, so a cause joining a live emergency
+    reaches every view that renders titles. A state this client does not know
+    is a warning that names the token rather than going quiet.
+    """
+    if not state or state == "normal":
+        return None
+    level, title = THERMAL_ALERTS.get(state, ("warning", f"Thermal protection active ({state})"))
+    if state == "emergency":
+        names = [EMERGENCY_CAUSE_NAMES.get(c, c) for c in dict.fromkeys(causes or ("cpu",))]
+        title = f"{title} ({' and '.join(names)})"
+        opening = emergency_opening(causes) + EMERGENCY_REACH
+        detail = f"{opening} It ends {emergency_resume(causes)}."
+    elif state == "no_sensor_fallback":
+        detail = NO_SENSOR_REASON
+    elif state == "recovery":
+        detail = RECOVERY_REASON
+    else:
+        detail = (
+            f"The daemon reports a thermal state this client does not know ({state}). "
+            "Its thermal protection may be forcing fans; see the System State page."
+        )
+    return CoolingAlert(key=f"thermal:{state}", level=level, title=title, detail=detail)

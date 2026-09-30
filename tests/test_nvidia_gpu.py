@@ -286,7 +286,7 @@ class TestDutyPct:
         """A read-only NVIDIA fan gets its own card carrying the measured duty —
         it has no commanded PWM, so duty is the only speed signal it has."""
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
-        cards = build_fan_card_vms([fan], active_profile=None, overrides=[])
+        cards = build_fan_card_vms([fan], active_profile=None, overrides=[], stalled_ids=())
         card = next(c for c in cards if c.member_fan_ids == ("nvidia_gpu:0000:01:00.0",))
         assert card.is_read_only is True
         assert card.duty_pct == 55
@@ -294,7 +294,7 @@ class TestDutyPct:
 
     def test_card_shows_duty_not_pwm(self, qtbot):
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
-        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[], stalled_ids=())[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)
         # Measured duty is labelled so it is never read as commanded PWM. DEC-238
@@ -311,7 +311,7 @@ class TestDutyPct:
         # `is not None`, not truthiness). A genuinely-stopped NVIDIA fan reads 0
         # and must still show a duty value.
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=0, duty_pct=0)
-        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[], stalled_ids=())[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)
         assert card._speed_caption.text() == "DUTY"
@@ -347,7 +347,7 @@ class TestDutyPct:
         """A read-only fan cannot be assigned to a control (DEC-102), so an Edit
         button would be dead. It is hidden, and the chip says why."""
         fan = FanReading(id="nvidia_gpu:0000:01:00.0", source="nvidia_gpu", rpm=1400, duty_pct=55)
-        vm = build_fan_card_vms([fan], active_profile=None, overrides=[])[0]
+        vm = build_fan_card_vms([fan], active_profile=None, overrides=[], stalled_ids=())[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)
         card.show()
@@ -443,6 +443,7 @@ class TestDashboardGpuCard:
             overrides=[],
             caps=app_state.capabilities,
             display_name=app_state.fan_display_name,
+            stalled_ids=(),
         )[0]
         card = FanControlCard(vm)
         qtbot.addWidget(card)

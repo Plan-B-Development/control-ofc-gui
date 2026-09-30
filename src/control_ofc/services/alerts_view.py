@@ -42,6 +42,19 @@ def next_action_for_warning(warning: dict) -> str | None:
             "Check the fan is spinning and properly connected — 0 RPM while a PWM is "
             "commanded usually means a stalled or unplugged fan."
         )
+    # DEC-459: the thermal alerts. No figure appears — the trip point is per
+    # machine (DEC-308) and the System State page shows the one acted on.
+    if key == "thermal:no_sensor_fallback":
+        return (
+            "Check the CPU temperature sensor on the Hardware page — its readiness "
+            "report names the driver the daemon needs for it."
+        )
+    if key.startswith("thermal:"):
+        return (
+            "Check that the fans and pump are running and nothing blocks the airflow. "
+            "The daemon ends this by itself once temperatures fall; the System State "
+            "page shows the limit it acts on."
+        )
     if key.startswith("sensor_stale") or source == "sensor":
         return (
             "Sensor data is stale. Check the daemon connection, then the Hardware page — "

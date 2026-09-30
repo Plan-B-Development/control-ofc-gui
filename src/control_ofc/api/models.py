@@ -650,9 +650,10 @@ class RuntimeConfigDegraded:
 # severity order. This is the WIRE vocabulary, so it belongs with the model
 # rather than with any one surface that renders it.
 #
-# DEC-257: three separate presentation maps key off this field
+# DEC-257: separate presentation maps key off this field
 # (`ui.status_banner.THERMAL_STATES`, `services.dashboard_view._THERMAL_REASONS`,
-# `services.system_state_view._THERMAL_STATE`) and one of them had silently
+# `services.system_state_view._THERMAL_STATE`, and since DEC-459
+# `services.cooling_watch.THERMAL_ALERTS`) and one of them had silently
 # drifted — it carried three values the daemon never sends and was missing
 # `recovery` and `no_sensor_fallback`, so a live thermal recovery rendered as a
 # neutral grey pill. They cannot be collapsed into one map (they map to different

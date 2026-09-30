@@ -22,7 +22,12 @@ from control_ofc.api.models import (
     RuntimeConfigDegraded,
 )
 from control_ofc.constants import EXPECTED_API_VERSION
-from control_ofc.services.cooling_watch import emergency_opening
+from control_ofc.services.cooling_watch import (
+    EMERGENCY_REACH,
+    NO_SENSOR_REASON,
+    RECOVERY_REASON,
+    emergency_opening,
+)
 
 # Plain-language rendering of the DEC-321 `runtime_config_degraded.reason`
 # token. An unrecognised token renders as itself rather than being dropped —
@@ -117,22 +122,11 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     )
 
 
-# What an emergency does, after the clause naming its trigger (DEC-443).
-_EMERGENCY_REACH = (
-    ", so the daemon's thermal protection is "
-    "active: it runs every OpenFan fan and every writable fan header it can drive — on "
-    "the motherboard, or on a USB fan controller or AIO cooler — at full speed until "
-    "temperatures fall. GPU fans are not included; the GPU protects itself."
-)
-
 # Plain-language reason per daemon thermal_state, for the Safety detail. Kept
 # qualitative (no hardcoded thresholds) so it can't drift from the daemon.
 _THERMAL_REASONS: dict[str, str] = {
     "normal": "Cooling is operating normally; the daemon is following the active profile.",
-    "recovery": (
-        "Temperature exceeded the safety threshold. The daemon forced fans up and is holding "
-        "a recovery speed until the system cools further."
-    ),
+    "recovery": RECOVERY_REASON,
     # G159 (`DC-j`): "has forced all controllable fans to 100%" said more than
     # the daemon does — GPU fans are outside the force (DEC-130) and keep their
     # curve (DEC-399), and DEC-371 says a thermal state is never proof a fan
@@ -141,23 +135,10 @@ _THERMAL_REASONS: dict[str, str] = {
     # DEC-443: the opening clause names the trigger and follows
     # `emergency_causes` (see `_emergency_reason`); this entry is the CPU one,
     # which is also what a daemon before 3.0.0 means by "emergency".
-    "emergency": emergency_opening(()) + _EMERGENCY_REACH,
-    "no_sensor_fallback": (
-        # DEC-269: "reachable" was true when the only trigger was a sensor that
-        # had vanished. Since DEC-267 a sensor that is still listed but has
-        # STOPPED UPDATING also reaches this state — so the old wording appeared
-        # directly above a "Hottest CPU sensor: 62.0°C" line drawn from the very
-        # list it denied. Phrased to be true of both triggers without needing a
-        # daemon-version gate.
-        # DEC-382: and "has forced a safe fallback fan speed" stopped being true
-        # of every daemon — since then the floor reaches only the fans a profile
-        # controls, so with no profile active nothing is forced. "Where it
-        # controls the fans" is true of an older daemon (it forces everything),
-        # of a newer one with a profile, and of one with none.
-        "No current CPU temperature reading, so the daemon cannot confirm the system is "
-        "cool and holds a safe minimum fan speed wherever it controls the fans — a "
-        "reading may still be listed, but it has stopped updating."
-    ),
+    "emergency": emergency_opening(()) + EMERGENCY_REACH,
+    # DEC-269/DEC-382: the wording and its reasons live in `cooling_watch`, which
+    # the thermal alert reads too (DEC-459).
+    "no_sensor_fallback": NO_SENSOR_REASON,
 }
 
 
@@ -275,7 +256,7 @@ def cpu_values_for_display(
 def _emergency_reason(causes: Sequence[str]) -> str:
     """The emergency reason with its trigger named (DEC-443): a coolant
     emergency must not be explained as a CPU one."""
-    return emergency_opening(causes) + _EMERGENCY_REACH
+    return emergency_opening(causes) + EMERGENCY_REACH
 
 
 def safety_detail_text(

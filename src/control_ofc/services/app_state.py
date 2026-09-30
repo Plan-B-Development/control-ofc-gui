@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from control_ofc.api.models import (
     BoardInfo,
@@ -25,10 +25,17 @@ from control_ofc.api.models import (
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
 from control_ofc.knowledge.sensor_knowledge import SensorClassification, classify_reading
 from control_ofc.services.alerts import AlertCondition, AlertLedger
-from control_ofc.services.cooling_watch import advisory_alert, pump_stall_alert
+from control_ofc.services.cooling_watch import advisory_alert, pump_stall_alert, thermal_alert
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.session_stats import SessionStatsTracker
+from control_ofc.services.stall_hold import StallHold
 from control_ofc.ui.hwmon_guidance import set_daemon_canonicalises_chip_names
+
+# DEC-459: how long the daemon must stay unreachable before the thermal alert
+# clears. The poll reports a disconnect on its FIRST failed cycle, so clearing at
+# once turned one timed-out poll into a false "recovered" line and a fresh,
+# unacknowledged alert a second later. Same span as the stall hold's off-delay.
+THERMAL_UNREACHABLE_CLEAR_MS = 5000
 
 # DEC-227: presentation suffix tagging a liquid-cooler fan in the Dashboard's
 # Sensors rail. It is a hardware fact rendered onto the row, never part of the
@@ -50,11 +57,14 @@ _OPENFAN_CH_PREFIX = "openfan:ch"
 def _stall_detail(fan: FanReading) -> str:
     """Say what was actually observed, not what we wish had been (`WIRE-j`).
 
-    The daemon asserts `stall_detected` from `rpm == 0 && pwm > STALL_PWM_THRESHOLD`
-    where `pwm` is `last_commanded_pwm` — and for an hwmon header that field
-    carries the poll's *readback* whenever nothing has been commanded
-    (`AIO5-a`). So on an uncontrolled header the old wording, "RPM=0 while PWM
-    commanded", named a command that never happened, on an `error`-level alert.
+    The daemon asserts `stall_detected` from `rpm == 0 && duty > STALL_PWM_THRESHOLD`.
+    For an hwmon header on daemon 3.2.0+ (DEC-458) the duty is `pwm_commanded_pct`
+    while the daemon commands the header, and otherwise the readback, once the
+    fan has been seen spinning. An older daemon uses `last_commanded_pwm`, which
+    for an hwmon header carries the poll's *readback* whenever nothing has been
+    commanded (`AIO5-a`). Either way a stall on an uncontrolled header is not a
+    command, so the old wording, "RPM=0 while PWM commanded", named a command
+    that never happened, on an `error`-level alert.
 
     Where DEC-318's unambiguous `pwm_commanded_pct` is present the claim is
     exact. Where it is not, the sentence describes the *reading* and says the
@@ -175,6 +185,22 @@ class AppState(QObject):
         # Per-sensor session min/max tracker (resets on reconnect)
         self.session_stats = SessionStatsTracker()
 
+        # `TS-bg`: the one answer to "is this fan stalled?", holding a stall through
+        # a missing `stall_detected`. Every consumer reads `stalled_fan_ids`, never
+        # the raw flag. `_clock` is the monotonic clock the hold is measured on;
+        # tests replace it.
+        self._stall_hold = StallHold()
+        self._clock = time.monotonic
+
+        # DEC-459: the thermal alert is dropped once the daemon has been
+        # unreachable for THERMAL_UNREACHABLE_CLEAR_MS — a flag the timer sets,
+        # not a clock comparison, so timer jitter cannot leave it standing.
+        self._thermal_unreachable = False
+        self._thermal_clear_timer = QTimer(self)
+        self._thermal_clear_timer.setSingleShot(True)
+        self._thermal_clear_timer.setInterval(THERMAL_UNREACHABLE_CLEAR_MS)
+        self._thermal_clear_timer.timeout.connect(self._on_thermal_unreachable)
+
         # Monotonic timestamp of the last successful poll / demo tick, for the
         # dashboard status strip's "Updated Xs ago" indicator (DEC-176/177).
         # None until the first success; deliberately NOT reset on disconnect so
@@ -193,6 +219,21 @@ class AppState(QObject):
         if state != self.connection:
             self.connection = state
             self.connection_changed.emit(state)
+            # DEC-459: the thermal alert describes the daemon's state now, so it
+            # clears once the daemon has been gone THERMAL_UNREACHABLE_CLEAR_MS —
+            # not at once, which made one timed-out poll a false recovery.
+            if state == ConnectionState.DISCONNECTED:
+                self._thermal_clear_timer.start()
+            else:
+                self._thermal_clear_timer.stop()
+                self._thermal_unreachable = False
+            self._update_warnings()
+
+    def _on_thermal_unreachable(self) -> None:
+        # No poll arrives while disconnected, so this reconcile is the only one
+        # that can clear the alert.
+        self._thermal_unreachable = True
+        self._update_warnings()
 
     def set_mode(self, mode: OperationMode) -> None:
         if mode != self.mode:
@@ -252,8 +293,15 @@ class AppState(QObject):
         """Reset session statistics (call on reconnect)."""
         self.session_stats.reset()
 
+    @property
+    def stalled_fan_ids(self) -> frozenset[str]:
+        """The fans stalled right now, held through a missing flag (`TS-bg`)."""
+        return self._stall_hold.stalled
+
     def set_fans(self, fans: list[FanReading]) -> None:
         self.fans = fans
+        # Before the signal, so a `fans_updated` slot reads this poll's answer.
+        self._stall_hold.update(fans, self._clock())
         self.fans_updated.emit(fans)
         self._update_warnings()
 
@@ -557,7 +605,7 @@ class AppState(QObject):
                         detail=f"Fan '{f.id}' is {f.freshness.name.lower()} (age {f.age_ms}ms)",
                     )
                 )
-            if f.stall_detected:
+            if f.id in self.stalled_fan_ids:
                 conditions.append(
                     AlertCondition(
                         key=f"fan_stall:{f.id}",
@@ -578,12 +626,19 @@ class AppState(QObject):
             else []
         )
         cooling += [advisory_alert(a) for a in ds.advisories] if ds else []
-        for c in cooling:
+        watch = [(c, "cooling") for c in cooling]
+        # DEC-459: a non-normal thermal state is an alert until the daemon has
+        # been unreachable long enough that nothing current is known about it.
+        if ds and not self._thermal_unreachable:
+            thermal = thermal_alert(ds.thermal_state, ds.emergency_causes)
+            if thermal is not None:
+                watch.append((thermal, "thermal"))
+        for c, source in watch:
             conditions.append(
                 AlertCondition(
                     key=c.key,
                     level=c.level,
-                    source="cooling",
+                    source=source,
                     component=c.title,
                     title=c.title,
                     detail=c.detail,

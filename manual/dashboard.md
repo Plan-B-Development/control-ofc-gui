@@ -77,7 +77,7 @@ Each card shows:
 
 | Field | Meaning |
 |-------|---------|
-| **State chip** | Auto (the curve is driving it), Override active, Low RPM, Stale, Stall, or Offline — beside the fan count |
+| **State chip** | Auto (the curve is driving it), Override active, Driver alarm, Low RPM, Stale, Stall, or Offline — beside the fan count. **Driver alarm** means the fan chip itself flags a fan (usually one running below the low-speed limit your BIOS set); hover the chip to see which fan and that limit. It is not an alert, because what raises it depends on the chip. A **Stall** stays on for up to five seconds if the daemon briefly stops reporting on that fan, so one missed reading does not clear it and raise it again |
 | **RPM** | Hardware-measured speed, averaged across the control's fans |
 | **SPEED** | Last commanded speed. For a read-only GPU that reports no commanded value, the column is headed **DUTY** instead and shows the firmware's *measured* duty, so a measurement is never read as a speed the daemon commanded |
 | **TEMP** | The temperature driving this control's curve |
@@ -222,12 +222,18 @@ The daemon has two thermal safety states, and it drives both itself:
 Both are minimums, not replacements: a fan your profile is already running faster keeps its
 speed. GPU fans are never forced — the GPU protects itself — and keep following their
 curves. The state shows in the footer's **thermal state** chip (click it for the detail),
-as a banner across the top of the Dashboard, and as a marker on the chart. It is not
-counted as a warning and does not appear in the Logs page's alert bar. See
+as a banner across the top of the Dashboard, and as a marker on the chart. It is also an
+**alert**: an emergency is an error alert naming what tripped it (the CPU, the coolant or
+both), and the no-CPU-sensor state is a warning. Both count in the footer's health summary
+and appear in the Logs page's alert bar and event log. Acknowledging one quietens the alert
+badge, but the footer keeps counting it until the daemon reports a normal state. If the
+daemon stays unreachable for five seconds, nothing current is known about its thermal
+state, so the alert clears and the connection problem is reported instead; a single missed
+reading does not clear it. See
 ["Fans run at full speed regardless of profile"](hardware-troubleshooting.md#fans-run-at-full-speed-regardless-of-profile)
 for the full behaviour.
 
-Two cooling checks sit beside these states and **are** counted as alerts (daemon 3.0.0 and
+Two cooling checks sit beside these states and are alerts too (daemon 3.0.0 and
 later): a **pump stall** — a pump in your profile reading 0 RPM while it should run, which the
 daemon answers by running it at full speed — is an error alert naming the pump, and the
 **cooling advisory** — the CPU held at its ceiling for a minute with every fan and pump running
