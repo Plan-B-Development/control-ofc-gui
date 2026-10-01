@@ -334,16 +334,26 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - **PWM range:** 0–100% (mapped to 0–255 raw)
 
 ### Unknown duty after a reconnect or resume
-A serial reconnect or a host resume makes every channel's last duty **unknown** until the
-daemon next writes that channel (DEC-256; the accessor honours it since DEC-393, daemon
-2.51.1). Two safety paths read it:
-- **The no-sensor floor.** A control skipped under the 40% floor normally keeps its fans at
-  their last duty; a channel whose duty a reconnect or resume lost goes to **100%** instead
-  (DEC-401, daemon 2.51.3, `lost_to_reconnect`). A duty unknown for any other reason takes
-  the bare 40%.
-- **The emergency's give-back.** A channel whose duty was unknown when the emergency began
-  has nothing to be given back to, so a channel no control commands stays at 100% when the
-  emergency ends (DEC-393).
+A serial reconnect or a host resume makes every channel's last duty **unknown on the
+device** until the daemon next writes that channel (DEC-256; the accessor honours it since
+DEC-393, daemon 2.51.1). The controller keeps its duty across a USB-only re-enumeration (it
+is powered from SATA 12 V), but a 12 V loss cold-boots it to a 1000 rpm closed-loop target,
+and the protocol cannot tell the two apart. Since DEC-466 (`TS-bc`) the controller remembers
+each written channel's duty at that moment (`ChannelControl::duty_before_loss`, kept through a
+second loss, cleared by the next landed write) and every path that decides what to leave a
+channel at reads it through `FanController::last_known_duty`:
+- **A skipped control on an ordinary tick.** Its channels are put back at the remembered duty
+  once, in the OpenFan write task, unless another control commands them or a diagnostic
+  holds the write pause. Until DEC-466 they kept whatever the device came back with.
+- **The no-sensor floor.** A skipped control's channel is floored against the remembered
+  duty, `max(duty, 40%)` — it went to 100% under DEC-401 (daemon 2.51.3–3.2.x).
+- **The emergency's give-back, the exit floor, a release, a calibration's restore.** Each
+  treats the remembered duty as the channel's duty (DEC-393's "not given back" is reversed).
+
+A duty that was **already unknown when it was lost** — the last command's reply had failed
+(DEC-383), or a failed reply after the loss carried another duty — is not remembered. It
+stays unknown: left alone on an ordinary tick, the bare 40% under the floor, 100% at a stop
+or release, and not given back after an emergency.
 
 ---
 

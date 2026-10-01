@@ -775,10 +775,12 @@ cannot confirm a live emergency; the latch is itself that confirmation, and it s
 until a fresh reading says otherwise. And the 60 % recovery rung is gone: a fresh
 reading at or below release hands control straight back to the profile. Under the
 no-sensor floor, a control **skipped** that tick (its sensor gone) keeps its fans at
-their last duty rather than taking the bare floor (`TS-p`). Where that duty is unknown
-because the OpenFan controller reconnected or the host resumed, the channel goes to
-100 % instead (DEC-401, daemon ≥ 2.51.3); a duty unknown for any other reason still
-takes the bare floor.
+their last duty rather than taking the bare floor (`TS-p`). For an OpenFan channel
+whose duty the controller reconnecting or the host resuming made unknown, that is the
+duty it had before (DEC-466, daemon ≥ 3.3.0 — 2.51.3 to 3.2.x gave it 100 %, DEC-401);
+a duty unknown for any other reason still takes the bare floor. **No wire shape
+changed:** the remembered duty reaches `last_commanded_pwm` only once a write of it
+lands.
 
 **`cpu_sensor_found`** on `/diagnostics/hardware` changed meaning with the same
 release: it used to answer *"is a CpuTemp sensor present?"* and now answers *"is

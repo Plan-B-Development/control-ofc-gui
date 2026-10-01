@@ -225,8 +225,10 @@ takes every fan back.
 **After sleep and resume**, the firmware often takes the motherboard headers back while the
 machine sleeps. The daemon notices the resume and puts each header your profile controls
 back under its curve on its next tick, within a second or two; you do not need to
-re-apply the profile. An OpenFan channel's speed is treated as unknown until its curve
-writes it again, because the controller may have come back at its power-on default.
+re-apply the profile. An OpenFan Controller keeps its fan speeds when only USB drops, but
+restarts every fan at about 1000 rpm if its power went off, so the daemon remembers each
+fan's speed and sets it again — at once for a fan whose curve cannot run, and through the
+curve for every other.
 
 > **Demo mode is the one exception.** With no daemon to talk to, the GUI animates fans with its own built-in evaluator so you can explore curves and profiles. Nothing is written to real hardware.
 
