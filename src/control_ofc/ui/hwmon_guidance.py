@@ -1121,6 +1121,27 @@ def format_driver_status(chip_name: str, loaded: bool) -> str:
     return f"{guidance.driver_name} not loaded — install {guidance.driver_package}"
 
 
+def format_bound_driver_status(
+    chip_name: str, bound_driver: str, in_mainline: bool, loaded_modules: set[str]
+) -> str:
+    """One-liner for a chip whose bound driver the daemon observed (DEC-469).
+
+    States what is bound, and appends this chip's guidance line only where that
+    guidance names an OUT-OF-TREE driver other than the bound one — an MSI
+    NCT6687D the read-only in-kernel nct6683 bound, which needs nct6687d for
+    fan control. Never the reverse: an nct6683 chip the out-of-tree nct6687
+    bound must not be told to load the in-kernel driver. The daemon's
+    name-keyed guess is not printed, because for nct6686 it disagrees with this
+    table (`BRD-ac`).
+    """
+    where = "mainline kernel" if in_mainline else "out-of-tree"
+    text = f"{bound_driver} bound ({where})"
+    guidance = lookup_chip_guidance(chip_name)
+    if guidance is not None and not guidance.in_mainline and guidance.driver_name != bound_driver:
+        text += ". " + format_driver_status(chip_name, guidance.driver_name in loaded_modules)
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Vendor + chip quirk database
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ If it reports your PWM headers with a non-zero **writable** count and no issues,
 
 ## Step 1 — Identify your board and chip
 
-The **System State** page's summary line shows what DMI reports (e.g. `Gigabyte Technology Co., Ltd. — X870E AORUS MASTER — BIOS F14c`), and its **Hardware Registry** table lists every detected Super-I/O chip with the driver it needs. The page is the easiest path because it already cross-references the project's chip knowledge base.
+The **System State** page's summary line shows what DMI reports (e.g. `Gigabyte Technology Co., Ltd. — X870E AORUS MASTER — BIOS F14c`), and its **Hardware Registry** table lists every detected Super-I/O chip with the driver bound to it — or, with a daemon older than 3.3.0, the driver its name suggests. The page is the easiest path because it already cross-references the project's chip knowledge base.
 
 From a terminal, the same facts come from:
 
@@ -150,7 +150,7 @@ Boot-time loading: the `control-ofc-daemon` package ships `/etc/modules-load.d/c
 Then verify end-to-end in the GUI:
 
 1. **Restart the daemon** so it adopts the new chip's PWM headers: `sudo systemctl restart control-ofc-daemon`. (A **Rescan Hardware** click in the global footer page is enough when you only need the chip's *sensors* — fan-control headers are discovered at daemon startup only.)
-2. Click **Rescan Hardware** in the global footer, then open **System State** — the **Hardware Registry** should show your chip as *loaded* and the header count should match what the board physically has.
+2. Click **Rescan Hardware** in the global footer, then open **System State** — the **Hardware Registry** should show your chip as **BOUND** (**LOADED** with a daemon older than 3.3.0) and the header count should match what the board physically has.
 3. On the **Hardware** page, press **Test Control** on a *non-critical chassis fan* header's card (not CPU/pump). A **"PWM control is working correctly"** result is the finish line.
 4. If the test reports the BIOS reverting control, go to Step 5.
 
@@ -189,7 +189,7 @@ A correctly-installed, current driver usually takes each header over from the BI
 
 - **Every vendor:** never give a BIOS fan curve a **0% point**. The BIOS curve runs the fans at boot, and whenever the daemon is not controlling them, so a 0% point means stopped fans — pump and CPU fan included — in exactly those moments.
 - **Gigabyte (Smart Fan 5/6):** a current `it87-dkms-git` build usually needs **no BIOS change at all**. For a 4-pin fan, set the header's **FAN Control Mode** to **PWM**. Leave **Fan Speed Control** on a normal curve. *Full Speed* is a fail-safe, not a fix: the firmware runs that fan at 100% whenever it owns it, but on some boards it also locks Linux out of the header ([issue #115](https://github.com/frankcrawford/it87/issues/115)). On IT8689E **Rev 1** boards (e.g. X670E AORUS MASTER), **update `it87-dkms-git` first**. The fix in [PR #128](https://github.com/frankcrawford/it87/pull/128) merged on 2026-08-24, and three users reported working IT8689E control the day before, including on **Rev 1** (a Z790 AORUS MASTER, with fan speed measurably tracking duty). More boards have reported working since, some with **no BIOS changes at all**. So update, then **verify with Test PWM Control** rather than assuming. Only on a build older than 2026-08-24 did the driver need the fork's old BIOS stopgap: PWM 40,40,40,40,40,40,100 at temperatures 0,90,90,90,90,90,90, lowering 90 to your BIOS maximum ([issue #96](https://github.com/frankcrawford/it87/issues/96)). Even that only reliably restored the CPU-fan header. ([PR #114](https://github.com/frankcrawford/it87/pull/114), an earlier candidate fix, was rejected on 2026-08-25.)
-- **MSI:** no BIOS setting makes the headers writable. If every header reads as read-only, the in-kernel `nct6683` is bound instead of `nct6687d` — blacklist it (see Step 3). On B840/B850/B860/X870/X870E/Z890 boards, system fans that ignore writes need the driver options in the table below, not a BIOS change. For 3-pin fans, set the header's fan type to DC.
+- **MSI:** no BIOS setting makes the headers writable. If every header reads as read-only, the in-kernel `nct6683` is bound instead of `nct6687d` — blacklist it (see Step 3). With control-ofc-daemon 3.3.0 or newer the **Hardware Registry** shows which one is bound: `nct6683 bound (mainline kernel)` is the read-only driver. On B840/B850/B860/X870/X870E/Z890 boards, system fans that ignore writes need the driver options in the table below, not a BIOS change. For 3-pin fans, set the header's fan type to DC.
 - **ASUS:** no BIOS setting unlocks the headers either — under `nct6775` they are always writable, and the daemon switches each one to manual itself. In *Q-Fan Control*, match each header's mode to the fan (**DC Mode** for 3-pin, **PWM Mode** for 4-pin). *Q-Fan Tuning* is a one-shot calibration, not a mode switch. On some 800-series boards the firmware has been measured taking a header straight back from manual mode; run **Test PWM Control** to see whether yours does.
 - **ASRock:** headers on the NCT67xx chip are always writable under `nct6775`. Headers on an NCT6686D/NCT6683D are read-only in the kernel driver whatever the BIOS says, and need an out-of-tree driver. Set each header's fan type to match the fan (DC for 3-pin, PWM for 4-pin).
 

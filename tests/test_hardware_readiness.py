@@ -164,6 +164,29 @@ class TestParseHardwareDiagnostics:
         assert result.kernel_modules[0].loaded is True
         assert len(result.acpi_conflicts) == 1
 
+    def test_bound_driver_is_parsed_and_absent_on_older_daemons(self):
+        # DEC-469 (`BRD-g`): the daemon publishes the driver it observed.
+        def chip(**extra):
+            data = {
+                "api_version": 1,
+                "hwmon": {
+                    "chips_detected": [
+                        {
+                            "chip_name": "nct6687",
+                            "device_id": "nct6683.2592",
+                            "expected_driver": "nct6687",
+                            "in_mainline_kernel": True,
+                            "header_count": 8,
+                            **extra,
+                        }
+                    ],
+                },
+            }
+            return parse_hardware_diagnostics(data).hwmon.chips_detected[0]
+
+        assert chip(bound_driver="nct6683").bound_driver == "nct6683"
+        assert chip().bound_driver is None
+
     def test_no_gpu(self):
         data = {
             "api_version": 1,

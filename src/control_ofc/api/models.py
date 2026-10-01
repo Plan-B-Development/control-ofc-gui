@@ -1377,7 +1377,15 @@ class SensorHistory:
 class HwmonChipInfo:
     chip_name: str = ""
     device_id: str = ""
+    # The driver the chip NAME suggests — a guess, wrong in both directions for
+    # the nct668x family, whose two drivers share hwmon names (`BRD-g`).
     expected_driver: str = ""
+    # DEC-469: the kernel driver actually bound, read by the daemon from the
+    # hwmon device's `device/driver` link. Absent on older daemons and where no
+    # link was read; prefer it to `expected_driver` wherever it is present.
+    bound_driver: str | None = None
+    # Chip-level by name (DEC-144), but following `bound_driver` where that
+    # contradicts the name's guess (daemon >= DEC-469).
     in_mainline_kernel: bool = False
     header_count: int = 0
 

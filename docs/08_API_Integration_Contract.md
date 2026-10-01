@@ -1543,6 +1543,24 @@ as `thermal_state`, so the two cannot disagree by a tick. Render it; never
 compare it to a literal and never assume 105. `release_threshold_c` is still the
 fixed 80 °C. Older daemons report the constant, which remains a correct floor.
 
+**`hwmon.chips_detected[].bound_driver` (DEC-469, `BRD-g`, daemon ≥ 3.3.0; additive — omitted
+when not observed).** The kernel driver actually bound to the chip, read from its hwmon device's
+`device/driver` link per request (`hwmon::bound_driver`). `expected_driver` beside it is what the
+chip NAME suggests, and for the nct668x family that guess is wrong in both directions: mainline
+`nct6683` and the out-of-tree `nct6687` both register their hwmon device as `nct6683`, `nct6686` or
+`nct6687` by chip kind, but register different platform-driver names, which is what the link
+names. So an MSI NCT6687D running the read-only in-kernel driver reads `expected_driver: "nct6687"`,
+`bound_driver: "nct6683"`. Absent on an older daemon, and where the link did not read — never a
+guess. **`in_mainline_kernel` follows it**: chip-level by name as before (DEC-144, so the it87
+per-chip split stands), except where `bound_driver` is a different module the daemon knows, whose
+own answer then replaces the guess (the NCT6687D above reads `true`; an `nct6683` chip bound by
+`nct6687` reads `false`). **GUI use (GUI ≥ 3.3.0):** the System State chip registry and the readiness
+report show the bound driver and a `BOUND` status wherever it is present, falling back to
+`expected_driver` and the loaded-module check on an older daemon; the PWM Test Report records it.
+**Skew: a GUI older than 3.3.0 on this daemon** ignores `bound_driver` but shows the corrected
+`in_mainline_kernel` beside the name-guessed `expected_driver`, so the MSI NCT6687D above reads driver
+`nct6687`, Mainline "Yes". Upgrading the GUI resolves it; nothing else is affected.
+
 **`thermal_safety.coolant_limit_c` / `coolant_release_c` (DEC-443, daemon ≥ 3.0.0)** — the
 coolant emergency's limit and release point (limit − 5 °C) as the engine acted on them, published
 in the same write as `thermal_state`; before the engine's first tick, the configured limit. Absent
@@ -2336,9 +2354,13 @@ Fields (`responses.rs::SuperIoResponse`; additive fields use
   (`ite|nuvoton|winbond|smsc|national|fintek|unknown`), `evidence: list[str]`
   (`dmi_board_table|kernel_log|bound_hwmon`; `kernel_log` never appears under the shipped
   unit, above), `confidence`
-  (`high|medium|low|unknown`), `bound_driver: str?` (inferred; present only when
-  the chip is bound *and* its driver is recognized), `expected_module`,
-  `module_loaded: bool`, `hwmon_present: bool`,
+  (`high|medium|low|unknown`), `bound_driver: str?` (present only when the chip is
+  bound and its driver was observed — read from the hwmon device's `device/driver`
+  link since daemon 3.3.0, DEC-469; earlier daemons inferred it from the name, which
+  is wrong both ways for the nct668x family — see `chips_detected[].bound_driver`),
+  `expected_module`, `module_loaded: bool` (since DEC-469 `true` whenever
+  `bound_driver` is present — a bound driver is loaded or built in, whatever the name
+  suggests; otherwise whether `expected_module` is loaded), `hwmon_present: bool`,
   `recommendation: SuperIoRecommendation?` (present only for an unbound,
   allowlisted chip — `module`, `in_mainline`, `load_hint`, `reason`,
   `risk_notes: list[str]`), and `caveats: list[str]`.

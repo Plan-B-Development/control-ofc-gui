@@ -449,6 +449,7 @@ class DemoService:
                         chip_name="it8696",
                         device_id="ITE IT8696E",
                         expected_driver="it87",
+                        bound_driver="it87",
                         in_mainline_kernel=False,
                         header_count=5,
                     ),

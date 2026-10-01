@@ -20,6 +20,7 @@ from control_ofc.api.models import (
 from control_ofc.services.duty_drift import NO_DRIFT
 from control_ofc.ui.hwmon_guidance import (
     VendorQuirk,
+    format_bound_driver_status,
     severity_display,
 )
 from control_ofc.ui.widgets import readiness_report
@@ -300,6 +301,30 @@ class TestSharedFormatters:
             "2",
         )
         assert r.status  # format_driver_status produced a status string
+
+    def test_chip_rows_prefer_the_observed_bound_driver(self):
+        # DEC-469 (`BRD-g`): driver and status follow `bound_driver`; the
+        # status carries the bound-driver line, not the name-keyed one.
+        diag = _healthy(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(
+                        chip_name="nct6687",
+                        expected_driver="nct6687",
+                        bound_driver="nct6683",
+                        in_mainline_kernel=True,
+                        header_count=8,
+                    )
+                ],
+                total_headers=8,
+                writable_headers=0,
+            ),
+            kernel_modules=[KernelModuleInfo(name="nct6683", loaded=True, in_mainline=True)],
+        )
+        (r,) = chip_rows(diag)
+        assert r.driver == "nct6683"
+        assert r.status == format_bound_driver_status("nct6687", "nct6683", True, {"nct6683"})
+        assert r.mainline == "Yes"
 
     def test_module_rows_fields(self):
         diag = _healthy(

@@ -370,7 +370,7 @@ class SafetyGpuVM:
 @dataclass(frozen=True)
 class ChipRegistryRowVM:
     kind: str  # "chip" | "module"
-    status_label: str  # LOADED | MISSING | MODULE
+    status_label: str  # BOUND | LOADED | MISSING | MODULE
     status_state: str  # ok | warn | info | neutral
     component: str
     driver: str
@@ -1353,12 +1353,20 @@ def build_registry_rows(diag: HardwareDiagnosticsResult) -> list[ChipRegistryRow
     loaded = {m.name for m in diag.kernel_modules if m.loaded}
     rows: list[ChipRegistryRowVM] = []
     for c, r in zip(diag.hwmon.chips_detected, chip_rows(diag), strict=True):
-        is_loaded = c.expected_driver in loaded
+        # DEC-469: an observed bound driver is the answer — the name-keyed
+        # module check reads MISSING for a chip a different or built-in driver
+        # bound. Older daemons send none, and fall back to that check.
+        if c.bound_driver:
+            status_label, status_state = "BOUND", "ok"
+        elif c.expected_driver in loaded:
+            status_label, status_state = "LOADED", "ok"
+        else:
+            status_label, status_state = "MISSING", "warn"
         rows.append(
             ChipRegistryRowVM(
                 kind="chip",
-                status_label="LOADED" if is_loaded else "MISSING",
-                status_state="ok" if is_loaded else "warn",
+                status_label=status_label,
+                status_state=status_state,
                 component=r.chip,
                 driver=r.driver,
                 driver_status=r.status,

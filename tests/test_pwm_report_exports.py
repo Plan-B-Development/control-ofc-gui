@@ -34,6 +34,7 @@ from tests.pwm_report_fixtures import (
     CPU,
     OPENFAN,
     SYS,
+    bundle,
     channel,
     complete_doc,
     sweep_run,
@@ -541,3 +542,19 @@ def test_history_reuses_an_unchanged_file_and_rereads_a_changed_one(tmp_path, mo
     _save(complete_doc(report_id="once", started_at="2026-09-23T00:00:00Z"), tmp_path)
     (entry,) = store.list_reports(tmp_path)
     assert reads == [path, path] and entry.started_at == "2026-09-23T00:00:00Z"
+
+
+def test_environment_records_the_observed_bound_driver():
+    # DEC-469 (`BRD-g`): the report keeps the driver the daemon observed beside
+    # its name guess, and records an older daemon's silence as None.
+    from control_ofc.services.pwm_report import document as d
+
+    chips = [
+        {"chip_name": "nct6687", "device_id": "nct6683.2592", "expected_driver": "nct6687"},
+        {"chip_name": "it8696", "device_id": "it87.2624", "expected_driver": "it87"},
+    ]
+    chips[0]["bound_driver"] = "nct6683"
+    snap = bundle(fans=[], headers=[], hardware={"hwmon": {"chips_detected": chips}})
+    env = d.extract_environment(snap, {})
+    assert [c["bound_driver"] for c in env["chips"]] == ["nct6683", None]
+    assert env["chips"][0]["expected_driver"] == "nct6687"

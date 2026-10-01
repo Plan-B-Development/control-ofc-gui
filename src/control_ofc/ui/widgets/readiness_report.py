@@ -43,6 +43,7 @@ from control_ofc.ui.hwmon_guidance import (
     advisory_detail_html,
     detect_module_conflicts,
     dual_chip_warning_html,
+    format_bound_driver_status,
     format_driver_status,
     lookup_vendor_quirks,
     quirk_key,
@@ -759,14 +760,21 @@ def header_summary_line(hw) -> str:
 
 
 def chip_rows(diag: HardwareDiagnosticsResult) -> list[ChipRow]:
-    """Per-chip display rows. ``status`` reflects whether the expected driver
-    is among the loaded kernel modules (computed once for all chips)."""
+    """Per-chip display rows. Where the daemon observed the bound driver
+    (DEC-469) the row reports it; otherwise ``status`` reflects whether the
+    name-suggested driver is among the loaded kernel modules."""
     loaded = {m.name for m in diag.kernel_modules if m.loaded}
     return [
         ChipRow(
             chip=c.chip_name,
-            driver=c.expected_driver,
-            status=format_driver_status(c.chip_name, c.expected_driver in loaded),
+            driver=c.bound_driver or c.expected_driver,
+            status=(
+                format_bound_driver_status(
+                    c.chip_name, c.bound_driver, c.in_mainline_kernel, loaded
+                )
+                if c.bound_driver
+                else format_driver_status(c.chip_name, c.expected_driver in loaded)
+            ),
             mainline="Yes" if c.in_mainline_kernel else "No (out-of-tree)",
             headers=str(c.header_count),
         )

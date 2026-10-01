@@ -187,6 +187,7 @@ def extract_environment(snapshot: object, gui_facts: Mapping[str, object]) -> di
             "chip_name": c.get("chip_name"),
             "device_id": c.get("device_id"),
             "expected_driver": c.get("expected_driver"),
+            "bound_driver": c.get("bound_driver"),
             "header_count": c.get("header_count"),
         }
         for c in _list(_dict(hw.get("hwmon")).get("chips_detected"))

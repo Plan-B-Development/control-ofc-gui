@@ -293,6 +293,44 @@ def test_registry_marks_missing_driver():
     assert chip.status_state == "warn"
 
 
+def _diag_msi_nct6687_bound_by(driver: str | None) -> HardwareDiagnosticsResult:
+    # An MSI NCT6687D the in-kernel nct6683 bound: the name-suggested nct6687
+    # is not loaded, so the name-keyed check alone reads MISSING.
+    return _diag(
+        hwmon=HwmonDiagnostics(
+            chips_detected=[
+                HwmonChipInfo(
+                    chip_name="nct6687",
+                    expected_driver="nct6687",
+                    bound_driver=driver,
+                    in_mainline_kernel=driver == "nct6683",
+                    header_count=8,
+                )
+            ],
+            total_headers=8,
+            writable_headers=0,
+        ),
+        kernel_modules=[KernelModuleInfo(name="nct6683", loaded=True, in_mainline=True)],
+    )
+
+
+def test_registry_reports_an_observed_bound_driver_as_bound():
+    # DEC-469 (`BRD-g`): the pill follows the observed driver, and the row
+    # names it, where the name-keyed module check would say MISSING.
+    missing = next(
+        r for r in build_registry_rows(_diag_msi_nct6687_bound_by(None)) if r.kind == "chip"
+    )
+    assert (missing.status_label, missing.driver) == ("MISSING", "nct6687")  # precondition
+    chip = next(
+        r for r in build_registry_rows(_diag_msi_nct6687_bound_by("nct6683")) if r.kind == "chip"
+    )
+    assert chip.status_label == "BOUND"
+    assert chip.status_state == "ok"
+    assert chip.driver == "nct6683"
+    assert chip.driver_status.startswith("nct6683 bound (mainline kernel)")
+    assert chip.mainline_state == "ok"
+
+
 # ── Verify headers + top-level ──────────────────────────────────────────────
 
 

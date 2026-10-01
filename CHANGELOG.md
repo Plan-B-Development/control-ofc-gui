@@ -18,6 +18,17 @@
 - **"Identified rail" now reads "Named by the driver"**, and the Voltages count line says "named by the
   driver" instead of "identified" (DEC-464), so it can tell the driver's names from the catalogue's.
 
+### Fixed
+
+- **The chip registry shows the driver that is actually bound** (DEC-469, `BRD-g`; needs
+  control-ofc-daemon 3.3.0 or newer). The System State page and the readiness report used to name
+  the driver the chip's *name* suggests, which is wrong for Nuvoton NCT6683/6686/6687 chips: the
+  in-kernel `nct6683` and the out-of-tree `nct6687` give the chip the same name. An MSI board running
+  the read-only in-kernel driver was shown as running `nct6687`, out-of-tree, and marked **MISSING**.
+  It now reads **BOUND**, names `nct6683` (mainline kernel), and points at `nct6687d-dkms-git` for fan
+  control. A chip bound by a built-in driver is no longer marked MISSING either. The PWM Test Report
+  records the bound driver beside the name's guess. With an older daemon the rows read as before.
+
 ## [3.2.0] — 2026-09-30
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Per-header

@@ -4,6 +4,7 @@ import pytest
 
 from control_ofc.ui.hwmon_guidance import (
     detect_module_conflicts,
+    format_bound_driver_status,
     format_driver_status,
     lookup_chip_guidance,
     lookup_vendor_quirks,
@@ -589,3 +590,35 @@ class TestNct6683WritePathDiagnosis:
         assert "silently ignored" not in blob, (
             "still describes writes as accepted-then-ignored; they are refused"
         )
+
+
+class TestFormatBoundDriverStatus:
+    """DEC-469 (`BRD-g`): the status line for a chip whose bound driver the
+    daemon observed. Hints only where this chip's guidance names an
+    out-of-tree driver other than the one bound."""
+
+    def test_msi_chip_bound_by_the_read_only_driver_gets_the_install_hint(self):
+        text = format_bound_driver_status("nct6687", "nct6683", True, {"nct6683"})
+        assert text.startswith("nct6683 bound (mainline kernel). ")
+        assert text.endswith(format_driver_status("nct6687", False))
+        assert "nct6687d-dkms-git" in text
+
+    def test_hint_reports_the_guidance_driver_as_loaded_when_it_is(self):
+        text = format_bound_driver_status("nct6687", "nct6683", True, {"nct6683", "nct6687"})
+        assert text.endswith(format_driver_status("nct6687", True))
+
+    def test_reverse_case_is_never_told_to_load_the_in_kernel_driver(self):
+        # nct6683 chip, out-of-tree nct6687 bound: guidance for nct6683 is the
+        # in-kernel driver, which must not be suggested over the working one.
+        assert lookup_chip_guidance("nct6683").in_mainline  # precondition
+        text = format_bound_driver_status("nct6683", "nct6687", False, {"nct6687"})
+        assert text == "nct6687 bound (out-of-tree)"
+
+    def test_asrock_nct6686_bound_by_its_guidance_driver_is_clean(self):
+        assert lookup_chip_guidance("nct6686").driver_name == "nct6683"  # precondition
+        text = format_bound_driver_status("nct6686", "nct6683", True, {"nct6683"})
+        assert text == "nct6683 bound (mainline kernel)"
+
+    def test_out_of_tree_driver_that_is_bound_gets_no_hint(self):
+        text = format_bound_driver_status("it8696", "it87", False, {"it87"})
+        assert text == "it87 bound (out-of-tree)"
