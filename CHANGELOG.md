@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-10-01
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The board-catalogue
+voltage-rail names and the bound driver in the chip registry need control-ofc-daemon 3.3.0 or newer.
+
 ### Added
 
 - **Voltage rails are named on Gigabyte boards** (DEC-464, `VOLT-b`; needs control-ofc-daemon 3.3.0 or
