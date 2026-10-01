@@ -6,6 +6,7 @@ these types, never raw JSON dictionaries.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, fields
 from enum import Enum
 
@@ -1698,6 +1699,22 @@ class VoltageRail:
     #: rendered as an identified rail, which is the one claim this field exists
     #: to withhold.
     identified: bool = False
+    #: The rail this input is wired to on this board, from the daemon's board
+    #: voltage catalogue (``VOLT-b``, DEC-464, daemon >= 3.3.0); ``""`` when the
+    #: catalogue says nothing or the daemon predates it. Never set alongside
+    #: :attr:`identified` — the driver's own label wins.
+    board_label: str = ""
+    #: The board's divider ratio: the rail voltage is ``value_v *
+    #: board_multiplier``. ``None`` exactly when :attr:`board_label` is empty —
+    #: the parser drops a name that arrives without a usable multiplier, since a
+    #: named rail showing the unscaled pin voltage would be the very lie
+    #: :attr:`identified` exists to prevent.
+    board_multiplier: float | None = None
+    #: True when the board's config does not map this input (upstream ``ignore
+    #: inN``). Not a named rail, and :attr:`value_v` is its pin reading — but not
+    #: known to be unconnected either: the X299 configs ignore an input for one
+    #: CPU family that they label ``DRAM CH(A/B)`` for the other (DEC-464).
+    board_unmapped: bool = False
 
 
 @dataclass
@@ -2584,6 +2601,26 @@ def parse_profile_search_dirs(data: dict) -> ProfileSearchDirsResult:
     )
 
 
+def _parse_board_rail(v: dict) -> tuple[str, float | None]:
+    """The board-catalogue name and multiplier of one rail (``VOLT-b``).
+
+    Both or neither: a name whose multiplier is missing, non-numeric,
+    non-finite or not positive is dropped with it, so the rail falls back to
+    how it rendered before the catalogue existed rather than showing a named
+    rail at its unscaled pin voltage.
+    """
+    label = str(v.get("board_label") or "").strip()
+    if not label:
+        return "", None
+    try:
+        multiplier = float(v.get("board_multiplier"))
+    except (TypeError, ValueError):
+        return "", None
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        return "", None
+    return label, multiplier
+
+
 def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     hwmon_raw = data.get("hwmon", {})
     hwmon = HwmonDiagnostics(
@@ -2672,6 +2709,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
         if not isinstance(v, dict):
             continue
         try:
+            board_label, board_multiplier = _parse_board_rail(v)
             voltages.append(
                 VoltageRail(
                     id=str(v.get("id") or ""),
@@ -2680,6 +2718,9 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
                     label=str(v.get("label") or ""),
                     value_v=float(v.get("value_v")),
                     identified=bool(v.get("identified", False)),
+                    board_label=board_label,
+                    board_multiplier=board_multiplier,
+                    board_unmapped=bool(v.get("board_unmapped", False)),
                 )
             )
         except (TypeError, ValueError):

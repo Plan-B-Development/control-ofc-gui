@@ -110,11 +110,13 @@ def test_a_malformed_rail_is_dropped_without_taking_its_siblings():
 def test_panel_carries_the_distinction_and_counts_only_identified_rails():
     panel = _panel(_rails())
     assert panel.has_rails
-    assert panel.summary_text == "2 channels · 1 identified"
+    # DEC-464 reworded "1 identified" to say who named it; no catalogue row here,
+    # so no catalogue or not-wired count is appended.
+    assert panel.summary_text == "2 channels · 1 named by the driver"
     raw = next(r for r in panel.rows if r.name == "in0")
     named = next(r for r in panel.rows if r.name == "3VSB")
     assert named.value_text == "3.288 V"
-    assert raw.identified != named.identified
+    assert raw.kind != named.kind
     # Only the unidentified row explains itself; a caveat on both would be noise
     # and a caveat on neither is the defect.
     assert raw.caveat and not named.caveat
@@ -211,7 +213,7 @@ def test_the_page_renders_a_row_per_rail_from_the_cached_diagnostics(qtbot):
         assert table.item(row, _VOLT_VALUE).text() == f"{rail.value_v:.3f} V"
         # And the honesty column must track the flag in BOTH directions — with
         # only the positive case a stuck predicate passes.
-        expected = "Identified rail" if rail.identified else "Unnamed channel"
+        expected = "Named by the driver" if rail.identified else "Unnamed channel"
         assert table.item(row, _VOLT_IDENT).text() == expected
 
 

@@ -1655,12 +1655,14 @@ and wrong claim; a client must parse absence as "did not say".
 `voltages` (daemon ≥ 2.37.0, additive — `api_version` unchanged, omitted when
 empty) is the board's voltage rails, discovered from hwmon `inN_input`
 (`WIRE-ag`). Each entry:
-`{id, chip_name, channel, label, value_v, identified}`.
+`{id, chip_name, channel, label, value_v, identified}`, plus the optional
+board-catalogue fields `board_label`, `board_multiplier` and `board_unmapped` (daemon
+≥ 3.3.0, below).
 
 - `id` — `hwmon:<chip>:<device_id>:in<N>`. The label is deliberately **not**
   embedded: a rail's label can appear or change with a driver update that
-  starts publishing `inN_label`, and an id that moved with it would break any
-  client that had stored one. (An `/etc/sensors.d` file does **not** change it:
+  starts publishing `inN_label`, or with a board-catalogue name (DEC-464), and an
+  id that moved with it would break any client that had stored one. (An `/etc/sensors.d` file does **not** change it:
   libsensors reads that file in user space, the kernel driver never does, so
   `inN_label` in sysfs — the only label the daemon reads — is unaffected.
   Corrected by DEC-463, `VOLT-b`.)
@@ -1675,8 +1677,40 @@ so on an unidentified channel `value_v` is a genuine measurement of the pin and
 is **not** evidence of what any named rail is doing. Measured on the reference
 board (`it8696`): 10 channels, 3 labelled. Presenting a divided 1.2 V reading with
 the same authority as a direct 3.3 V one is the specific failure this flag exists
-to prevent; the reference GUI renders an "Identification" column reading
-"Identified rail" or "Unnamed channel", plus a footnote.
+to prevent; the reference GUI renders an "Identification" column saying who
+named the row, plus a footnote.
+
+**Board-catalogue fields (`VOLT-b`, DEC-464, daemon ≥ 3.3.0; additive —
+`api_version` unchanged, each omitted when it does not apply).** The daemon
+carries the factual content of frankcrawford/it87's Gigabyte sensor configs
+(GPL-2.0, credited in the daemon's `NOTICE.md`; generated table pinned to an
+upstream commit) and matches it on **CPU vendor + canonical chip name + the
+board's SIV word** (`/sys/class/gigabyte/id/gigabyte_siv`, the same read that
+yields `board_firmware_counts`). The CPU vendor is part of the key because the
+same chip + SIV maps to different rail names on AMD and Intel boards.
+
+- `board_label` (string) — the rail this input is wired to on this board.
+- `board_multiplier` (number) — present exactly when `board_label` is: the
+  divider ratio, so the rail voltage is `value_v * board_multiplier` (1.0 when the
+  rail reaches the pin directly). `value_v` itself is still the pin voltage, so a
+  client that ignores these fields renders exactly what it did before.
+- `board_unmapped` (bool, omitted when false) — the board's config does not map
+  this input (upstream `ignore inN`: "channels not mapped by this SIV
+  configuration"). It is not a named rail, and `value_v` is its pin reading like
+  any unidentified channel. It is **not** a claim that the input is unconnected:
+  the X299 configs ignore an input for one CPU family that they label `DRAM
+  CH(A/B)` for the other. A client should say the board does not use it, not that
+  it is unwired.
+
+**None of the three ever appears on an `identified` channel**: the driver labels
+only the chip's internal inputs, already scaled, so a catalogue multiplier would
+scale them twice, and the configs `ignore` those inputs on a secondary chip as
+duplicates. `identified` stays the driver's claim alone — a catalogue-named entry
+carries `identified: false`. `board_label` and `board_unmapped` are never both
+set. X299 boards, whose maps depend on the CPU family in two files upstream refuses
+to choose between, carry only the inputs both files map identically. The reference GUI parses a `board_label` whose
+`board_multiplier` is missing, non-finite or not positive as no name at all, so a
+named rail is never shown at its unscaled pin voltage.
 
 **Voltages are NOT sensors and are NOT on `sensors[]`, `/status` or `/poll`.**
 That array is temperature-shaped to the field name (`value_c`, `temp_type`,

@@ -1036,9 +1036,19 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    updates it too. The provenance line gives the clock time the snapshot arrived
    (`last_hw_diagnostics_at`; the date is added on another day) and says nothing about age when
    nothing stamped it. A failed re-read keeps the previous readings and adds
-   `Hardware_Label_voltagesRefreshError`, cleared by the next result from any writer. Demo mode
-   loads `DemoService.hardware_diagnostics()` at start, so the panel shows the demo board's ten
-   `it8696` channels (`VOLT-c`).
+   `Hardware_Label_voltagesRefreshError`, cleared by the next result from any writer. Each row
+   is one of four `RailKind`s (DEC-464, `VOLT-b`), shown in the Identification column: *Named by
+   the driver* (`identified`), *Named by the board catalogue* (`board_label` — the value is
+   `value_v × board_multiplier`, and the row tooltip gives the pin reading and divider), *Not
+   used by this board* (`board_unmapped` — the pin reading, with a caveat that the catalogue
+   does not map the input and it may be unconnected or unused; never "unwired", which the
+   source does not say) and *Unnamed channel*. The driver's label wins over a catalogue entry,
+   and not-used over a catalogue name. The summary counts each kind; the footnote carries the
+   raw-pin warning while any row shows an unscaled pin reading (unnamed or not used) and the
+   catalogue's credit while any row came from it. Demo mode loads
+   `DemoService.hardware_diagnostics()` at start, so the panel shows the demo board's rails as a
+   current daemon reports them on that board: the `it8696`'s ten and the `it87952`'s nine
+   (`VOLT-c`; DEC-464 Q6).
 
 ### Setting a header's role (DEC-444)
 **Set role…** on each header card opens `HeaderRoleDialog` (`ui/widgets/header_role_dialog.py`)

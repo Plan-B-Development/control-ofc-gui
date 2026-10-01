@@ -1411,12 +1411,12 @@ class HardwarePage(QWidget):
             table.item(i, _VOLT_NAME).setText(row.name)
             table.item(i, _VOLT_CHIP).setText(row.chip)
             table.item(i, _VOLT_VALUE).setText(row.value_text)
-            # The one cell that carries the honesty distinction: a named rail
-            # says so, an unnamed channel says what it actually is, and the
-            # caveat rides as the row tooltip rather than being dropped.
-            table.item(i, _VOLT_IDENT).setText(
-                "Identified rail" if row.identified else "Unnamed channel"
-            )
+            # The one cell that carries the honesty distinction: it says who
+            # named the rail (the driver, the board catalogue, or nobody) or
+            # that the board does not use the input, and the caveat — a
+            # catalogue row's pin reading and divider included — rides as the
+            # row tooltip.
+            table.item(i, _VOLT_IDENT).setText(row.identification_text)
             if row.caveat:
                 for col in range(len(_VOLTAGE_COLS)):
                     table.item(i, col).setToolTip(row.caveat)

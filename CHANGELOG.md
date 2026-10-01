@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Voltage rails are named on Gigabyte boards** (DEC-464, `VOLT-b`; needs control-ofc-daemon 3.3.0 or
+  newer). The Hardware page's **Voltages** table shows who named each row: *Named by the driver*, *Named
+  by the board catalogue* — the daemon recognises the board from its firmware ID and takes the rail's name
+  and divider from the it87 driver project's per-board sensor configs, so the table shows the rail voltage
+  (an X870E AORUS MASTER's `in2` now reads `+12V` at about 12 V instead of an unnamed 1.992 V), with the
+  pin reading and divider in the row's tooltip — *Not used by this board*, where the catalogue does not
+  map the input (it shows the raw pin reading and says it is not a known rail), or *Unnamed channel*. The count line says how many of each, and the footnote credits the catalogue. Demo mode now
+  shows the demo board's rails the way a current daemon reports them, both chips included.
+
+### Changed
+
+- **"Identified rail" now reads "Named by the driver"**, and the Voltages count line says "named by the
+  driver" instead of "identified" (DEC-464), so it can tell the driver's names from the catalogue's.
+
 ## [3.2.0] — 2026-09-30
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Per-header

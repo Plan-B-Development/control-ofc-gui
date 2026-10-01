@@ -388,28 +388,41 @@ Fan control depends on sensors: curves need temperatures, and the daemon's therm
 
 Prefer the **Hardware** page first — its readiness checklist and Super-I/O section identify your board's chips **without probing the hardware**. Treat `sudo sensors-detect` as a **last resort**, run at your own risk: its probing "can access chips in a way these chips do not like, causing problems ranging from SMBus lockup to permanent hardware damage (a rare case, thankfully)" — [sensors-detect(8)](https://man.archlinux.org/man/extra/lm_sensors/sensors-detect.8.en). If you do run it, accept its conservative defaults rather than answering yes to every probe, and **never run it after boot on a Gigabyte board** — it can wedge the Super-I/O bridge so a second chip vanishes, and the package's guard cannot stop it (it probes the ports itself rather than loading a module); and **a reboot may not bring it back — power down at the wall**, because the bridge keeps standby power (see ["Some of my fan headers are missing"](#some-of-my-fan-headers-are-missing--only-5-of-8-show-up) below).
 
-## Voltages, and why most of them have no name
+## Voltages, and why some of them have no name
 
 The **Hardware** page has a read-only **Voltages** table (v2.61.0, with
 `control-ofc-daemon` ≥ v2.37.0). It lists the analogue-to-digital channels your
-Super-I/O chip exposes — typically ten of them.
+Super-I/O chip exposes — typically ten of them per chip.
 
-Most will say **Unnamed channel**, and that is normal rather than a fault. Only
-some channels carry a name from the driver; on a Gigabyte X870E AORUS MASTER, for
-example, three of ten do (`3VSB`, `Vbat`, `+3.3V`).
+The **Identification** column says who named each row:
+
+- **Named by the driver** — the kernel driver labels a few of the chip's own
+  internal inputs (`3VSB`, `Vbat`, `+3.3V`) and has already scaled them. Read
+  these at face value.
+- **Named by the board catalogue** (GUI v3.3.0 with `control-ofc-daemon` ≥
+  v3.3.0) — on Gigabyte boards, the daemon recognises the board from its firmware
+  ID and names the remaining inputs from the it87 driver project's per-board
+  sensor configs, including each rail's divider. The reading shown is the rail
+  voltage (the pin reading times the divider); hover the row to see the pin
+  reading and the divider. On an X870E AORUS MASTER, for example, `in2` reads
+  about 2 V at the pin and is shown as `+12V` at about 12 V.
+- **Not used by this board** — the same catalogue does not map this input for
+  your board. It may be unconnected or simply unused, so the reading shown is
+  the raw pin voltage, like an unnamed channel, and is not a known rail.
+- **Unnamed channel** — nobody named it. This is normal rather than a fault on
+  any board the catalogue does not cover.
 
 **Do not read an unnamed channel as a rail voltage.** Motherboards feed a rail
 through a resistor divider before it reaches the chip, and the driver has no way
 to know the ratio your board used. So the number shown is a real measurement of
 the voltage *at the chip's pin*, and it is not the voltage of whatever rail that
-pin is wired to — a +12V rail commonly reads around 2 V there. Rows the table
-marks **Identified rail** are the ones you can read at face value.
+pin is wired to — a +12V rail commonly reads around 2 V there.
 
-The names come from the kernel driver alone. An `lm_sensors` configuration for
-your board under `/etc/sensors.d/` names the channels and applies the divider
-maths **for the `sensors` command only**: `lm_sensors` reads that file, the kernel
-driver never does, so installing one changes nothing in this table. If you want
-the rail voltages today, `sensors` with your board's configuration shows them.
+An `lm_sensors` configuration for your board under `/etc/sensors.d/` names the
+channels and applies the divider maths **for the `sensors` command only**:
+`lm_sensors` reads that file, the kernel driver never does, so installing one
+changes nothing in this table. If your board is not in the catalogue and you want
+the rail voltages, `sensors` with your board's configuration shows them.
 
 Two things the table deliberately does not show, because on real hardware they
 mislead:

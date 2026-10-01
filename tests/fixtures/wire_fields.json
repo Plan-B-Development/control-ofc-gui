@@ -472,19 +472,25 @@
         "channel",
         "label",
         "value_v",
-        "identified"
+        "identified",
+        "board_label",
+        "board_multiplier",
+        "board_unmapped"
       ],
       "must_be_read": [
         "chip_name",
         "channel",
         "value_v",
-        "identified"
+        "identified",
+        "board_label",
+        "board_multiplier",
+        "board_unmapped"
       ],
       "not_assertable": {
         "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
         "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
       },
-      "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive \u2014 the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key."
+      "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive \u2014 the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key. VOLT-b / DEC-464 added `board_label`, `board_multiplier` and `board_unmapped` (the board voltage catalogue), all omitted when the catalogue says nothing."
     },
     {
       "daemon": "PreflightReport",

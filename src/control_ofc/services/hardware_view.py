@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from enum import Enum
 
 from control_ofc.api.models import HardwareReadiness, SuperIoReport
 from control_ofc.ui.cooling_readiness import GROUP_ORDER, build_readiness_items, group_for
@@ -418,9 +419,32 @@ def build_superio_panel(report: SuperIoReport) -> SuperIoPanelVM:
 # ─── Voltage rails (`WIRE-ag`) ─────────────────────────────────────────────
 
 
+class RailKind(Enum):
+    """Who named a voltage row, which decides how it may be presented (DEC-464)."""
+
+    #: The driver published ``inN_label``: an internal input it has scaled.
+    DRIVER = "driver"
+    #: The daemon's board catalogue names it and gives its divider (``VOLT-b``).
+    CATALOGUE = "catalogue"
+    #: The board's config does not map the input: not a named rail, and not
+    #: known to be unconnected (upstream ``ignore`` — see DEC-464).
+    UNMAPPED = "unmapped"
+    #: Nobody named it: a raw reading at the chip's pin.
+    RAW = "raw"
+
+
+#: The Identification column's text per kind.
+_IDENTIFICATION_TEXT: dict[RailKind, str] = {
+    RailKind.DRIVER: "Named by the driver",
+    RailKind.CATALOGUE: "Named by the board catalogue",
+    RailKind.UNMAPPED: "Not used by this board",
+    RailKind.RAW: "Unnamed channel",
+}
+
+
 @dataclass(frozen=True)
 class VoltageRowVM:
-    """One rendered rail. ``identified`` decides how it must be presented.
+    """One rendered rail. ``kind`` decides how it must be presented.
 
     Deliberately carries no ``id``: nothing renders it, and a VM field no
     renderer reads is the ``WIRE-ak`` "parsed but never read" category — having
@@ -428,14 +452,16 @@ class VoltageRowVM:
     :class:`~control_ofc.api.models.VoltageRail`, which is the wire mirror.
     """
 
-    #: The rail's name where the driver identified it, else its channel (``in0``).
+    #: The driver's label, else the board catalogue's, else the channel (``in0``).
     name: str
     chip: str
-    #: Formatted to millivolt resolution — the precision the ADC actually has.
+    #: The rail voltage to millivolt resolution — the pin reading times the
+    #: board divider for a catalogue row, the pin reading itself otherwise.
     value_text: str
-    #: True when the driver labelled this channel.
-    identified: bool
-    #: One-line explanation shown for an unidentified channel, empty otherwise.
+    kind: RailKind
+    #: The Identification column's text for :attr:`kind`.
+    identification_text: str
+    #: One-line explanation shown as the row tooltip; empty for a driver row.
     caveat: str
 
 
@@ -445,7 +471,8 @@ class VoltagePanelVM:
     #: Shown instead of the table when the daemon reported no rails.
     empty_note: str
     rows: tuple[VoltageRowVM, ...]
-    #: Count line, e.g. "10 channels · 3 identified".
+    #: Count line, e.g. "10 channels · 3 named by the driver · 7 by the board
+    #: catalogue".
     summary_text: str
     #: Says when the readings were taken and that they are not live. The GUI
     #: reads ``/diagnostics/hardware`` on connect, on the Hardware page's
@@ -453,7 +480,9 @@ class VoltagePanelVM:
     #: a snapshot, and a panel that did not say so would let a user read
     #: hours-old millivolts as current ones.
     provenance_text: str
-    #: Shown under the table when any row is unidentified; empty otherwise.
+    #: Shown under the table: the raw-pin warning while any row shows an
+    #: unscaled pin reading (unnamed or not used), and the catalogue's credit
+    #: while any row came from it; empty when neither applies.
     footnote: str
     #: Why the last re-read failed, shown while the previous readings (or the
     #: empty note) stay on screen; empty when it did not fail.
@@ -465,16 +494,31 @@ _UNIDENTIFIED_CAVEAT = (
     "chip's pin, not a known rail."
 )
 
+#: DEC-464: upstream's `ignore` means "not mapped by this SIV configuration",
+#: not "unconnected", so the row keeps its reading and says what is known.
+_UNMAPPED_CAVEAT = (
+    "The board catalogue does not map this input for this board — it may be "
+    "unconnected or unused, so this pin reading is not a known rail."
+)
+
 # `VOLT-b`: the last sentence used to say an /etc/sensors.d file "is what names
 # them". It does not, for this table: libsensors reads that file in user space,
 # the kernel driver never does, so `inN_label` — the only label the daemon reads
 # — is unchanged by it.
 _VOLTAGE_FOOTNOTE = (
-    "Channels the driver did not name are shown as measured at the chip's input "
-    "pin. Boards feed rails through resistor dividers the driver knows nothing "
-    "about, so those readings are real voltages but not the rail voltage. An "
-    "/etc/sensors.d file names them for the sensors command, not here — lm_sensors "
-    "reads it, and the kernel driver this table reads from does not."
+    "Unnamed and unused channels are shown as measured at the chip's input pin. Boards feed "
+    "rails through resistor dividers the driver knows nothing about, so those "
+    "readings are real voltages but not the rail voltage. An /etc/sensors.d file "
+    "names them for the sensors command, not here — lm_sensors reads it, and the "
+    "kernel driver this table reads from does not."
+)
+
+#: DEC-464 (Q11): the catalogue is GPL-2.0, and the facts it supplies are
+#: credited where they are shown.
+_CATALOGUE_FOOTNOTE = (
+    "Board-catalogue names, dividers and unused inputs come from the it87 driver "
+    "project's Gigabyte sensor configs (GPL-2.0), matched on this board's firmware "
+    "ID. Hover a board-catalogue row to see its pin reading and divider."
 )
 
 #: `VOLT-a`: the half of the provenance line that holds whatever the read time.
@@ -502,15 +546,59 @@ def _read_at_text(read_at: float, now: float) -> str:
     return f"Read on {at.tm_mday} {time.strftime('%b', at)} at {clock}."
 
 
+def _rail_kind(rail) -> RailKind:
+    """Classify a rail. The driver's label wins over the catalogue (DEC-464 Q2),
+    and "not used" over a catalogue name — the daemon never sends both, and if
+    one ever did, an unscaled reading that claims no rail is the safer
+    misreading than a name."""
+    if rail.identified:
+        return RailKind.DRIVER
+    if rail.board_unmapped:
+        return RailKind.UNMAPPED
+    if rail.board_label and rail.board_multiplier is not None:
+        return RailKind.CATALOGUE
+    return RailKind.RAW
+
+
+def _voltage_row(rail) -> VoltageRowVM:
+    kind = _rail_kind(rail)
+    name, value_text, caveat = rail.label, f"{rail.value_v:.3f} V", ""
+    if kind is RailKind.CATALOGUE:
+        multiplier = rail.board_multiplier
+        name = rail.board_label
+        value_text = f"{rail.value_v * multiplier:.3f} V"
+        if multiplier == 1.0:
+            caveat = "Named from the it87 board catalogue — read directly at the pin."
+        else:
+            caveat = (
+                f"Named from the it87 board catalogue — pin {rail.value_v:.3f} V "
+                f"\N{MULTIPLICATION SIGN} {multiplier:g}."
+            )
+    elif kind is RailKind.UNMAPPED:
+        caveat = _UNMAPPED_CAVEAT
+    elif kind is RailKind.RAW:
+        caveat = _UNIDENTIFIED_CAVEAT
+    return VoltageRowVM(
+        name=name,
+        chip=rail.chip_name,
+        value_text=value_text,
+        kind=kind,
+        identification_text=_IDENTIFICATION_TEXT[kind],
+        caveat=caveat,
+    )
+
+
 def build_voltage_panel(
     rails, *, read_at: float | None, now: float, refresh_error: str
 ) -> VoltagePanelVM:
     """Build the Hardware page's Voltages panel from ``HardwareDiagnosticsResult.voltages``.
 
     Display-only by construction: nothing here is offered as a control input,
-    and the ``identified`` distinction is carried into the row rather than
-    flattened, because presenting a divided reading with the same authority as a
-    direct one is the specific failure the daemon's flag exists to prevent.
+    and who named each rail is carried into the row rather than flattened,
+    because presenting a divided reading with the same authority as a direct
+    one is the specific failure the daemon's ``identified`` flag exists to
+    prevent. A board-catalogue row (``VOLT-b``, DEC-464) shows the rail voltage
+    — the pin reading times the board's divider — and says so in its caveat.
 
     ``read_at`` is ``DiagnosticsService.last_hw_diagnostics_at`` (epoch seconds),
     ``None`` when nothing recorded when the snapshot arrived — the line then
@@ -520,16 +608,7 @@ def build_voltage_panel(
     """
     error_text = f"Could not re-read voltages: {refresh_error}" if refresh_error else ""
     ordered = sorted(rails, key=lambda r: (r.chip_name, r.channel))
-    rows = tuple(
-        VoltageRowVM(
-            name=r.label,
-            chip=r.chip_name,
-            value_text=f"{r.value_v:.3f} V",
-            identified=r.identified,
-            caveat="" if r.identified else _UNIDENTIFIED_CAVEAT,
-        )
-        for r in ordered
-    )
+    rows = tuple(_voltage_row(r) for r in ordered)
     if not rows:
         return VoltagePanelVM(
             has_rails=False,
@@ -540,8 +619,18 @@ def build_voltage_panel(
             footnote="",
             refresh_error_text=error_text,
         )
-    identified = sum(1 for r in rows if r.identified)
+    count = {kind: sum(1 for r in rows if r.kind is kind) for kind in RailKind}
     channel_word = "channel" if len(rows) == 1 else "channels"
+    summary = f"{len(rows)} {channel_word} · {count[RailKind.DRIVER]} named by the driver"
+    if count[RailKind.CATALOGUE]:
+        summary += f" · {count[RailKind.CATALOGUE]} by the board catalogue"
+    if count[RailKind.UNMAPPED]:
+        summary += f" · {count[RailKind.UNMAPPED]} not used"
+    footnotes = []
+    if count[RailKind.RAW] or count[RailKind.UNMAPPED]:
+        footnotes.append(_VOLTAGE_FOOTNOTE)
+    if count[RailKind.CATALOGUE] or count[RailKind.UNMAPPED]:
+        footnotes.append(_CATALOGUE_FOOTNOTE)
     provenance = _VOLTAGE_NOT_LIVE
     if read_at is not None:
         provenance = f"{_read_at_text(read_at, now)} {_VOLTAGE_NOT_LIVE}"
@@ -549,8 +638,8 @@ def build_voltage_panel(
         has_rails=True,
         empty_note="",
         rows=rows,
-        summary_text=f"{len(rows)} {channel_word} · {identified} identified",
+        summary_text=summary,
         provenance_text=provenance,
-        footnote=_VOLTAGE_FOOTNOTE if identified < len(rows) else "",
+        footnote=" ".join(footnotes),
         refresh_error_text=error_text,
     )

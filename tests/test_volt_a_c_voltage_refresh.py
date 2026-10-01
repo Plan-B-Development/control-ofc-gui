@@ -31,7 +31,7 @@ from control_ofc.services import diagnostics_service as diag_module
 from control_ofc.services.app_state import AppState
 from control_ofc.services.demo_service import DemoService
 from control_ofc.services.diagnostics_service import DiagnosticsService
-from control_ofc.services.hardware_view import build_voltage_panel
+from control_ofc.services.hardware_view import RailKind, build_voltage_panel
 from control_ofc.ui.pages import hardware_page as hw_module
 from control_ofc.ui.pages.diagnostics_workers import _HwDiagWorker
 from control_ofc.ui.pages.hardware_page import _VOLT_NAME, _VOLT_VALUE, HardwarePage
@@ -318,8 +318,10 @@ def test_without_a_daemon_re_scan_sends_no_voltage_request(qtbot, monkeypatch):
 
 
 def test_demo_diagnostics_carry_both_kinds_of_rail():
-    """The panel exists to draw the identified/unnamed distinction, so the demo
-    must show both kinds, not only one."""
+    """The panel exists to draw who named each rail, so the demo must show more
+    than one kind. Since DEC-464 (Q6) it mirrors what a current daemon reports
+    on the demo board: driver-named, catalogue-named and not-wired — no raw
+    channel, because that board has none."""
     rails = DemoService().hardware_diagnostics().voltages
     assert rails
     kinds = {r.identified for r in rails}
@@ -327,6 +329,12 @@ def test_demo_diagnostics_carry_both_kinds_of_rail():
     for r in rails:
         # A labelled rail carries its label; an unnamed one its channel name.
         assert (r.label != f"in{r.channel}") == r.identified
+    panel = build_voltage_panel(rails, read_at=None, now=0.0, refresh_error="")
+    assert {row.kind for row in panel.rows} == {
+        RailKind.DRIVER,
+        RailKind.CATALOGUE,
+        RailKind.UNMAPPED,
+    }
 
 
 def test_demo_mode_loads_the_demo_diagnostics_into_the_shared_cache(qtbot, settings_service):
@@ -341,7 +349,9 @@ def test_demo_mode_loads_the_demo_diagnostics_into_the_shared_cache(qtbot, setti
     assert cached is not None
     assert cached.voltages == DemoService().hardware_diagnostics().voltages
     assert window._diag.last_hw_diagnostics_at is not None
-    # And the Voltages panel renders it, both kinds included.
+    # And the Voltages panel renders it, every kind included — asserted against
+    # the builder's names, since a catalogue row shows the board's name (DEC-464).
     window.hardware_page._render_voltages()
-    assert set(_values(window.hardware_page)) == {r.label for r in cached.voltages}
+    panel = build_voltage_panel(cached.voltages, read_at=None, now=0.0, refresh_error="")
+    assert set(_values(window.hardware_page)) == {row.name for row in panel.rows}
     window.dashboard_page.cleanup()

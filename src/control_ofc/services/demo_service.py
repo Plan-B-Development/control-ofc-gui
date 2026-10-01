@@ -212,36 +212,53 @@ _DEMO_ZONES: dict[str, str] = {
 }
 
 
-# `VOLT-c`: the demo board's it8696 voltage channels, with the reference host's
-# real shape — `in0` to `in6` unlabelled raw ADC pins (the ~2 V on `in1` to `in3` is
-# a divided rail, which is why they must read as unnamed), and the three the
-# driver labels. Mixed on purpose: the Voltages panel exists to draw exactly
-# that distinction, and a demo showing only one kind would hide it.
-_DEMO_VOLTAGES: tuple[tuple[int, str, float], ...] = (
-    (0, "", 1.224),
-    (1, "", 2.004),
-    (2, "", 1.992),
-    (3, "", 1.992),
-    (4, "", 1.260),
-    (5, "", 1.128),
-    (6, "", 1.440),
-    (7, "3VSB", 3.312),
-    (8, "Vbat", 3.216),
-    (9, "+3.3V", 3.072),
+# `VOLT-c` / `VOLT-b`: the demo board's voltage channels, as a current daemon
+# reports them on a real X870E AORUS MASTER (SIV A008090A, AMD; DEC-464 Q6):
+# the it8696's in0-in6 named by the board catalogue (x1.649 / x6 / x2.5 on
+# in1-in3, turning the reference host's ~2 V pins into 3.3 / 12 / 5 V) and
+# in7-in9 by the driver; the second chip it87952's in2/in4/in5 named by the
+# catalogue, in0/in1/in6 not mapped by it, and in3/in7/in8 named by the driver —
+# which the catalogue `ignore`s and the daemon deliberately does not (Q2).
+# Every kind the panel draws except a raw unnamed channel, which that board
+# does not have. Entries: (chip, channel, driver label, pin volts,
+# catalogue label, multiplier, not mapped).
+_DEMO_VOLTAGES: tuple[tuple[str, int, str, float, str, float | None, bool], ...] = (
+    ("it8696", 0, "", 1.224, "CPU Vcore", 1.0, False),
+    ("it8696", 1, "", 2.004, "+3.3V", 1.649, False),
+    ("it8696", 2, "", 1.992, "+12V", 6.0, False),
+    ("it8696", 3, "", 1.992, "+5V", 2.5, False),
+    ("it8696", 4, "", 1.260, "CPU VCORE SOC", 1.0, False),
+    ("it8696", 5, "", 1.128, "CPU VCORE MISC", 1.0, False),
+    ("it8696", 6, "", 1.440, "CPU VDDIO MEM", 1.0, False),
+    ("it8696", 7, "3VSB", 3.312, "", None, False),
+    ("it8696", 8, "Vbat", 3.216, "", None, False),
+    ("it8696", 9, "+3.3V", 3.072, "", None, False),
+    ("it87952", 0, "", 1.804, "", None, True),
+    ("it87952", 1, "", 2.805, "", None, True),
+    ("it87952", 2, "", 1.826, "PM VCC18", 1.0, False),
+    ("it87952", 3, "+3.3V", 2.332, "", None, False),
+    ("it87952", 4, "", 1.804, "CPU VDD18", 1.0, False),
+    ("it87952", 5, "", 1.045, "PM VDD1V", 1.0, False),
+    ("it87952", 6, "", 1.419, "", None, True),
+    ("it87952", 7, "3VSB", 3.388, "", None, False),
+    ("it87952", 8, "Vbat", 3.190, "", None, False),
 )
 
 
 def _demo_voltages() -> list[VoltageRail]:
     return [
         VoltageRail(
-            id=f"hwmon:it8696:pci0:in{channel}",
-            chip_name="it8696",
+            id=f"hwmon:{chip}:pci0:in{channel}",
+            chip_name=chip,
             channel=channel,
             label=label or f"in{channel}",
             value_v=value_v,
             identified=bool(label),
+            board_label=board_label,
+            board_multiplier=multiplier,
+            board_unmapped=unmapped,
         )
-        for channel, label, value_v in _DEMO_VOLTAGES
+        for chip, channel, label, value_v, board_label, multiplier, unmapped in _DEMO_VOLTAGES
     ]
 
 
