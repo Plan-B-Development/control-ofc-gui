@@ -49,8 +49,9 @@ Two consequences worth stating here rather than only in the ADR:
      `{"recorded": true}` from `POST /validation/session/event` and `/measurement`;
    - `GET /profiles/{id}`, which returns the stored profile file as it is on disk.
 
-   `GET /config` carries it, except that it answers `200 {}` if the daemon cannot
-   serialise its own report (register row `DC-ce`). The GUI tolerates its absence
+   `GET /config` carries it. A report the daemon cannot serialise answers
+   `500 internal_error`, as on every other route (DEC-468); daemons before it
+   answered `200 {}` there, with no `api_version`. The GUI tolerates its absence
    everywhere and gates on `GET /capabilities`, never on a per-response version.
 
 ## Quick reference — curl examples
@@ -2367,7 +2368,14 @@ guidance thus joins the generic `no_pwm_controls` item. These items use the same
 `/inventory/readiness` endpoint. **Detection is not control:** a recommendation
 means a chip is present and a driver exists — never that PWM control is proven.
 Loading the driver, or the daemon's separate verify path, is what confirms
-control.
+control. **On a board where the package's Super-I/O guard declines the module**
+(`nct6775`/`w83627ehf` on a Gigabyte board, or on a listed Gigabyte board whose
+firmware reports no vendor — `chip_db::superio_guard_declines`, pinned to the
+guard script), a chip's `load_hint`, from the passive detector or the port probe,
+explains the guard instead of offering a load command, which would report success
+and bind nothing (DEC-468, `DC-da`). The aggregate item, which carries no vendor,
+still says it conditionally ("On a Gigabyte board …"). `load_hint` is prose on
+several branches already; a client shows it, it does not execute it.
 
 ### GET /inventory/hardware-readiness (DEC-207, daemon ≥ 2.11.0)
 
@@ -2937,7 +2945,8 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
     it, as at shutdown — **and puts every AMD GPU the daemon drove that the new profile does
     not name back on its firmware fan curve** (DEC-448, daemon ≥ 3.0.0; the reset
     `POST /gpu/{id}/fan/reset` makes; the card's `last_commanded_pwm` is then absent, since nothing
-    commands it — unlike after the reset endpoint, which reports `0`).
+    commands it. Since DEC-468 (`GPU-e`) the reset endpoint and a verify that restores a card to
+    firmware auto leave it absent too; earlier daemons reported `0` there).
   - GUI must only update "active" state after daemon confirms success
 - `POST /profile/deactivate` — body ignored (DEC-097, daemon v1.6.0+)
   - Clears the in-memory active profile, persists the cleared state (best-effort,
@@ -3070,6 +3079,11 @@ rather than an optional refinement.
 - `POST /gpu/{gpu_id}/fan/reset` — restore GPU fan to automatic mode (re-enables zero-RPM). **AMD GPUs only** — `gpu_id` is a bare PCI BDF; a BDF that resolves to an NVIDIA/Intel GPU (read-only fans) is not among the daemon's AMD GPUs, so it returns `404 validation_error` ("GPU not found").
   - GUI caller: the System State page's *Restore GPU Fan to Automatic* (DEC-147 — disabled
     while the **active profile** owns an `amd_gpu:` member, since the daemon is actively driving it).
+  - On success the card records **no** commanded duty: its `last_commanded_pwm` on `GET /fans` and
+    `/poll` is absent, as after the engine's own hand-back (DEC-448). A verify that restores a card to
+    firmware auto does the same. Daemons before DEC-468 (`GPU-e`) reported `0`, which the engine's
+    5 % GPU coalescing then held against a profile command of 0–4 %, and which a client could not
+    tell from a profile genuinely commanding the card at 0 %.
   - **`200`** body: `{"api_version": 1, "gpu_id": "<bdf>", "reset": true}` — the same shape from
     the PMFW arm (RDNA3+: `fan_curve` `r`+`c`, then `fan_zero_rpm_enable` `1`+`c`) and the legacy
     arm (pre-RDNA3: `pwm1_enable=2`).

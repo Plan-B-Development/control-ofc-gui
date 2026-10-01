@@ -780,6 +780,7 @@ Common conflict ranges:
 - `0x0A20–0x0A2F` — ITE IT87 (alternate)
 - `0x0A40–0x0A4F` — ITE IT87 (secondary dual-chip)
 - `0x0A60–0x0A6F` — ITE IT87 (secondary dual-chip)
+- `0x0B10–0x0B1F` — ITE IT87952E (secondary on the Z790 AORUS MASTER; daemon ≥ DEC-468)
 
 The daemon detects these by comparing `/proc/ioports` ACPI entries against
 known SIO I/O ranges.
