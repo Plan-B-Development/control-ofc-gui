@@ -105,11 +105,13 @@ only what `ReconnectSurvey` (`serial/adoption.rs`) plans:
 2. the node the controller was adopted on, while it is still that node — same
    `(st_dev, st_ino)`. devtmpfs re-creates a node for a new device, so a name
    another device has taken is not mistaken for it; once seen gone or re-created
-   it is never probed again for that drop. **This re-probe cannot rescue a
-   controller wedged on its node today:** serialport opens with an exclusive
-   `flock`, which root does not bypass, and the loop holds the old port until a
-   replacement is swapped in. It resets nothing and is kept; closing the old port
-   first is register row `DC-ct`. Such a controller needs a daemon restart;
+   it is never probed again for that drop. This is how a controller that stopped
+   answering without leaving the bus comes back. serialport opens with an
+   exclusive `flock`, which root does not bypass, so the first attempt of each
+   drop closes the old port before it probes (DEC-465, `DC-ct`; daemon ≥ 3.3.0),
+   after discarding its queued output so the close is not held for the tty's
+   30 s `closing_wait`. Closing does not reset the controller, and until it is
+   re-adopted every write fails at once as "disconnected";
 3. each node that appeared after the survey began: on every attempt for its first
    60 s (at least 4 opens), then once per 5 minutes while it stays — never given
    up on, because this probe is the only way back (the rescan endpoint refuses
