@@ -551,8 +551,13 @@ There is no Activate button on this page. The sidebar's **Apply** and the Dashbo
 The sidebar's **Stop** (DEC-462) is the reverse: `ProfileService.deactivate` calls
 `POST /profile/deactivate` and clears the active id only after the daemon confirms. It has
 no confirmation dialog (stopping is undone by Apply); a 10 s info banner says what the fans
-do now, and a failure shows `Could not stop profile control: <reason>`. Deleting the active
-profile deactivates through the same method first.
+do now, and a failure shows `Could not stop profile control: <reason>`. It is enabled while
+either the GUI's active id or AppState's daemon-reported name is set, so it also stops a
+profile the daemon runs that this GUI does not hold, and its tooltip names the profile
+(DEC-470, `WUI-a`). Deleting the active profile deactivates through the same method first;
+if that fails and the daemon then refuses the delete (`409 profile_in_use`), the profile is
+kept, AppState goes on naming it, and the banner says `Could not delete '<name>': the daemon
+is still running it (<reason>). Press Stop, then delete.` (`WUI-c`).
 
 A failure is shown in the main window's banner as `Could not activate "<name>": <reason>`
 (DEC-416, `CTRL-k`); a later successful Apply takes it down. Step 1 can refuse (DEC-403): a

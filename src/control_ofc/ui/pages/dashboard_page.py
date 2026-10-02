@@ -76,6 +76,14 @@ _INSPECTOR_WIDE_THRESHOLD_PX = 1100
 # DEC-462: the title-row combo's text while no profile is active.
 NO_ACTIVE_PROFILE_TEXT = "No active profile"
 
+
+def unheld_profile_text(name: str) -> str:
+    """The combo's placeholder while the daemon runs a profile this GUI does not
+    hold (`WUI-a`) — e.g. a ``--profile`` from a system folder. The combo lists
+    only the GUI's profiles, so it cannot select it; it names it instead."""
+    return f"Running: {name} (not in this GUI)"
+
+
 # DEC-245: settings store the chart mode as its string value — the settings layer
 # must not import a UI-facing service — so the page owns the lookup back.
 _CHART_MODE_BY_VALUE = {m.value: m for m in ChartMode}
@@ -1190,12 +1198,38 @@ class DashboardPage(QWidget):
         self._push_chart_context()
         # A different profile means different controls — rebuild the cards.
         self._refresh_fan_cards()
-        # Sync combo selection to active profile; none active shows the
-        # placeholder (DEC-462) instead of leaving the last profile named.
-        idx = self._profile_combo.findText(name) if name else -1
-        if idx >= 0 or not name:
-            with block_signals(self._profile_combo):
-                self._profile_combo.setCurrentIndex(idx)
+        self._sync_profile_combo_to_active()
+
+    def _sync_profile_combo_to_active(self) -> None:
+        """Point the combo at what the daemon runs, from BOTH sources (`WUI-a`).
+
+        The service's id is set only for a profile this GUI holds (DEC-194's
+        no-op for an unknown id); AppState's name is the daemon's word for
+        whatever runs. So: the held profile by id; else the name, by text —
+        unless AppState's daemon id names a profile the GUI does not hold, whose
+        name may match a different, held one; else, with a name the combo cannot
+        select, index -1 with a placeholder naming it; and only with both empty
+        "No active profile" (DEC-462). A known id the combo has not listed yet
+        leaves it as-is (the rebuild selects it).
+        """
+        combo = self._profile_combo
+        service = self._profile_service
+        active_id = service.active_id if service else ""
+        name = self._state.active_profile_name if self._state else ""
+        daemon_id = self._state.active_profile_id if self._state else ""
+        if active_id:
+            idx = combo.findData(active_id)
+            if idx < 0:
+                return
+        elif not name or (daemon_id and service and service.get_profile(daemon_id) is None):
+            idx = -1
+        else:
+            idx = combo.findText(name)
+        combo.setPlaceholderText(
+            unheld_profile_text(name) if name and idx < 0 else NO_ACTIVE_PROFILE_TEXT
+        )
+        with block_signals(combo):
+            combo.setCurrentIndex(idx)
 
     def _on_apply_profile(self) -> None:
         """Apply the combo-selected profile (the page's Apply button)."""
@@ -1211,7 +1245,9 @@ class DashboardPage(QWidget):
         previously-active profile (bug fix — the combo used to stay on the failed
         pick), logs the real reason, and hands it to the main window's banner
         through ``activation_failed`` (`CTRL-k` — every failure, not only
-        DEC-403's refusal)."""
+        DEC-403's refusal). The revert re-syncs to what runs: a failed
+        activation never moves the active id, so that is the profile active
+        before the Apply — or, from the stopped state, the placeholder (`WUI-b`)."""
         import logging
 
         log = logging.getLogger(__name__)
@@ -1219,14 +1255,12 @@ class DashboardPage(QWidget):
         if not self._profile_service or not profile_id:
             return
 
-        # Capture the active id up-front so a rejected switch reverts cleanly.
-        prev_active_id = self._profile_service.active_id
         res = self._profile_service.activate(profile_id, client=self._client)
         if not res.activated:
             log.warning("Profile activation failed for %s: %s", profile_id, res.error)
             target = self._profile_service.get_profile(profile_id)
             self.activation_failed.emit(res.failure_message(target.name if target else profile_id))
-            self._revert_profile_combo(prev_active_id)
+            self._sync_profile_combo_to_active()
             self._apply_btn.setText("Failed")
             self._apply_btn.setEnabled(False)
             self._reset_apply_timer.start()
@@ -1243,22 +1277,13 @@ class DashboardPage(QWidget):
         self._apply_btn.setEnabled(False)
         self._reset_apply_timer.start()
 
-    def _revert_profile_combo(self, profile_id: str) -> None:
-        """Re-select ``profile_id`` in the combo, blocking signals so the
-        reversion never re-triggers the apply handler."""
-        idx = self._profile_combo.findData(profile_id)
-        if idx >= 0:
-            with block_signals(self._profile_combo):
-                self._profile_combo.setCurrentIndex(idx)
-
     def _on_active_id_changed(self, profile_id: str) -> None:
-        """Reflect a service-side active-profile change in the combo by id
-        (blocking signals so it never re-triggers apply). A cleared id shows
-        the "No active profile" placeholder (DEC-462)."""
-        idx = self._profile_combo.findData(profile_id) if profile_id else -1
-        if idx >= 0 or not profile_id:
-            with block_signals(self._profile_combo):
-                self._profile_combo.setCurrentIndex(idx)
+        """Reflect a service-side active-profile change in the combo (blocking
+        signals so it never re-triggers apply), together with AppState's name:
+        a cleared id shows the placeholder only when no name is left either
+        (`WUI-a`)."""
+        del profile_id  # the service's active_id is read back, with the name
+        self._sync_profile_combo_to_active()
 
     def _reset_apply_btn(self) -> None:
         self._apply_btn.setText("Apply")

@@ -266,17 +266,24 @@ class TestDashboardCombo:
         _a, b = _two_profiles_second_active(window, profile_service, app_state)
         assert combo.currentData() == b.id, "precondition: it names the active profile"
 
-        profile_service.set_active("")
+        # The poll's order (`AppState.apply_status`): the id, then the name. Only
+        # with both cleared is nothing running (`WUI-a`, G216).
+        app_state.set_active_profile_id(b.id)
+        app_state.set_active_profile_id("")
+        app_state.set_active_profile("")
         assert combo.currentIndex() == -1
         assert combo.placeholderText() == NO_ACTIVE_PROFILE_TEXT
 
         profile_service.set_active(b.id)
         assert combo.currentData() == b.id
 
-    def test_the_state_name_clearing_alone_clears_it(self, window, profile_service, app_state):
-        """AppState's by-name path (the status banner's source) clears it too."""
+    def test_the_stop_order_clears_it(self, window, profile_service, app_state):
+        """Stop's order: the service's id, then AppState's name (the status
+        banner's source). Since `WUI-a` (G216) a cleared id alone leaves the
+        daemon-reported name standing, so the name is what ends it."""
         combo = window.dashboard_page._profile_combo
         _two_profiles_second_active(window, profile_service, app_state)
+        profile_service.set_active("")
         app_state.set_active_profile("")
         assert combo.currentIndex() == -1
 
@@ -286,6 +293,7 @@ class TestDashboardCombo:
         page = window.dashboard_page
         _two_profiles_second_active(window, profile_service, app_state)
         profile_service.set_active("")
+        app_state.set_active_profile("")
         page.populate_profiles()
         assert page._profile_combo.count() >= 2, "precondition: there are profiles to pick"
         assert page._profile_combo.currentIndex() == -1

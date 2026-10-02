@@ -25,7 +25,13 @@ The page title row carries a **profile selector + Apply**. The sidebar has one t
 this one is kept deliberately so the landing page can switch profiles without
 navigating away. With no profile active the selector shows the placeholder
 **No active profile** at index −1 (DEC-462) — a rebuild never falls back to the first
-entry, which named a profile that was not running.
+entry, which named a profile that was not running. It follows the daemon from both
+sources (DEC-470, `WUI-a`): the held profile by id, else AppState's daemon-reported name
+(by text — skipped when the daemon's id names a profile this GUI does not hold, since a
+held profile can share its name), and a running profile this GUI does not hold (a
+`--profile` from a system folder) shows **Running: <name> (not in this GUI)** at index −1.
+"No active profile" only when both are empty. A failed Apply re-syncs to what runs: the
+placeholder from the stopped state (`WUI-b`), the running profile otherwise.
 
 Five banners sit below it, each shown only while it applies:
 - **hwmon** absent or all read-only;

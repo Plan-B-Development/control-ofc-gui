@@ -225,6 +225,20 @@ class _OverrideWorker(QObject):
 _COOLING_DEVICE_ID = DEFAULT_COOLING_DEVICE_ID
 
 
+def delete_refused_message(name: str, stop_error: str | None) -> str:
+    """What the banner says when the daemon refuses a delete (`WUI-c`).
+
+    The daemon refuses only a profile it is still running, which after the
+    delete flow's own deactivate means that stop failed — its reason, when
+    there is one, is the useful half.
+    """
+    reason = f" ({stop_error})" if stop_error else ""
+    return (
+        f"Could not delete '{name}': the daemon is still running it{reason}. "
+        "Press Stop, then delete."
+    )
+
+
 class ControlsPage(QWidget):
     """FanControl-style controls: profile bar, control cards grid, curve cards grid."""
 
@@ -235,6 +249,9 @@ class ControlsPage(QWidget):
     # drive it; without this, creating a profile moved the page and left the
     # combo naming the old one.
     viewed_profile_changed = Signal(str)
+    # `WUI-c`: a delete the daemon refused, as the text the main window's
+    # banner shows — the page has no banner of its own.
+    delete_refused = Signal(str)
 
     # DEC-220: dispatch manual-override HTTP calls to the off-thread worker.
     # Queued to the worker thread; results return via the worker's *_result
@@ -979,15 +996,22 @@ class ControlsPage(QWidget):
             # in-memory profile until restart, leaving "phantom" curve
             # writes targeting a profile that no longer exists on disk.
             was_active_locally = self._profile_service.active_id == profile_id
+            stop_error: str | None = None
             if was_active_locally and self._client is not None:
                 # DEC-462: the one deactivation path, shared with the sidebar's Stop.
                 outcome = self._profile_service.deactivate(client=self._client)
                 if not outcome.deactivated:
+                    stop_error = outcome.error
                     self._log.warning("Daemon deactivate before delete failed: %s", outcome.error)
                     # Continue with the local delete — the file is the
                     # canonical source for the next activation, and the
                     # daemon will surface the error itself.
-            self._profile_service.delete_profile(profile_id)
+            if not self._profile_service.delete_profile(profile_id):
+                # `WUI-c`: the daemon refused (`409 profile_in_use`) — it is still
+                # running this profile and the GUI kept it. AppState must go on
+                # naming it, and the view stays where it is.
+                self.delete_refused.emit(delete_refused_message(current.name, stop_error))
+                return
             if was_active_locally and self._state is not None:
                 self._state.set_active_profile("")
             # After deletion, view something that still exists.

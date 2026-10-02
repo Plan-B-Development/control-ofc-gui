@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Stop and the Dashboard follow the profile the daemon is actually running** (DEC-470, `WUI-a`). When the
+  daemon runs a profile this app does not have — one it was started with from its own profile folder — the
+  sidebar's **Stop** is now available for it (it was disabled, while the driver-collision advice points at it),
+  its tooltip names the profile it stops, and the Dashboard's profile selector reads *Running: <name> (not in
+  this GUI)* instead of *No active profile*.
+- **A failed Dashboard Apply with no profile running** goes back to *No active profile* instead of naming the
+  profile that failed to start (`WUI-b`).
+- **A delete the daemon refuses is reported, and the profile stays named as running** (`WUI-c`). If stopping the
+  active profile fails and the daemon then refuses to delete it, a banner says *Could not delete '<profile>':
+  the daemon is still running it* with the reason; the status banner no longer claims no profile is running.
+
 ## [3.3.0] — 2026-10-01
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The board-catalogue

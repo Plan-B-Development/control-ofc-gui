@@ -394,6 +394,9 @@ class MainWindow(QWidget):
         self.sidebar.apply_profile_btn.clicked.connect(self._on_sidebar_apply_profile)
         self.sidebar.stop_profile_btn.clicked.connect(self._on_sidebar_stop_profile)
         self._profile_service.active_changed.connect(self._refresh_stop_profile_button)
+        # `WUI-a`: the daemon-reported name enables it too, and a rename re-labels it.
+        self._state.active_profile_changed.connect(self._refresh_stop_profile_button)
+        self._profile_service.profiles_changed.connect(self._refresh_stop_profile_button)
         self._refresh_stop_profile_button()
         self.sidebar.new_profile_btn.clicked.connect(self._on_sidebar_new_profile)
         self.sidebar.delete_profile_btn.clicked.connect(self._on_sidebar_delete_profile)
@@ -435,6 +438,8 @@ class MainWindow(QWidget):
         # activation, whatever the reason — and a later success takes it down.
         self.dashboard_page.activation_failed.connect(self._show_activation_failure)
         self.dashboard_page.activation_succeeded.connect(self._clear_activation_failure)
+        # `WUI-c`: a delete the daemon refused is said here, as a failed Stop is.
+        self.controls_page.delete_refused.connect(self.error_banner.show_warning)
         # DEC-207/DEC-216: the Cooling Hardware Readiness "set preferred sensor"
         # deep-link is owned by the Hardware page (the Diagnostics duplicate was
         # retired with the page).
@@ -803,14 +808,21 @@ class MainWindow(QWidget):
     STOP_PROFILE_MESSAGE_MS = 10_000
 
     def _refresh_stop_profile_button(self, *_args) -> None:
-        """Enable the sidebar's Stop only while a profile is active (DEC-462)."""
-        active = bool(self._profile_service.active_id)
+        """Enable the sidebar's Stop only while a profile is active (DEC-462).
+
+        Active by EITHER source (`WUI-a`): the service's id is set only for a
+        profile this GUI holds (DEC-194), so a daemon running one it does not —
+        a ``--profile`` from a system folder — is known only by AppState's
+        daemon-reported name. That is the case the collision remediation sends
+        users here for, so Stop must be enabled for it.
+        """
+        active = self._profile_service.active_profile
+        name = active.name if active is not None else self._state.active_profile_name
         btn = self.sidebar.stop_profile_btn
-        btn.setEnabled(active)
+        btn.setEnabled(bool(name))
         btn.setToolTip(
-            "Stop profile control: the daemon stops running the active profile "
-            "and hands the fans back"
-            if active
+            f"Stop profile control: the daemon stops running '{name}' and hands the fans back"
+            if name
             else "No profile is running"
         )
 
