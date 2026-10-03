@@ -32,8 +32,7 @@ The daemon is a separate project with its own security considerations (sysfs acc
 
 | Version | Supported |
 |---------|-----------|
-| 2.x     | Yes       |
-| 1.x     | No        |
-| < 1.0   | No        |
+| Latest release | Yes |
+| Any earlier release | No |
 
-Only the latest 2.x release receives security fixes. Older patch versions are not separately supported — upgrade to the current release.
+Only the latest published release receives security fixes. Older releases, including earlier patch versions of the current major line, are not separately supported — upgrade to the current release.

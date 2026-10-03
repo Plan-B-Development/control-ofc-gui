@@ -32,6 +32,7 @@ packaging/.SRCINFO
 CLAUDE.md
 DECISIONS.md
 DECISIONS_OPEN_ITEMS.md
+DECISIONS_OPEN_ITEMS_ARCHIVE.md
 .claude/
 diag/
 scripts/

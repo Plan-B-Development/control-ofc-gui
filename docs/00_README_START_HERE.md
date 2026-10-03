@@ -99,7 +99,7 @@ This pack includes:
 This file is a **reading order for the docs pack**. It will not tell you where a
 function lives.
 
-- **`02_System_Architecture_and_Boundaries.md` § Module map** is the annotated `src/`
+- **`02_System_Architecture_and_Boundaries.md` § Suggested high-level module layout** is the annotated `src/`
   tree — the fastest route from "where does X live?" to a file path.
 - **`docs/architecture/`** holds the two deep dives that are not part of the numbered
   pack, and were previously indexed nowhere:

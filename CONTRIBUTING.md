@@ -35,8 +35,8 @@ are an artefact of the environment, not a real regression — but they are
 indistinguishable from one, so always set the variable. CI sets it too.
 
 The whole set takes well under a minute: the three lint/compile gates are
-milliseconds and the suite is the bulk of it. `CHANGELOG.md` carries the current
-test count — a figure repeated here would just go stale. There is no "fast subset"
+milliseconds and the suite is the bulk of it. `python -m pytest --collect-only -q`
+prints the current test count — a figure repeated here would just go stale. There is no "fast subset"
 to reach for — run all four.
 
 ### Coverage
