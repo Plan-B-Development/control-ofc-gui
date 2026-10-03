@@ -185,6 +185,8 @@ def extract_environment(snapshot: object, gui_facts: Mapping[str, object]) -> di
     chips = [
         {
             "chip_name": c.get("chip_name"),
+            # `BRD-x`: DEC-442's as-published name; None from an older daemon.
+            "sysfs_chip_name": c.get("sysfs_chip_name"),
             "device_id": c.get("device_id"),
             "expected_driver": c.get("expected_driver"),
             "bound_driver": c.get("bound_driver"),

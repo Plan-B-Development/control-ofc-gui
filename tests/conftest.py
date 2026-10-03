@@ -450,17 +450,18 @@ def _reset_it87_rename_gate():
 def _isolate_libsensors(monkeypatch):
     """Keep the host's ``/etc/sensors.d`` out of every test (DEC-229).
 
-    ``load_libsensors_configs(paths=[])`` does **not** isolate, which is the
-    trap: the body reads ``search_paths = paths or LIBSENSORS_CONFIG_PATHS``, so
-    an empty list is falsy and means "use the system defaults". Tests that
-    passed ``[]`` — including the resolver's own pre-existing ones — therefore
-    read the real ``/etc/sensors3.conf`` and their results depended on the
-    machine running them. They pass on this host only because its ``it87-*``
-    block happens to carry no fan labels.
+    Every production call passes no ``paths`` at all, which reads the module
+    constant — so a test that does the same would read the real
+    ``/etc/sensors3.conf`` and its result would depend on the machine running
+    it. Emptying the constant is what isolates that path.
 
-    Emptying the module constant is what actually isolates. Tests that want
-    specific config files still monkeypatch the constant themselves or pass a
-    non-empty ``paths=`` / ``sensors_paths=``; both win over this fixture.
+    (``paths=[]`` used to fall through to the system defaults too, because the
+    loader read ``paths or LIBSENSORS_CONFIG_PATHS`` and ``[]`` is falsy. Since
+    ``BRD-p`` only ``None`` means the defaults and ``[]`` reads nothing.)
+
+    Tests that want specific config files still monkeypatch the constant
+    themselves or pass a non-empty ``paths=`` / ``sensors_paths=``; both win
+    over this fixture.
     """
     from control_ofc.knowledge import hwmon_label_resolver as r
 

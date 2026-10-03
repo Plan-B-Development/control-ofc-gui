@@ -409,6 +409,37 @@ class TestExportSupportBundle:
         # Pure window/layout state is dropped.
         assert "window_geometry" not in app_settings
 
+    def test_bundle_lists_each_chip_with_its_sysfs_name(self, tmp_path):
+        """``BRD-x``: the bundle shows the name sysfs published beside the
+        canonical one, so an it87 v2.0 board's suffixed naming (DEC-442) is
+        visible in a support report. Driven from the wire payload through the
+        parser, so it proves the field is carried, not merely rendered."""
+        from control_ofc.api.models import parse_hardware_diagnostics
+
+        svc = DiagnosticsService(state=AppState())
+        svc.last_hw_diagnostics = parse_hardware_diagnostics(
+            {
+                "hwmon": {
+                    "chips_detected": [
+                        {"chip_name": "it8696", "sysfs_chip_name": "it8696_a008090a"},
+                        # A daemon older than DEC-442 sends no such field.
+                        {"chip_name": "nct6799"},
+                    ]
+                }
+            }
+        )
+        bundle_path = tmp_path / "support.json"
+        with patch(
+            "control_ofc.services.diagnostics_service.subprocess.run", side_effect=FileNotFoundError
+        ):
+            svc.export_support_bundle(bundle_path)
+
+        chips = json.loads(bundle_path.read_text())["hardware_diagnostics"]["hwmon"]["chips"]
+        assert chips == [
+            {"chip_name": "it8696", "sysfs_chip_name": "it8696_a008090a"},
+            {"chip_name": "nct6799", "sysfs_chip_name": ""},
+        ]
+
     def test_export_without_state(self, tmp_path):
         svc = DiagnosticsService(state=None)
         bundle_path = tmp_path / "support.json"

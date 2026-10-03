@@ -94,6 +94,47 @@ class TestLookupChipGuidance:
         assert g.driver_name == driver
         assert g.in_mainline is True
 
+    # `DC-db`: every hwmon name these mainline drivers publish (read from each
+    # driver's source, 2026-10-03) resolves to the driver the daemon's corrected
+    # `expected_driver_for_chip` names. The table had no entry for any of them,
+    # so the page said "Unknown chip" for a chip the daemon recognised.
+    @pytest.mark.parametrize(
+        ("chip", "driver"),
+        [
+            ("f8000", "f71882fg"),
+            ("f81865f", "f71882fg"),
+            ("f81866a", "f71882fg"),
+            ("f81768d", "f71882fg"),
+            ("w83627ehf", "w83627ehf"),
+            ("w83627dhg", "w83627ehf"),
+            ("w83627uhg", "w83627ehf"),
+            ("w83667hg", "w83627ehf"),
+            ("w83627hf", "w83627hf"),
+            ("w83627thf", "w83627hf"),
+            ("w83637hf", "w83627hf"),
+            ("w83687thf", "w83627hf"),
+            ("w83697hf", "w83627hf"),
+            ("smsc47b397", "smsc47b397"),
+            ("smsc47m1", "smsc47m1"),
+            ("smsc47m2", "smsc47m1"),
+            # A separate I2C driver the `smsc47m` prefix must not claim.
+            ("smsc47m192", "smsc47m192"),
+            ("dme1737", "dme1737"),
+            ("sch311x", "dme1737"),
+            ("sch5027", "dme1737"),
+            ("sch5127", "dme1737"),
+            ("pc87360", "pc87360"),
+            ("pc87366", "pc87360"),
+            ("pc87427", "pc87427"),
+        ],
+    )
+    def test_legacy_superio_families_match_the_daemon(self, chip, driver):
+        g = lookup_chip_guidance(chip)
+        assert g is not None, chip
+        assert g.driver_name == driver
+        assert g.in_mainline is True
+        assert format_driver_status(chip, loaded=True) == f"{driver} loaded (mainline kernel)"
+
     def test_generic_it87_entry_names_every_mainline_chip_it_catches(self):
         # The fallback's text lists the mainline chips it stands for. These three
         # reach it (no entry of their own) and were missing from that list.
@@ -103,6 +144,19 @@ class TestLookupChipGuidance:
         for number in ("8726", "8758", "8795"):
             assert lookup_chip_guidance(f"it{number}").chip_prefix == "it87"
             assert number in blob, number
+
+    # `BRD-o`: the generic nct679/nct677 entries told the user to disable "ACPI
+    # hardware monitoring (AMW0)" in BIOS — AMW0 is an ASUS ACPI device, not a
+    # BIOS item — and claimed MSI boards need the lax parameter, which no report
+    # supports. Both now carry the one sourced remedy instead.
+    @pytest.mark.parametrize("chip", ["nct6795", "nct6776"])
+    def test_generic_nuvoton_entries_carry_only_the_sourced_acpi_advice(self, chip):
+        g = lookup_chip_guidance(chip)
+        assert g is not None and g.chip_prefix in ("nct679", "nct677")
+        blob = " ".join([*g.bios_tips, *g.known_issues])
+        assert "acpi_enforce_resources=lax" in blob  # presence first
+        for unsourced in ("AMW0", "ACPI hardware monitoring", "MSI"):
+            assert unsourced not in blob, unsourced
 
     def test_unknown_chip_returns_none(self):
         assert lookup_chip_guidance("totally_unknown_chip") is None

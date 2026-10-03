@@ -359,6 +359,23 @@ _GB_RECLAIM_NOTE = (
     "header or an external fan controller."
 )
 
+# `BRD-o` (sourced 2026-10-03). These entries used to say "Disable ACPI hardware
+# monitoring (AMW0)" and "MSI boards may need acpi_enforce_resources=lax". AMW0
+# is an ASUS ACPI device, not a BIOS option — disabling it would remove the
+# ASUS WMI path nct6775 uses to avoid this very conflict — no vendor BIOS item
+# by that name was found, and every OpRegion-conflict report found is an ASUS
+# board. What the driver does is `nct6775-platform.c`'s
+# `acpi_check_resource_conflict()`: on a conflict it skips the device, so the
+# module loads and no hwmon device appears. Its only module parameters are
+# `force_id` and `fan_debounce`, so the system-wide parameter is the only
+# kernel-side remedy (docs/19 § ACPI conflicts says the same).
+_NCT6775_ACPI_CONFLICT = (
+    "If nct6775 loads but no sensors appear and dmesg reports a range that "
+    "'conflicts with OpRegion', firmware ACPI has reserved the chip's I/O ports. "
+    "nct6775 has no driver-local override, so the only kernel-side remedy is the "
+    "system-wide 'acpi_enforce_resources=lax' kernel parameter."
+)
+
 CHIP_GUIDANCE_DB: list[ChipGuidance] = [
     # DEC-106: narrower nct679x entries take precedence over the generic
     # nct679 fallthrough below thanks to longest-prefix matching in
@@ -438,14 +455,16 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         driver_package="linux (built-in)",
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/nct6775.html",
         bios_tips=[
-            "Disable ACPI hardware monitoring (AMW0) if the driver fails to bind.",
             "Under nct6775 the pwm files are always writable and the daemon sets "
             "manual mode itself — no BIOS setting unlocks them. If the firmware "
             "keeps taking a header back, see this board's notes.",
         ],
         known_issues=[
-            "ASUS boards may have ACPI OpRegion conflicts on I/O ports 0x0290-0x0299.",
-            "MSI boards may need 'acpi_enforce_resources=lax' kernel parameter.",
+            "ASUS boards may have ACPI OpRegion conflicts on I/O ports "
+            "0x0290-0x0299. On the ASUS boards the driver's WMI tables list, a "
+            "current kernel reads the chip through ASUS WMI instead and needs no "
+            "kernel parameter.",
+            _NCT6775_ACPI_CONFLICT,
         ],
         notes="Nuvoton NCT679x series — widely supported in mainline kernel.",
     ),
@@ -455,9 +474,7 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
         in_mainline=True,
         driver_package="linux (built-in)",
         driver_url="https://www.kernel.org/doc/html/latest/hwmon/nct6775.html",
-        bios_tips=[
-            "Disable ACPI hardware monitoring if the driver fails to bind.",
-        ],
+        known_issues=[_NCT6775_ACPI_CONFLICT],
         notes="Nuvoton NCT677x series — mainline kernel support.",
     ),
     ChipGuidance(
@@ -984,6 +1001,179 @@ CHIP_GUIDANCE_DB: list[ChipGuidance] = [
             ("f71872", "F71872F"),
         )
     ],
+    # `DC-db` (DEC-473): the families the daemon's `expected_driver_for_chip`
+    # maps and this table did not, so a chip the daemon names read "Unknown
+    # chip". Prefixes mirror the daemon's; every name and note below was checked
+    # against the mainline driver source and its docs.kernel.org page on
+    # 2026-10-03. Two daemon prefixes are deliberately NOT mirrored: `sch5307`
+    # and `sch5317` (smsc47b397 publishes "smsc47b397" for those parts, so no
+    # chip ever reports them).
+    #
+    # Fintek, beyond `f718`: the F8000 and the F81xxx parts on f71882fg.
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="f71882fg",
+            in_mainline=True,
+            driver_package="linux (built-in)",
+            driver_url="https://docs.kernel.org/hwmon/f71882fg.html",
+            known_issues=list(issues),
+            notes=f"Fintek {label} — mainline kernel support, in the f71882fg driver.",
+        )
+        for prefix, label, issues in (
+            (
+                "f8000",
+                "F8000",
+                (
+                    "Manual pwm mode works on this chip only while the channel is "
+                    "in RPM mode, and fan/PWM channel 3 is always automatic "
+                    "(kernel f71882fg documentation).",
+                ),
+            ),
+            ("f818", "F81865F / F81866A", ()),
+            ("f81768", "F81768D", ()),
+        )
+    ],
+    # Winbond.
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="w83627ehf",
+            in_mainline=True,
+            driver_package="linux (built-in)",
+            driver_url="https://docs.kernel.org/hwmon/w83627ehf.html",
+            notes=f"Winbond {label} — mainline kernel support, in the w83627ehf driver.",
+        )
+        for prefix, label in (
+            ("w83627ehf", "W83627EHF/EHG"),
+            ("w83627dhg", "W83627DHG / DHG-P"),
+            ("w83627uhg", "W83627UHG"),
+            ("w83667hg", "W83667HG / HG-B"),
+        )
+    ],
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="w83627hf",
+            in_mainline=True,
+            driver_package="linux (built-in)",
+            driver_url="https://docs.kernel.org/hwmon/w83627hf.html",
+            known_issues=[
+                "The plain W83627HF publishes no pwm_enable file — the driver "
+                "creates one only for the THF, 637HF, 687THF and 697HF parts.",
+                "The kernel documentation advises loading the driver with "
+                "'init=0' if the computer crashes when the module loads.",
+            ],
+            notes=f"Winbond {label} — mainline kernel support, in the w83627hf driver.",
+        )
+        for prefix, label in (
+            ("w83627hf", "W83627HF"),
+            ("w83627thf", "W83627THF"),
+            ("w83637hf", "W83637HF"),
+            ("w83687thf", "W83687THF"),
+            ("w83697hf", "W83697HF"),
+        )
+    ],
+    # SMSC.
+    ChipGuidance(
+        chip_prefix="smsc47b397",
+        driver_name="smsc47b397",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://docs.kernel.org/hwmon/smsc47b397.html",
+        known_issues=[
+            "Monitoring only: the driver exposes temperatures and fan "
+            "tachometers and no PWM output, so these fans cannot be controlled.",
+        ],
+        notes=(
+            "SMSC LPC47B397-NC / SCH5307-NS / SCH5317 (all reported as "
+            "smsc47b397) — mainline kernel support."
+        ),
+    ),
+    ChipGuidance(
+        chip_prefix="smsc47m",
+        driver_name="smsc47m1",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://docs.kernel.org/hwmon/smsc47m1.html",
+        known_issues=[
+            "The driver creates fan and pwm files only for the pins the chip's "
+            "configuration (normally set by the BIOS) enables, so a missing "
+            "channel is a firmware setting, not a fault.",
+            "pwmN_enable accepts only 0 or 1 here.",
+        ],
+        notes=(
+            "SMSC LPC47B27x, LPC47M10x/M112/M13x/M14x/M15x/M192/M997 (reported "
+            "as smsc47m1) and LPC47M292 (smsc47m2) — mainline kernel support."
+        ),
+    ),
+    # Longer than "smsc47m", so `lookup_chip_guidance` picks it first.
+    ChipGuidance(
+        chip_prefix="smsc47m192",
+        driver_name="smsc47m192",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://docs.kernel.org/hwmon/smsc47m192.html",
+        known_issues=[
+            "Monitoring only: voltages and temperatures. The kernel "
+            "documentation sends fan control on these chips to the smsc47m1 "
+            "driver.",
+        ],
+        notes=(
+            "SMSC LPC47M15x / LPC47M192 / LPC47M292 / LPC47M997 "
+            "hardware-monitoring block (I2C) — mainline kernel support."
+        ),
+    ),
+    *[
+        ChipGuidance(
+            chip_prefix=prefix,
+            driver_name="dme1737",
+            in_mainline=True,
+            driver_package="linux (built-in)",
+            driver_url="https://docs.kernel.org/hwmon/dme1737.html",
+            known_issues=[
+                "pwmN_enable 0 drives the fan output at 100 % (it does not stop "
+                "it); 1 is manual and 2 automatic.",
+            ],
+            notes=f"SMSC {label} — mainline kernel support, in the dme1737 driver.",
+        )
+        for prefix, label in (
+            ("dme1737", "DME1737"),
+            ("sch311", "SCH311x"),
+            ("sch5027", "SCH5027"),
+            ("sch5127", "SCH5127"),
+        )
+    ],
+    # National Semiconductor.
+    ChipGuidance(
+        chip_prefix="pc8736",
+        driver_name="pc87360",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://docs.kernel.org/hwmon/pc87360.html",
+        known_issues=[
+            "The driver publishes no pwm_enable file, and a pwm file only for a "
+            "fan whose control the chip's configuration enables.",
+            "The kernel documentation warns that a low PWM value, even a non-zero "
+            "one, can stop a fan and cause irreversible damage.",
+        ],
+        notes=(
+            "National Semiconductor PC87360/363/364/365/366 — mainline kernel "
+            "support, in the pc87360 driver."
+        ),
+    ),
+    ChipGuidance(
+        chip_prefix="pc87427",
+        driver_name="pc87427",
+        in_mainline=True,
+        driver_package="linux (built-in)",
+        driver_url="https://docs.kernel.org/hwmon/pc87427.html",
+        known_issues=[
+            "Fan control is only partly supported: a header can be returned to "
+            "automatic mode only if automatic was its original setting.",
+        ],
+        notes="National Semiconductor PC87427 — mainline kernel support.",
+    ),
     ChipGuidance(
         chip_prefix="sch5627",
         driver_name="sch5627",

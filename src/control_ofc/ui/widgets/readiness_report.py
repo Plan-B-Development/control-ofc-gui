@@ -621,11 +621,18 @@ def gpu_verify_problems(result: GpuVerifyResult) -> list[dict]:
         },
         "pwm_enable_reverted": {
             "key": "gpu_verify_pwm_reverted",
-            "label": "BIOS/EC reclaimed GPU fan control",
+            # `BRD-o`: `pwm1_enable` reads back the card's own driver/SMU state,
+            # so motherboard firmware is not a cause (this text used to blame a
+            # BIOS "Smart Fan" option). A read of 0 is full speed, not automatic.
+            "label": "GPU fan left manual mode",
             "fix": (
-                "pwm1_enable reverted to automatic during the test. Disable any "
-                "vendor 'Smart Fan' / EC fan-control option in firmware setup, "
-                "then re-test."
+                "pwm1_enable changed from manual during the test, so something "
+                "other than this test changed the card's fan mode. The usual cause "
+                "is another GPU fan tool (for example LACT, CoreCtrl or "
+                "amdgpu-fan): stop it, then re-test. The amdgpu driver also hands "
+                "the fan back to the card's own automatic control when the GPU "
+                "re-initialises (resume from suspend, a GPU reset). Motherboard "
+                "BIOS fan settings do not drive a graphics card's fan."
             ),
         },
         "write_failed": {

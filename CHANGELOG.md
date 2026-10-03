@@ -36,6 +36,18 @@
 - **The driver-alarm detail is readable without a mouse, and fits the screen** (`ALERT-b`, `ALERT-c`). A screen
   reader now hears which fan alarmed and its low-speed limit, and the tooltip is a few short lines instead of
   one line about 130 characters wide.
+- **Hardware guidance for older Super-I/O chips** (DEC-473, `DC-db`). Winbond (`w83627ehf`, `w83627hf`),
+  SMSC (`smsc47b397`, `smsc47m1`, `smsc47m192`, `dme1737`), National (`pc87360`, `pc87427`) and the Fintek
+  F8000 / F81xxx chips now show their driver and kernel-documented caveats instead of *Unknown chip* — for
+  example that `smsc47b397` is monitoring-only and that a low PWM value can stop a `pc87360` fan.
+- **The GPU fan test no longer blames motherboard firmware** (DEC-473, `BRD-o`). When a pre-RDNA3 card's
+  `pwm1_enable` leaves manual mode during the test, the result now reads *GPU fan left manual mode* and points
+  at another GPU fan tool (LACT, CoreCtrl, amdgpu-fan) or a GPU re-initialising, instead of a BIOS "Smart Fan"
+  option, which does not drive a graphics card's fan.
+- **No more advice to disable "ACPI hardware monitoring" in BIOS** (DEC-473, `BRD-o`). No such BIOS option was
+  found on any board; the Nuvoton guidance and the ACPI-conflict card now name the sourced remedy
+  (`acpi_enforce_resources=lax`, or nothing on the ASUS boards the kernel reads through WMI), and the unsourced
+  "MSI boards may need `acpi_enforce_resources=lax`" tip is gone.
 
 ### Changed
 
@@ -49,6 +61,9 @@
   (DEC-471, `ROLE-c`), as the Fan Wizard already did — and does not ask at all if naming the new pump fails,
   because nothing is removed then. Configure AIO, the Fan Wizard and **Set role…** now share one way of
   writing roles, and none of them sends a role change that would change nothing.
+- **The support bundle names each chip as sysfs published it** (DEC-473, `BRD-x`). `hardware_diagnostics.hwmon.chips`
+  is now a list of `{chip_name, sysfs_chip_name}` objects instead of plain names, so a bundle from an it87 v2.0
+  board shows its suffixed naming is in effect; the PWM Test Report's chip records carry `sysfs_chip_name` too.
 
 ## [3.3.0] — 2026-10-01
 

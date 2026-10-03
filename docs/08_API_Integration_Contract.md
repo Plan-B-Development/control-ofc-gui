@@ -1631,8 +1631,10 @@ and the GUI parser defaults to `[]`:
   From daemon 3.0.0 (DEC-442) `chips_detected[].chip_name` is canonical, so an
   it87 v2.0 chip (`it8696_a008090a`, 2026-09-09 builds) matches; each entry also
   carries `sysfs_chip_name`, the name as sysfs published it, for display and
-  support use. The GUI does not read it yet (register row `BRD-x`); it reads the
-  `/hwmon/headers` copy. On an older daemon the suffixed names do not match and
+  support use. The GUI reads it into `HwmonChipInfo.sysfs_chip_name` and writes it
+  beside `chip_name` in the support bundle's `hardware_diagnostics.hwmon.chips`
+  objects and the PWM Test Report's `environment.chips` (DEC-473, `BRD-x`);
+  `wire_fields.json` pins the struct in both repos. On an older daemon the suffixed names do not match and
   the warning is a false alarm, which the GUI's copy then says.
 - `kernel_detected_chips: list[str]` — best-effort kernel-level chip
   detection parsed from `/dev/kmsg` `it87:` lines. **In the shipped

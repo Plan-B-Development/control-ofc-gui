@@ -445,7 +445,7 @@ _GPU_OUTCOMES: dict[str, GpuVerifyOutcome] = {
         "CriticalChip",
     ),
     "pwm_enable_reverted": GpuVerifyOutcome(
-        "The BIOS/EC reclaimed GPU fan control during the test.",
+        "The GPU fan left manual mode during the test.",
         "CriticalChip",
     ),
     "write_failed": GpuVerifyOutcome(

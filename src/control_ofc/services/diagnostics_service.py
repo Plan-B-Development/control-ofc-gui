@@ -789,7 +789,13 @@ class DiagnosticsService(QObject):
                     "bios_version": hd.board.bios_version,
                 },
                 "hwmon": {
-                    "chips": [c.chip_name for c in hd.hwmon.chips_detected],
+                    # `BRD-x`: each chip with the name sysfs published, so a
+                    # bundle from an it87 v2.0 board shows its suffixed naming
+                    # (DEC-442) is in effect. "" from a pre-DEC-442 daemon.
+                    "chips": [
+                        {"chip_name": c.chip_name, "sysfs_chip_name": c.sysfs_chip_name}
+                        for c in hd.hwmon.chips_detected
+                    ],
                     "total_headers": hd.hwmon.total_headers,
                     "writable_headers": hd.hwmon.writable_headers,
                     "enable_revert_counts": hd.hwmon.enable_revert_counts,

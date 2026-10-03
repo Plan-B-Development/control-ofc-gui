@@ -401,7 +401,7 @@ enrichment ONLY — they never provide PWM writes.
 
 If `nct6775` fails to bind because of an ACPI conflict on I/O ports
 `0x0290-0x0299`, add the kernel parameter `acpi_enforce_resources=lax`
-(how: [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)) or disable "ACPI Hardware Monitor" in BIOS. Since Linux
+(how: [Hardware Compatibility § Setting a driver option or a kernel parameter](19_Hardware_Compatibility.md#setting-a-driver-option-or-a-kernel-parameter)). Since Linux
 5.16 the driver can read supported ASUS boards through an ASUS WMI
 access path (`access_asuswmi`) that sidesteps the port reservation,
 often removing the need for `acpi_enforce_resources=lax` (this is a WMI
@@ -809,8 +809,13 @@ conflicts. Remediation options:
    the chip through an ASUS WMI access path (`access_asuswmi`), sidestepping the
    conflict without kernel parameters. (A WMI sensor-read path, not an "ACPI
    mutex" — the separately-proposed ACPI-mutex patch was never merged.)
-2. **Fallback:** Add `acpi_enforce_resources=lax` to kernel parameters.
-3. **BIOS:** Disable "ACPI Hardware Monitor" if the option is available.
+2. **Fallback:** Add `acpi_enforce_resources=lax` to kernel parameters —
+   `nct6775` has no driver-local override, so this is the only kernel-side remedy.
+
+(This list used to offer "disable 'ACPI Hardware Monitor' in BIOS". No such BIOS
+item was found on any vendor's board, and the ACPI device that claims the ports
+on ASUS boards, `AMW0`, is the same one that hosts the WMI path in option 1 —
+`BRD-o`, DEC-473.)
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 

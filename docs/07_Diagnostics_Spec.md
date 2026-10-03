@@ -405,8 +405,9 @@ zip. It contains:
   and the directory overrides
 - `profiles` — each profile's id, name and control/curve counts (not the curves)
 - `themes` — the active theme and the custom theme names
-- `gpu` and `hardware_diagnostics` (board, hwmon chips and header counts, enable-revert
-  counts), when known
+- `gpu` and `hardware_diagnostics` (board; hwmon chips, each as `{chip_name,
+  sysfs_chip_name}` since DEC-473 — the second is `""` from a daemon older than 3.0.0;
+  header counts; enable-revert counts), when known
 - `journal` — the last 100 lines of `journalctl -u control-ofc-daemon`
 - `kernel_log_amdgpu` — up to 200 `amdgpu`/`smu` kernel log lines from this boot (DEC-098)
 - `missing_sections` — what could not be collected, and why

@@ -430,8 +430,9 @@ def build_acpi_detail(diag: HardwareDiagnosticsResult) -> str | None:
         )
     else:
         lines.append(
-            "Tip: add 'acpi_enforce_resources=lax' to kernel parameters, "
-            "or disable ACPI hardware monitoring in BIOS."
+            # `BRD-o`: no BIOS "ACPI hardware monitoring" option is known on any
+            # vendor's board, so that half of this tip was dropped.
+            "Tip: add 'acpi_enforce_resources=lax' to kernel parameters."
         )
     return "<br>".join(lines)
 

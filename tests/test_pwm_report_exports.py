@@ -558,3 +558,17 @@ def test_environment_records_the_observed_bound_driver():
     env = d.extract_environment(snap, {})
     assert [c["bound_driver"] for c in env["chips"]] == ["nct6683", None]
     assert env["chips"][0]["expected_driver"] == "nct6687"
+
+
+def test_environment_records_the_sysfs_chip_name():
+    # `BRD-x`: the name sysfs published (DEC-442) rides beside the canonical one,
+    # and an older daemon's silence is recorded as None.
+    from control_ofc.services.pwm_report import document as d
+
+    chips = [
+        {"chip_name": "it8696", "sysfs_chip_name": "it8696_a008090a"},
+        {"chip_name": "nct6799"},
+    ]
+    snap = bundle(fans=[], headers=[], hardware={"hwmon": {"chips_detected": chips}})
+    env = d.extract_environment(snap, {})
+    assert [c["sysfs_chip_name"] for c in env["chips"]] == ["it8696_a008090a", None]

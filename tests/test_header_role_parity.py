@@ -48,6 +48,7 @@ from pathlib import Path
 import pytest
 
 from control_ofc.api.models import Capabilities, HwmonHeader
+from control_ofc.knowledge.sensor_knowledge import _LIQUID_COOLER_CHIPS, is_liquid_cooler_chip
 from control_ofc.services.pump_protection import header_is_pump_protected
 
 FIXTURE = Path(__file__).parent / "fixtures" / "header_role_classification.json"
@@ -107,6 +108,27 @@ def test_header_pump_protection_parity(case):
         stop_permitted=None,
     )
     assert header_is_pump_protected(header, _caps()) == case["pump_protected"], case["name"]
+
+
+@pytest.mark.parametrize("case", _CASES, ids=[c["name"] for c in _CASES])
+def test_gui_cooler_chip_list_matches_the_oracle(case):
+    """``BRD-r``: the GUI's cooler-chip list agrees with the oracle's ``is_aio``.
+
+    The test above consumes ``is_aio`` as an input, so it cannot notice the GUI's
+    list drifting. The daemon asserts the same equality against its own
+    ``aio::is_liquid_cooler_chip``, so a chip added to one side's list and not
+    the other's reds exactly one of the two repos — provided the oracle has a
+    vector for it, which the next test enforces.
+    """
+    assert is_liquid_cooler_chip(case["chip_name"]) == case["is_aio"], case["name"]
+
+
+def test_every_gui_cooler_chip_has_an_oracle_vector():
+    """The equality above only pins chips the oracle names. Require a vector
+    for every chip on the GUI's list, so the list cannot outgrow the oracle."""
+    named = {c["chip_name"].lower() for c in _CASES}
+    assert _LIQUID_COOLER_CHIPS, "an empty list would pass vacuously"
+    assert sorted(_LIQUID_COOLER_CHIPS - named) == []
 
 
 def test_the_oracle_contains_both_answers():

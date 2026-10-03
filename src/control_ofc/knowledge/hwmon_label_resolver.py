@@ -466,7 +466,8 @@ def load_libsensors_configs(
     """Load and parse all installed libsensors configs.
 
     Args:
-        paths: Override the default search list (used by tests).
+        paths: Override the default search list (used by tests). ``None``
+            reads :data:`LIBSENSORS_CONFIG_PATHS`; ``[]`` reads nothing.
         force: Re-read even if cached.
 
     Returns:
@@ -478,7 +479,10 @@ def load_libsensors_configs(
     if paths is None and _libsensors_cache is not None and not force:
         return _libsensors_cache
     chips: list[LibsensorsChipLabels] = []
-    search_paths = paths or LIBSENSORS_CONFIG_PATHS
+    # `BRD-p`: only ``None`` means "the system defaults". An empty list is a
+    # caller saying "no files", and `paths or …` used to read the host's
+    # `/etc/sensors.d` for it, because ``[]`` is falsy.
+    search_paths = paths if paths is not None else LIBSENSORS_CONFIG_PATHS
     for pattern in search_paths:
         for path in _expand_glob(pattern):
             try:

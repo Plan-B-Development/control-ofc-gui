@@ -156,7 +156,7 @@ def test_gpu_verify_problems_empty_for_ok(verdict):
     [
         ("curve_not_applied", "gpu_verify_curve_not_applied", "ppfeaturemask"),
         ("no_rpm_effect", "gpu_verify_no_rpm_effect", "kernel"),
-        ("pwm_enable_reverted", "gpu_verify_pwm_reverted", "Smart Fan"),
+        ("pwm_enable_reverted", "gpu_verify_pwm_reverted", "another GPU fan tool"),
         ("write_failed", "gpu_verify_write_failed", "ppfeaturemask"),
     ],
 )
@@ -252,7 +252,7 @@ class TestGpuVerifyResultRendering:
             ("rpm_unavailable", "WarningChip", "no"),
             ("curve_not_applied", "CriticalChip", "ignored"),
             ("no_rpm_effect", "CriticalChip", "did not respond"),
-            ("pwm_enable_reverted", "CriticalChip", "reclaimed"),
+            ("pwm_enable_reverted", "CriticalChip", "left manual mode"),
             ("write_failed", "CriticalChip", "rejected"),
         ],
     )
@@ -380,3 +380,15 @@ class TestGpuVerifyWorkerLifecycle:
         worker = _GpuVerifyWorker("/tmp/x.sock")
         assert hasattr(worker, "verify_ok")
         assert hasattr(worker, "verify_error")
+
+
+def test_gpu_reverted_advice_blames_no_motherboard_firmware():
+    """`BRD-o`: `pwm1_enable` reads back the card's own driver/SMU state, so the
+    advice must not send the user to a BIOS "Smart Fan" option — the fix text
+    once did. Both the problem card and the verify headline are checked."""
+    from control_ofc.services.verify_view import _GPU_OUTCOMES
+
+    (prob,) = gpu_verify_problems(GpuVerifyResult(result="pwm_enable_reverted"))
+    assert "another GPU fan tool" in prob["fix"]  # presence first
+    for text in (prob["label"], prob["fix"], _GPU_OUTCOMES["pwm_enable_reverted"].summary):
+        assert "Smart Fan" not in text and "BIOS/EC" not in text, text

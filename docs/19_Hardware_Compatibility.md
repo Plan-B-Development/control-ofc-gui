@@ -237,7 +237,7 @@ reading `/sys/class/hwmon/*/name` or matching a board note.
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
 | F71805F, F71806F, F71872F | `f71805f` | Yes | linux (built-in) |
-| F71882FG and the rest of the F718xx series, F8000, F818xx | `f71882fg` | Yes | linux (built-in) |
+| F71882FG and the rest of the F718xx series, F8000, F81865F/F81866A, F81768D | `f71882fg` | Yes | linux (built-in) |
 
 ### Winbond
 
@@ -251,7 +251,8 @@ reading `/sys/class/hwmon/*/name` or matching a board note.
 | Chip Series | Kernel Driver | Mainline | Package |
 |-------------|--------------|----------|---------|
 | LPC47B397-NC, SCH5307-NS, SCH5317 | `smsc47b397` | Yes | linux (built-in) |
-| LPC47M10x/M11x/M13x/M14x/M15x/M19x, LPC47M292 | `smsc47m1` | Yes | linux (built-in) |
+| LPC47B27x, LPC47M10x/M112/M13x/M14x/M15x/M192/M997, LPC47M292 | `smsc47m1` | Yes | linux (built-in) |
+| LPC47M15x/M192/M292/M997 hardware-monitoring block (I2C; voltages and temperatures only — fan control is `smsc47m1`) | `smsc47m192` | Yes | linux (built-in) |
 | DME1737, SCH311x, SCH5027, SCH5127 | `dme1737` | Yes | linux (built-in) |
 | SCH5627 | `sch5627` | Yes | linux (built-in) |
 | SCH5636 | `sch5636` | Yes | linux (built-in) |
@@ -541,8 +542,11 @@ B850, B840, B860 or Z890 board on them.
 **Remediation (only if the bind fails):**
 - Add the kernel parameter `acpi_enforce_resources=lax` (see [Setting a driver option or a kernel parameter](#setting-a-driver-option-or-a-kernel-parameter)) — `nct6775` has no
   driver-local escape (its only module parameters are `force_id` and
-  `fan_debounce`), so the system-wide parameter is the only option, OR
-- Disable "ACPI Hardware Monitor" in BIOS (if available)
+  `fan_debounce`), so the system-wide parameter is the only option.
+
+(This list used to offer "disable 'ACPI Hardware Monitor' in BIOS". No such BIOS
+item was found on any vendor's board, and the ACPI device that claims the ports
+on ASUS boards, `AMW0`, also hosts the WMI access path above — `BRD-o`, DEC-473.)
 
 **BIOS.** No setting makes the `nct6775` PWM files writable — they already are,
 and the daemon switches each header to manual itself. *Q-Fan Tuning* is a

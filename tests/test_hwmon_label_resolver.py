@@ -504,6 +504,31 @@ class TestCache:
         third = r.load_libsensors_configs(force=True)
         assert third[0].labels["fan1"] == "REWRITTEN"
 
+    def test_empty_paths_read_no_files(self, tmp_path, monkeypatch):
+        """``BRD-p``: ``paths=[]`` means "no libsensors files", not "the system
+        defaults". The loader used to read ``paths or LIBSENSORS_CONFIG_PATHS``,
+        so an empty list was falsy and fell through to the host's configs."""
+        from control_ofc.knowledge import hwmon_label_resolver as r
+
+        cfg = tmp_path / "system.conf"
+        cfg.write_text('chip "it8696-isa-0a40"\n    label fan1 "HOST_FAN"\n')
+        monkeypatch.setattr(r, "LIBSENSORS_CONFIG_PATHS", [str(cfg)])
+        # Presence first: the stand-in "system" config really is readable, so
+        # the empty result below is the empty list's doing.
+        assert r.load_libsensors_configs(paths=None, force=True)[0].labels["fan1"] == "HOST_FAN"
+
+        assert r.load_libsensors_configs(paths=[]) == []
+        assert (
+            resolve_hwmon_header_label(
+                sysfs_label="",
+                chip_name="it8696",
+                sysfs_chip_name="it8696",
+                pwm_index=1,
+                sensors_paths=[],
+            )
+            == "pwm1"
+        )
+
     def test_explicit_paths_bypass_cache(self, tmp_path):
         """Tests pass ``paths=`` so they never read or pollute the
         process cache."""

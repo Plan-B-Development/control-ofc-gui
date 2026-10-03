@@ -1376,6 +1376,11 @@ class SensorHistory:
 @dataclass
 class HwmonChipInfo:
     chip_name: str = ""
+    # DEC-442: the chip's hwmon `name` exactly as sysfs published it — differs
+    # from the canonical `chip_name` only on an it87 v2.0 Gigabyte chip
+    # (`it8696_a008090a`). Display and support-report only (`BRD-x`). Empty from
+    # a daemon older than DEC-442.
+    sysfs_chip_name: str = ""
     device_id: str = ""
     # The driver the chip NAME suggests — a guess, wrong in both directions for
     # the nct668x family, whose two drivers share hwmon names (`BRD-g`).

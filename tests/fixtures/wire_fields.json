@@ -493,6 +493,32 @@
       "note": "WIRE-ag / DEC-331. Pinned from the first release that publishes it rather than after a divergence: WIRE-h is what an unpinned new struct costs. `label` is genuinely read (it is the Rail column) but is excluded from must_be_read by test_must_be_read_names_are_distinctive \u2014 the name is too common to prove a read site; tests/test_wire_ag_voltages.py asserts it at the call site instead. `id` has no GUI consumer yet, and the wire identity is modelled anyway because the model mirrors the wire; `channel` is read only as a display sort key. VOLT-b / DEC-464 added `board_label`, `board_multiplier` and `board_unmapped` (the board voltage catalogue), all omitted when the catalogue says nothing."
     },
     {
+      "daemon": "HwmonChipInfo",
+      "gui": "HwmonChipInfo",
+      "endpoints": [
+        "GET /diagnostics/hardware .hwmon.chips_detected"
+      ],
+      "fields": [
+        "chip_name",
+        "sysfs_chip_name",
+        "device_id",
+        "expected_driver",
+        "bound_driver",
+        "in_mainline_kernel",
+        "header_count"
+      ],
+      "must_be_read": [
+        "chip_name",
+        "sysfs_chip_name",
+        "device_id",
+        "expected_driver",
+        "bound_driver",
+        "in_mainline_kernel",
+        "header_count"
+      ],
+      "note": "BRD-x / DEC-473. Enrolled when the support bundle began reading sysfs_chip_name (DEC-442's field), so a daemon rename of any chip field reds both repos. chip_name, sysfs_chip_name and device_id are shared with PwmHeaderEntry, so the name-based read check cannot attribute their reads to this struct; tests/test_diagnostics_service.py asserts the bundle's chip objects at the call site instead. bound_driver is omitted when no driver link was read."
+    },
+    {
       "daemon": "PreflightReport",
       "gui": "PreflightReport",
       "endpoints": [

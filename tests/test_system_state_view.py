@@ -525,3 +525,25 @@ def test_thermal_state_maps_cover_the_wire_vocabulary():
             f"{name} carries {sorted(keys - wire)}, which no daemon emits; "
             "invented keys hide the fact that a real one is unhandled"
         )
+
+
+@pytest.mark.parametrize(
+    ("driver", "remedy"),
+    [("nct6775", "acpi_enforce_resources=lax"), ("it87", "ignore_resource_conflict=1")],
+)
+def test_acpi_card_tip_names_a_remedy_and_no_bios_monitoring_option(driver, remedy):
+    """`BRD-o`: the card's tip used to offer "disable ACPI hardware monitoring in
+    BIOS" — an option found on no vendor's board. Presence first (each branch
+    still names its remedy), then the absence on both branches."""
+    from control_ofc.services.system_state_view import build_acpi_detail
+
+    diag = HardwareDiagnosticsResult(
+        acpi_conflicts=[
+            AcpiConflictInfo(
+                io_range="0x0290-0x0299", claimed_by="\\AMW0.SHWM", conflicts_with_driver=driver
+            )
+        ]
+    )
+    detail = build_acpi_detail(diag)
+    assert detail is not None and remedy in detail
+    assert "hardware monitoring" not in detail.lower()

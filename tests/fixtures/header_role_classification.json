@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "description": "Cross-stack HWMON HEADER role-classification agreement vectors (AUD3-c, DEC-322). The daemon's hwmon::roles::classify_header_role + is_pump_protected and the GUI's services.pump_protection.header_is_pump_protected MUST agree on every case. This pins the classifier that decides whether the fan wizard offers to STOP a header, which is why it is a safety oracle and not a tidiness one: if the daemon learns a new pump-classifying label (/ofc:superio-curator exists to add exactly that) and the GUI's hand-mirrored copy does not, the GUI concludes 'not protected' and offers to stop a real pump. Inference only: every case has assigned = None, because a user assignment is runtime.toml state neither side infers. The GUI reconstruction is the FALLBACK path (a daemon >= 2.31.0 publishes stop_permitted and the GUI prefers it), so these cases are driven with stop_permitted = null. is_aio is an INPUT for the GUI, which cannot see chip_name; the daemon derives it from chip_name via aio::is_liquid_cooler_chip and the daemon test asserts that derivation too, so the field cannot drift from the chip list. This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures) and is gated by parity.yml.",
+  "description": "Cross-stack HWMON HEADER role-classification agreement vectors (AUD3-c, DEC-322). The daemon's hwmon::roles::classify_header_role + is_pump_protected and the GUI's services.pump_protection.header_is_pump_protected MUST agree on every case. This pins the classifier that decides whether the fan wizard offers to STOP a header, which is why it is a safety oracle and not a tidiness one: if the daemon learns a new pump-classifying label (/ofc:superio-curator exists to add exactly that) and the GUI's hand-mirrored copy does not, the GUI concludes 'not protected' and offers to stop a real pump. Inference only: every case has assigned = None, because a user assignment is runtime.toml state neither side infers. The GUI reconstruction is the FALLBACK path (a daemon >= 2.31.0 publishes stop_permitted and the GUI prefers it), so these cases are driven with stop_permitted = null. is_aio is an INPUT for the GUI reconstruction, which cannot see chip_name; the daemon derives it from chip_name via aio::is_liquid_cooler_chip, and BOTH tests assert that derivation (the GUI's against sensor_knowledge.is_liquid_cooler_chip, BRD-r), so neither chip list can drift from this file. That only pins a chip the file names, so every chip on the cooler list has a vector here. This file must be byte-identical in both repos (daemon/tests/fixtures and the GUI tests/fixtures) and is gated by parity.yml.",
   "cases": [
     {
       "name": "synthesised_placeholder_channel_1",
@@ -292,6 +292,56 @@
       "is_aio": true,
       "role": "radiator_fan",
       "pump_protected": false
+    },
+    {
+      "name": "cooler_list_member_z53",
+      "why": "BRD-r: every chip on the cooler list has a vector, because the is_aio assertion on each side only pins a chip this file names. Channel 1 of a listed cooler with no real label is the pump by chip mapping.",
+      "chip_name": "z53",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_list_member_kraken2023elite",
+      "why": "BRD-r: every chip on the cooler list has a vector, because the is_aio assertion on each side only pins a chip this file names. Channel 1 of a listed cooler with no real label is the pump by chip mapping.",
+      "chip_name": "kraken2023elite",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_list_member_kraken2",
+      "why": "BRD-r: every chip on the cooler list has a vector, because the is_aio assertion on each side only pins a chip this file names. Channel 1 of a listed cooler with no real label is the pump by chip mapping. nzxt-kraken2 publishes no pwm attribute (the cooler is monitor-only, per aio.rs), so no real header reaches this case; it is here for the chip-list membership.",
+      "chip_name": "kraken2",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_list_member_highflownext",
+      "why": "BRD-r: every chip on the cooler list has a vector, because the is_aio assertion on each side only pins a chip this file names. Channel 1 of a listed cooler with no real label is the pump by chip mapping. This Aquacomputer device reports a coolant temperature and publishes no pwm channel (aio.rs: flow and leak devices expose no pwm), so no real header reaches this case; it is here for the chip-list membership, and the role is what the classifier answers for the input.",
+      "chip_name": "highflownext",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
+    },
+    {
+      "name": "cooler_list_member_leakshield",
+      "why": "BRD-r: every chip on the cooler list has a vector, because the is_aio assertion on each side only pins a chip this file names. Channel 1 of a listed cooler with no real label is the pump by chip mapping. This Aquacomputer device reports a coolant temperature and publishes no pwm channel (aio.rs: flow and leak devices expose no pwm), so no real header reaches this case; it is here for the chip-list membership, and the role is what the classifier answers for the input.",
+      "chip_name": "leakshield",
+      "pwm_index": 1,
+      "label": "",
+      "is_aio": true,
+      "role": "pump",
+      "pump_protected": true
     }
   ]
 }
