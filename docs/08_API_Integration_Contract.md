@@ -2513,8 +2513,9 @@ that latches the bridge. Where the daemon's curated DMI board table says this
 board's Super-I/O complement is ITE-only, no Nuvoton chip can be waiting behind
 that write, so the leg is **withheld**. That is the same curated board list the
 shipped `modprobe` guard names boards from. Since daemon 2.56.1 (DEC-424) the guard itself
-suppresses `nct6775`/`w83627ehf` on EVERY Gigabyte board, while this probe still
-withholds its leg on the listed boards only (register row `BRD-s`). The ITE legs
+suppresses `nct6775`/`w83627ehf` on EVERY Gigabyte board, and since the daemon release after
+3.5.0 (`BRD-s`) this probe withholds its leg there too: on a DMI vendor containing "GIGABYTE",
+or any board the guard declines. Earlier daemons withhold it on the listed boards only. The ITE legs
 are unaffected, so the diagnostic these boards actually need is unchanged.
 
 When a leg is withheld the response carries a `notes[]` entry naming the base

@@ -214,7 +214,8 @@ access the chip's configuration I/O ports directly to identify it. This:
 - **is not read-only.** Where no chip answers a plain read (`0xffff` or `0x0000`), the daemon writes a
   vendor unlock and exit sequence. The Nuvoton `0x87,0x87` unlock is the one
   measured latching an ITE eSPI-to-LPC bridge until a power-down at the wall, and it is
-  withheld only on boards the daemon lists as ITE-only. So the GUI asks for
+  withheld on every Gigabyte board and on boards the daemon lists as ITE-only.
+  So the GUI asks for
   explicit confirmation first;
 - **refuses the whole probe while any recognised Super-I/O driver is bound**, not
   only the port that driver owns (DEC-433). With `it87` loaded on a dual-chip
