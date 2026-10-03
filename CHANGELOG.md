@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.5.0] — 2026-10-03
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. **Set role…** on an OpenFan
+channel needs control-ofc-daemon 3.5.0; with an older daemon the *OpenFan Channels* list is not shown.
+
 ### Added
 
 - **A pump on an OpenFan channel can be protected.** The Hardware page lists *OpenFan Channels* with
