@@ -91,6 +91,33 @@ def test_a_legacy_amd_gpu_is_verify_only_and_not_controllable():
     assert is_fan_controllable(f, [], pmfw)
 
 
+def test_each_amd_gpu_fan_reads_its_own_cards_method():
+    """`GPU-b`: the Overview and the Dashboard's read-only card read the fan's
+    own card. A read-only card behind a PMFW primary used to read "PMFW curve"
+    and be offered as controllable."""
+    from control_ofc.services.fan_cards_view import is_fan_controllable
+
+    primary = AmdGpuCapability(present=True, pci_id="0000:03:00.0", fan_control_method="pmfw_curve")
+    second = AmdGpuCapability(
+        present=True,
+        pci_id="0000:0a:00.0",
+        display_label="7900XTX",
+        fan_control_method="read_only",
+    )
+    caps = Capabilities(amd_gpu=primary, amd_gpus=[primary, second])
+    fan1 = FanReading(id="amd_gpu:0000:03:00.0", source="amd_gpu", rpm=900)
+    fan2 = FanReading(id="amd_gpu:0000:0a:00.0", source="amd_gpu", rpm=900)
+    assert ov.fan_control_method(fan1, [], caps) == "PMFW curve"
+    assert ov.fan_control_method(fan2, [], caps) == "read-only"
+    assert is_fan_controllable(fan1, [], caps)
+    assert not is_fan_controllable(fan2, [], caps)
+    assert "GPU: 7900XTX\nPCI: 0000:0a:00.0" in ov.fan_row_tooltip(fan2, [], caps)
+    # An older daemon describes only the primary: the second card is unknown,
+    # not the primary's answer.
+    older = Capabilities(amd_gpu=primary)
+    assert ov.fan_control_method(fan2, [], older) == "unknown"
+
+
 def test_fan_control_method_intel_nvidia_readonly():
     assert (
         ov.fan_control_method(FanReading(id="i", source="intel_gpu", rpm=0), [], None)

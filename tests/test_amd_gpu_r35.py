@@ -151,6 +151,70 @@ class TestCapabilitiesParsing:
         assert caps.amd_gpu.present
         assert caps.amd_gpu.display_label == "9070XT"
 
+    def test_every_amd_gpu_is_parsed_and_found_by_its_own_card(self):
+        """`GPU-b`: ``devices.amd_gpus`` describes each card, so a lookup by a
+        secondary card's fan id answers with that card, not the primary."""
+        from control_ofc.api.models import parse_capabilities
+
+        primary = {
+            "present": True,
+            "display_label": "6900XT",
+            "pci_id": "0000:03:00.0",
+            "pci_bdf": "0000:03:00.0",
+            "fan_control_method": "hwmon_pwm",
+            "fan_write_supported": False,
+        }
+        caps = parse_capabilities(
+            {
+                "devices": {
+                    "amd_gpu": {**primary, "kernel_warnings": [{"id": "k", "severity": "high"}]},
+                    "amd_gpus": [
+                        primary,
+                        # canonical name only: coalesced like `amd_gpu`
+                        {
+                            "present": True,
+                            "display_label": "9070XT",
+                            "pci_bdf": "0000:2d:00.0",
+                            "fan_control_method": "pmfw_curve",
+                            "fan_write_supported": True,
+                            "kernel_warnings": [{"id": "k"}],
+                        },
+                        "not-an-object",
+                    ],
+                },
+            }
+        )
+        assert caps.amd_gpus is not None and len(caps.amd_gpus) == 2
+        second = caps.amd_gpu_for_fan("amd_gpu:0000:2d:00.0")
+        assert second is not None
+        assert second.display_label == "9070XT"
+        assert second.profile_writable
+        assert second.kernel_warnings == [], "advisories live on amd_gpu"
+        first = caps.amd_gpu_for_fan("amd_gpu:0000:03:00.0")
+        assert first is not None and not first.profile_writable
+        assert caps.amd_gpu_for_fan("amd_gpu:0000:99:00.0") is None
+        assert [w.id for w in caps.amd_gpu.kernel_warnings] == ["k"]
+
+    def test_an_older_daemon_describes_only_the_primary_card(self):
+        """Without ``devices.amd_gpus`` only the primary card is known; a second
+        card's fan is not judged by the primary's answer."""
+        from control_ofc.api.models import parse_capabilities
+
+        caps = parse_capabilities(
+            {
+                "devices": {
+                    "amd_gpu": {
+                        "present": True,
+                        "pci_id": "0000:03:00.0",
+                        "fan_control_method": "hwmon_pwm",
+                    },
+                },
+            }
+        )
+        assert caps.amd_gpus is None
+        assert caps.amd_gpu_for_fan("amd_gpu:0000:03:00.0") is caps.amd_gpu
+        assert caps.amd_gpu_for_fan("amd_gpu:0000:2d:00.0") is None
+
 
 # ---------------------------------------------------------------------------
 # Dashboard GPU card tests

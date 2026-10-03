@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
-from control_ofc.api.models import AmdGpuCapability
+from control_ofc.api.models import Capabilities
 from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.sensor_knowledge import (
     classify_sensor_with_overrides,
@@ -432,7 +432,7 @@ def build_member_candidates(
     fans,
     headers,
     *,
-    amd_gpu: AmdGpuCapability | None,
+    capabilities: Capabilities | None,
     display_name,
     fallback_name,
 ) -> list[dict]:
@@ -455,17 +455,18 @@ def build_member_candidates(
       that is permanent. Their temperature sensors stay available as curve sensors.
 
     ``display_name``/``fallback_name`` are the ``AppState`` resolvers, injected so
-    this stays headless. ``amd_gpu`` is ``None`` until capabilities arrive, and
+    this stays headless. ``capabilities`` is ``None`` until they arrive, and
     then nothing is judged. An AMD GPU no profile can drive
     (:attr:`AmdGpuCapability.profile_writable` false) is still LISTED, with its
     reason in the label, but carries ``selectable: False`` (DEC-445): the daemon
     would list a control of it as ``backend_unavailable``. It is shown rather
     than hidden because the reason is worth knowing, and on RDNA3/RDNA4 fixable
     (``ppfeaturemask``). ``(verify only)`` is a pre-RDNA3 card, whose legacy
-    ``pwm1`` verify and reset write and no engine drives. Only the card the
-    capability describes is judged (:meth:`AmdGpuCapability.describes_fan`): on a
-    machine with two AMD GPUs the other is offered unjudged, and the daemon's
-    ``backend_unavailable`` reports it if no profile can drive it (`GPU-b`).
+    ``pwm1`` verify and reset write and no engine drives. Each card is judged by
+    its own capability (:meth:`Capabilities.amd_gpu_for_fan`, `GPU-b`); a card
+    the daemon does not describe (an older daemon's secondary card) is offered
+    unjudged, and the daemon's ``backend_unavailable`` reports it if no profile
+    can drive it.
     """
     header_by_id = {h.id: h for h in headers}
     available: list[dict] = []
@@ -485,12 +486,12 @@ def build_member_candidates(
         clean_label = role_preserving_label(label, fallback, fan.source)
 
         gpu_blocked_tip = ""
-        if (
-            fan.source == "amd_gpu"
-            and amd_gpu is not None
-            and amd_gpu.describes_fan(fan.id)
-            and not amd_gpu.profile_writable
-        ):
+        amd_gpu = (
+            capabilities.amd_gpu_for_fan(fan.id)
+            if fan.source == "amd_gpu" and capabilities is not None
+            else None
+        )
+        if amd_gpu is not None and not amd_gpu.profile_writable:
             if amd_gpu.fan_control_method == "hwmon_pwm":
                 label = f"{label} (verify only)"
                 gpu_blocked_tip = (

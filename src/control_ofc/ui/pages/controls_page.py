@@ -1758,11 +1758,7 @@ class ControlsPage(QWidget):
                 self._state.hwmon_headers,
                 # None until capabilities arrive: nothing is judged unwritable
                 # on a guess.
-                amd_gpu=(
-                    self._state.capabilities.amd_gpu
-                    if self._state.capabilities is not None
-                    else None
-                ),
+                capabilities=self._state.capabilities,
                 display_name=self._state.fan_display_name,
                 fallback_name=self._state.fan_fallback_name,
             )

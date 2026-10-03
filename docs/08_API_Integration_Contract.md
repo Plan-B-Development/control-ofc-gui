@@ -167,6 +167,20 @@ Notable fields:
   both carry the same PCI BDF address during the transition window; GUI
   parsers accept either name (see DEC-042 and the 2026-04-22
   contract-mismatch resolution).
+- `devices.amd_gpus` (DEC-479, `GPU-b`, daemon ≥ 3.7.0) is an array with one entry per
+  detected AMD GPU, each the same object as `devices.amd_gpu` but describing **its own
+  card** (`present: true`, `pci_id`/`pci_bdf`, `fan_control_method`,
+  `fan_write_supported`, …). `devices.amd_gpu` still describes only the primary card
+  (`select_primary_gpu`), so on a machine with two AMD GPUs of different generations
+  its `fan_control_method`/`fan_write_supported` say nothing about the other. A client
+  judges an `amd_gpu:{bdf}` fan by the entry whose `pci_bdf` is that `{bdf}`. The
+  array is always emitted, `[]` when there is no AMD GPU, so its absence means an older
+  daemon: then only the primary card is described, and a fan on any other card has no
+  capability to judge it by (the GUI shows its control method as `unknown` and leaves
+  its picker row unjudged; the daemon's `backend_unavailable` still reports a control
+  no profile can drive). `kernel_warnings` is never set on an entry — the advisories
+  stay on `devices.amd_gpu`, where they already cover every card. Order is the
+  daemon's detection order; do not rely on it.
 - `devices.amd_gpu.kernel_warnings` (DEC-098, daemon ≥ 1.6.1) is a list of
   `{id, severity, message}` entries describing kernel-version regressions
   applicable to **any AMD GPU on the machine**, not only the card `devices.amd_gpu`

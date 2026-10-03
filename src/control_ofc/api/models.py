@@ -108,9 +108,11 @@ class AmdGpuCapability:
     def describes_fan(self, fan_id: str) -> bool:
         """True when this capability is about ``fan_id``'s card.
 
-        ``devices.amd_gpu`` describes ONE card, the daemon's primary (`GPU-b`), so
-        on a machine with two AMD GPUs its answers say nothing about the other.
+        ``devices.amd_gpu`` describes ONE card, the daemon's primary, so on a
+        machine with two AMD GPUs its answers say nothing about the other.
         A payload without ``pci_id`` is taken to describe every card, as before.
+        Callers go through :meth:`Capabilities.amd_gpu_for_fan`, which prefers
+        the per-card ``devices.amd_gpus`` (`GPU-b`).
         """
         return self.present and (not self.pci_id or fan_id == f"amd_gpu:{self.pci_id}")
 
@@ -443,6 +445,11 @@ class Capabilities:
     openfan: OpenfanCapability = field(default_factory=OpenfanCapability)
     hwmon: HwmonCapability = field(default_factory=HwmonCapability)
     amd_gpu: AmdGpuCapability = field(default_factory=AmdGpuCapability)
+    #: `GPU-b`: ``devices.amd_gpus`` — every detected AMD GPU, each described by
+    #: its own card. ``None`` is a daemon that predates the field, where only
+    #: the primary card (``amd_gpu``) is described. Read through
+    #: :meth:`amd_gpu_for_fan`.
+    amd_gpus: list[AmdGpuCapability] | None = None
     intel_gpu: IntelGpuCapability = field(default_factory=IntelGpuCapability)
     nvidia_gpu: NvidiaGpuCapability = field(default_factory=NvidiaGpuCapability)
     aio_hwmon: AioHwmonCapability = field(default_factory=AioHwmonCapability)
@@ -450,6 +457,26 @@ class Capabilities:
     features: FeatureFlags = field(default_factory=FeatureFlags)
     limits: Limits = field(default_factory=Limits)
     control: ControlCapability = field(default_factory=ControlCapability)
+
+    def amd_gpu_for_fan(self, fan_id: str) -> AmdGpuCapability | None:
+        """The capability of ``fan_id``'s own AMD card, or ``None`` if unknown.
+
+        The one lookup for any per-fan AMD GPU judgement (writability, control
+        method, label), so a secondary card is never judged by the primary's
+        answer (`GPU-b`). With ``devices.amd_gpus`` the card is found by its PCI
+        address; on an older daemon only the primary card is known
+        (:meth:`AmdGpuCapability.describes_fan`), and any other card is ``None``.
+        """
+        if self.amd_gpus is not None:
+            return next(
+                (
+                    gpu
+                    for gpu in self.amd_gpus
+                    if gpu.present and gpu.pci_id and fan_id == f"amd_gpu:{gpu.pci_id}"
+                ),
+                None,
+            )
+        return self.amd_gpu if self.amd_gpu.describes_fan(fan_id) else None
 
 
 # ---------------------------------------------------------------------------
@@ -2296,6 +2323,20 @@ def parse_capabilities(data: dict) -> Capabilities:
     amd_gpu = AmdGpuCapability(**_filter_fields(AmdGpuCapability, amd_gpu_raw))
     amd_gpu.kernel_warnings = kernel_warnings
 
+    # `GPU-b`: one entry per AMD GPU. Absent on an older daemon → None, so the
+    # lookup falls back to the primary card alone. The advisories live on
+    # `amd_gpu`; any an entry carries are dropped with its nested list.
+    amd_gpus_raw = devices.get("amd_gpus")
+    amd_gpus: list[AmdGpuCapability] | None = None
+    if isinstance(amd_gpus_raw, list):
+        amd_gpus = []
+        for entry in amd_gpus_raw:
+            if not isinstance(entry, dict):
+                continue
+            entry_raw = _coalesce_pci_bdf(entry)
+            entry_raw.pop("kernel_warnings", None)
+            amd_gpus.append(AmdGpuCapability(**_filter_fields(AmdGpuCapability, entry_raw)))
+
     # DEC-121: Intel discrete GPU — additive, read-only. No nested lists to
     # hand-parse; `_coalesce_pci_bdf` normalises pci_bdf↔pci_id like amd_gpu.
     intel_gpu = IntelGpuCapability(
@@ -2314,6 +2355,7 @@ def parse_capabilities(data: dict) -> Capabilities:
         openfan=OpenfanCapability(**_filter_fields(OpenfanCapability, devices.get("openfan", {}))),
         hwmon=HwmonCapability(**_filter_fields(HwmonCapability, devices.get("hwmon", {}))),
         amd_gpu=amd_gpu,
+        amd_gpus=amd_gpus,
         intel_gpu=intel_gpu,
         nvidia_gpu=nvidia_gpu,
         aio_hwmon=AioHwmonCapability(

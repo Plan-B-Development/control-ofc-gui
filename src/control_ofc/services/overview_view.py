@@ -153,9 +153,11 @@ def fan_control_method(
     if fan.source == "openfan":
         return "OpenFan USB"
     if fan.source == "amd_gpu":
-        if not caps or not caps.amd_gpu.present:
+        # `GPU-b`: this fan's own card, never the primary's answer for every card.
+        gpu = caps.amd_gpu_for_fan(fan.id) if caps else None
+        if gpu is None:
             return "unknown"
-        method = caps.amd_gpu.fan_control_method
+        method = gpu.fan_control_method
         return {
             "pmfw_curve": "PMFW curve",
             # DEC-445: verify and reset write it; no daemon engine ever has.
@@ -260,8 +262,8 @@ def fan_row_tooltip(
             if mode:
                 parts.append(f"PWM mode: {mode}")
     elif fan.source == "amd_gpu":
-        if caps and caps.amd_gpu.present:
-            gpu = caps.amd_gpu
+        gpu = caps.amd_gpu_for_fan(fan.id) if caps else None
+        if gpu is not None:
             parts.append(f"GPU: {escape(gpu.display_label, quote=False)}")
             if gpu.pci_id:
                 parts.append(f"PCI: {escape(gpu.pci_id, quote=False)}")

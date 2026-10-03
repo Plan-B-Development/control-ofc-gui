@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A second AMD GPU is judged by its own card.** On a machine with two AMD GPUs of different generations,
+  every AMD GPU fan was judged by the daemon's primary card: a legacy or read-only card behind an RX
+  7000/9000 read "PMFW curve" on the Overview and Dashboard, and the fan-member picker offered it as if a
+  profile could drive it. With control-ofc-daemon 3.7.0 each fan's control method, Dashboard card and
+  picker row follow its own card (`devices.amd_gpus`). With an older daemon the second card's control
+  method now reads "unknown" instead of the primary card's answer (`GPU-b`).
+
 ## [3.6.0] — 2026-10-03
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The CPU fan role floor and the
