@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.3.1] — 2026-10-03
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The corrected F81768D and
+`smsc47m192` driver mappings come from control-ofc-daemon 3.3.1; nothing in this release needs it.
+
 ### Fixed
 
 - **Stop and the Dashboard follow the profile the daemon is actually running** (DEC-470, `WUI-a`). When the
