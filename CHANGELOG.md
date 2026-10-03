@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.4.1] — 2026-10-03
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Nothing in this release needs a
+newer daemon.
+
 ### Fixed
 
 - **Fan headers show on the Hardware page when the app reopens on it.** If the app was closed on the
