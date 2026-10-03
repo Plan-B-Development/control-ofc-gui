@@ -98,7 +98,7 @@ The daemon found writable PWM (`pwmN`) attributes, but has not confirmed that wr
 them moves a fan. Writable ≠ controllable: routed PWM pins, BIOS/EC behaviour, and
 ACPI can all override the chip. Use the fan-control verification workflow to confirm.
 
-Since daemon 3.2.0 (DEC-456) the daemon remembers each header's latest verdict, so
+Since daemon 3.2.0 the daemon remembers each header's latest verdict, so
 this item counts what is left — "2 of 5 writable PWM header(s) have not been verified
 yet" — and disappears once every writable header has passed. A verdict survives a
 daemon restart, and is dropped when its header disappears from discovery. Both a
@@ -110,7 +110,7 @@ speed did not change *is* a decision: it is recorded as a failure (next section)
 
 ## PWM control failed verification
 
-At least one writable header's **latest** verdict is a failure (DEC-456): a test
+At least one writable header's **latest** verdict is a failure: a test
 wrote a duty and the fan's speed did not change, or the header did not keep the value
 written (the header's mode was switched away from manual, or its duty read back as
 something else), or a sweep found the header's `pwm_enable` out of manual mode —
@@ -218,7 +218,7 @@ access the chip's configuration I/O ports directly to identify it. This:
   So the GUI asks for
   explicit confirmation first;
 - **refuses the whole probe while any recognised Super-I/O driver is bound**, not
-  only the port that driver owns (DEC-433). With `it87` loaded on a dual-chip
+  only the port that driver owns. With `it87` loaded on a dual-chip
   Gigabyte board it therefore never runs. It also refuses when `/proc/ioports`
   cannot be read, and skips a port that file shows reserved by a driver or ACPI;
 - is a deliberate one-shot — it never runs automatically, and a second run within

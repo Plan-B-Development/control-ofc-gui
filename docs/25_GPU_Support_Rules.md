@@ -1,12 +1,9 @@
 # 25 — GPU Support Rules
 
-Detailed AMD GPU fan-control rules for this project. Extracted from `CLAUDE.md` so
-that the ~5 KB of hardware detail is not loaded into every session, most of which
-never touches GPU code.
-
-**`CLAUDE.md § GPU support rules` keeps the four safety-critical rules inline and
-points here.** Read this file before changing anything under GPU discovery, GPU fan
-writes, PMFW handling, or GPU display naming.
+Detailed AMD GPU fan-control rules for this project. Read this file before changing
+anything under GPU discovery, GPU fan writes, PMFW handling, or GPU display naming.
+Rules marked *(Safety-critical)* are the ones whose violation would let a GPU fan be
+misreported as controlled, or driven when it should not be.
 
 ## Discovery and identity
 
@@ -18,14 +15,15 @@ writes, PMFW handling, or GPU display naming.
   revision (`0xC0` = XT, `0xC3` = non-XT, `0xC2` = GRE). Device `0x7551` is the
   workstation Navi 48: Radeon AI PRO R9700 (`0xC0`), R9700S (`0xC1`) and R9600D (`0xC8`)
   (libdrm `amdgpu.ids`) — so a rule keyed on `0x7551` alone covers all three.
-- Daemon hwmon discovery excludes `chip_name == "amdgpu"` (DEC-102) — see the
-  safety rules in `CLAUDE.md`, which is where that one is stated authoritatively.
+- Daemon hwmon discovery excludes `chip_name == "amdgpu"` (and `nouveau`) from the
+  hwmon headers (DEC-102, `is_gpu_owned_hwmon_chip`): GPU fans are reached only through
+  the `amd_gpu:` / `nvidia_gpu:` ids and the GPU endpoints, never as a motherboard
+  header. *(Safety-critical.)*
 
 ## Write path
 
 - **RDNA3+ GPUs (RX 7000/9000 series) do NOT support `pwm1_enable=1` manual mode** —
-  fan control MUST use the PMFW `fan_curve` sysfs interface. *(Safety-critical; also
-  stated in `CLAUDE.md`.)*
+  fan control MUST use the PMFW `fan_curve` sysfs interface. *(Safety-critical.)*
 - Pre-RDNA3 GPUs (RX 6000 and older) expose traditional `pwm1_enable=1` + `pwm1`
   control, and the daemon writes it **only** from the GPU fan verify and reset. No
   engine has ever driven it, so no profile controls these fans: `/capabilities`
@@ -66,7 +64,7 @@ writes, PMFW handling, or GPU display naming.
     (the widely-reported "write 1, read back 2" symptom). **Never treat a successful
     write as proof of control on RDNA3** — any capability probe that does will
     falsely report an RX 7000 fan as writable, which is exactly the class of lie
-    the truthfulness rule in `CLAUDE.md` forbids. Confirm by reading the value back,
+    the truthfulness rule below forbids. Confirm by reading the value back,
     or use the `fan_curve` path, which is the supported interface either way.
   - **So the daemon fails closed on the device id (DEC-430).** File presence
     cannot tell an RX 7000 from an RX 6000 — both have `pwm1` and `pwm1_enable` —
@@ -117,8 +115,7 @@ writes, PMFW handling, or GPU display naming.
   including SIGKILL via `ExecStopPost`; a card it never wrote, or handed back itself with
   `POST /gpu/{id}/fan/reset`, is not touched, so LACT or CoreCtrl can own it. This holds from
   daemon 2.56.4; daemon 2.56.3 and older reset every AMD card at every stop.
-  *(Safety-critical;
-  also stated in `CLAUDE.md`.)*
+  *(Safety-critical.)*
 - **A GPU the active profile stops naming is handed back at once, not at the next stop
   (DEC-448, daemon ≥ 3.0.0).** On the tick after a deactivate, or a switch to a profile
   that drops the card, the engine resets it to firmware auto — the same reset
@@ -133,7 +130,7 @@ writes, PMFW handling, or GPU display naming.
 - **Do not claim GPU fan write support unless PMFW `fan_curve` or hwmon `pwm1` is
   actually available.** The control method must be truthful: `"read_only"` when no
   write path exists — no PMFW, and either no `pwm1_enable` or an RDNA3/RDNA4 device
-  id (DEC-430). *(Safety-critical; also stated in `CLAUDE.md`.)*
+  id (DEC-430). *(Safety-critical.)*
 - The read-only hint says why: while overdrive is off it names
   `amdgpu.ppfeaturemask`; with it on, it says the kernel did not expose the curve
   (the kernel 7.0+ case above) instead of repeating advice the user already took.
@@ -173,5 +170,5 @@ writes, PMFW handling, or GPU display naming.
 - GPU-only controls and the 0-RPM idle feature: DEC-221 (`fan_zero_rpm` is the lever;
   a 0% floor is not the same thing as 0 RPM).
 - GPU floor behaviour: DEC-119.
-- Role-aware floors and `member_label` (the CPU/pump 30% rule): `CLAUDE.md`, and
+- Role-aware floors and `member_label` (the CPU/pump 30% rule):
   `docs/05_Controls_Profiles_and_Curves_Spec.md`.

@@ -93,7 +93,7 @@ This pack includes:
 - **operations guide** (18) — daemon config, CLI, permissions, troubleshooting
 - **hardware compatibility** (19), **sensor guide** (20), **AMD motherboard guide** (21), **AMD sensor deep-dive** (22), **Intel motherboard guide** (23) — helper / compatibility articles for end-user troubleshooting
 - **cooling hardware readiness** (24)
-- **GPU support rules** (25) — the detailed AMD GPU fan-control rules, split out of `CLAUDE.md` so they load on demand
+- **GPU support rules** (25) — the detailed AMD GPU fan-control rules: discovery, the PMFW write path, truthfulness and naming
 
 ## Looking for code, not documents?
 This file is a **reading order for the docs pack**. It will not tell you where a

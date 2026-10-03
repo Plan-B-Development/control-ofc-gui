@@ -3438,7 +3438,7 @@ According to the provided daemon notes:
   (`min_pwm_percent: 0` on every header). The role-aware pump/CPU floor is
   baked into the profile by the GUI and enforced by the daemon engine
   (DEC-162); the thermal force (`safety.rs`) is the absolute backstop.
-  See DEC-022 and the "No per-header PWM floors" rule in `CLAUDE.md`.
+  See DEC-022.
 - the daemon engine auto-sets `pwmN_enable` to manual mode on the first write per lease
 - identical writes coalesced at daemon level (DEC-073) — **engine writes only since daemon
   2.55.0** (DEC-412): a diagnostic's write under the verify lease is always sent. Since daemon

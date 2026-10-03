@@ -380,7 +380,7 @@ pump/CPU member to ≥30% on every eval tick regardless of the profile's
 declared `minimum_pct`, so hand-edited profile JSON or a third-party client
 can no longer strand a pump/CPU below its safety minimum. The GUI still
 **bakes** the floor and owns the rest of curve safety policy; the daemon owns
-thermal emergency and the floor backstop (CLAUDE.md, DEC-022, DEC-095,
+thermal emergency and the floor backstop (DEC-022, DEC-095,
 DEC-162). The project's threat model treats local writers as trusted
 (DEC-049).
 

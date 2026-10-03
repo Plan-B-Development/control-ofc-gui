@@ -571,8 +571,7 @@ is renewed.
 
 **Related events** correlate on `fields["component"]` where the event has one, else on
 `source`, and the panel *says which*. The design reference's preferred first tier — a
-stable sensor/channel/device id — does not exist in the event model; see
-`DECISIONS_OPEN_ITEMS.md`. `Filter to these` routes through the same public
+stable sensor/channel/device id — does not exist in the event model yet. `Filter to these` routes through the same public
 `LogsPage.show_related_logs(source, component)` the Alert Centre uses.
 
 `Clear Logs` (`Logs_Btn_clear`) only clears the event feed; the probe panes are

@@ -192,7 +192,7 @@ The kernel recommends ignoring CPUTIN on affected ASUS boards and using
 PECI 0 or TSI 0 instead.
 
 **GUI handling:** When the chip is any of the 11-chip nct6775 family (`nct6775`
-through `nct6799`, DEC-294) and the board vendor is ASUS,
+through `nct6799`) and the board vendor is ASUS,
 the GUI classifies CPUTIN as `bogus` at `low` confidence with an explanatory
 note. The vendor comes from the board's DMI data; if it cannot be read, the rule
 does not fire and CPUTIN keeps its normal classification.
@@ -235,11 +235,11 @@ temperature source labels:
 | DIMM | `DIMM 0` through `DIMM 3` | — |
 | Virtual | `Virtual 0` through `Virtual 7` | — |
 
-**`PECI DIMM` carries the PECI type code, and it is not the CPU** (`DC-f`). Its
+**`PECI DIMM` carries the PECI type code, and it is not the CPU**. Its
 source falls in the kernel's PECI range, so `temp_type` 6 cannot tell a DIMM from
 the CPU. The GUI classifies any `DIMM` label as `memory_dimm` before it looks at
 the type code, and the daemon reports it as `mb_temp`, which keeps it out of the
-thermal ladder's CPU input. Until DEC-429 both called it the CPU. The daemon does
+thermal ladder's CPU input. Until GUI 2.83.3 / daemon 2.56.2 both called it the CPU. The daemon does
 report `PCH CPU` and `PCH CHIP CPU MAX` as `cpu`, deliberately: each reads at
 least the CPU's own temperature.
 
@@ -351,7 +351,7 @@ but not all of them, and the difference is per board rather than per family. On
 the X870E AORUS MASTER the secondary can answer device-ID `0x8883` — an ITE
 eSPI→LPC bridge latched in configuration mode by `nct6775`/`w83627ehf`, which
 clears once those are suppressed and mains power is removed (measured
-2026-09-05, DEC-332, superseding DEC-326's "no local fix"); on the X870E AORUS
+2026-09-05, superseding the previous day's "no local fix"); on the X870E AORUS
 ELITE the same IT8696E + IT87952E pairing is owner-confirmed working (it87 #89). lm-sensors issue #454 tracked the earlier, incomplete state;
 docs 19 and 23 carry the current per-chip support matrix.
 
@@ -392,7 +392,7 @@ specific board features.
 All readings are `high` confidence because the EC provides the identity
 mapping. The driver only loads on boards in an explicit kernel allowlist.
 
-The water readings are coolant temperatures, and since DEC-443 (daemon ≥ 3.0.0)
+The water readings are coolant temperatures, and since daemon 3.0.0
 **a coolant reading is a safety input**: at or above the coolant limit (default
 60 °C) the daemon forces every fan and pump to 100 %. Bind a curve to the coolant
 sensor to cool the loop in normal running.
@@ -443,7 +443,7 @@ The PRIME X470-PRO is called out as particularly bad. The risk increases
 with polling frequency. BIOS updates with method version >= 2 may improve
 stability.
 
-The kernel names no safe polling rate, so this doc no longer claims one (DEC-421's retraction, missed here until DEC-424). The driver reads each WMI sensor group from the BIOS at most about once a second, however many programs read its files, so extra readers add no WMI calls. The kernel's advice is a soak test while polling before you leave the machine unattended.
+The kernel names no safe polling rate, so this doc no longer claims one. The driver reads each WMI sensor group from the BIOS at most about once a second, however many programs read its files, so extra readers add no WMI calls. The kernel's advice is a soak test while polling before you leave the machine unattended.
 
 #### Supported boards (AMD, from kernel docs)
 
@@ -634,7 +634,7 @@ Reference: https://docs.kernel.org/hwmon/k10temp.html
 
 **Applies to:** Some ASUS boards with any nct6775-family chip — `nct6775`, `nct6776`,
 `nct6779`, `nct6791`, `nct6792`, `nct6793`, `nct6795`, `nct6796`, `nct6797`, `nct6798`,
-`nct6799` (DEC-294 widened this from `nct6776` alone; both code legs carry the same 11)
+`nct6799` (widened from `nct6776` alone; both code legs carry the same 11)
 
 **Symptom:** CPUTIN reports unreasonably high temperatures (e.g., 115C at
 idle) or temperatures that move inversely to actual CPU load.
@@ -645,7 +645,7 @@ non-standard measurement device on affected ASUS boards.
 **GUI handling:** Classifies as `bogus` with `low` confidence and a note
 citing the kernel documentation.
 
-**Daemon handling (DEC-294):** classifies the same
+**Daemon handling:** classifies the same
 chip+vendor+label as `mb` rather than `cpu`, so it is excluded from the thermal
 ladder's hottest-CPU reduction. Before this the 115 C symptom above was not
 merely cosmetic — it is plausible enough to pass the reader's range check, so it
@@ -736,16 +736,16 @@ not change the channel's classification or confidence anywhere else in the GUI.
 
 Beyond chip- and driver-level quirks, recent Linux kernels have shipped
 regressions that affect amdgpu specifically. The daemon ships a curated
-catalogue (`hwmon/kernel_warnings.rs`, DEC-098) and surfaces matches via
+catalogue (`hwmon/kernel_warnings.rs`) and surfaces matches via
 `GET /capabilities` (`devices.amd_gpu.kernel_warnings`). The GUI raises
 a popup once per session per advisory; warnings dismissed with "Don't show
 again" are remembered in `app_settings.acknowledged_kernel_warnings`.
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
-| `rdna_mes_hang_drm_amd_4765` (DEC-422) | 6.18.0–6.18.6, and 6.17.9–6.17.13 | RDNA3 / RDNA3.5 / RDNA4, integrated GPUs included | Critical | Evicting a process on a MES GPU suspends the whole MES scheduler, so a compute job running alongside a 3D workload can hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). Fixed in 6.18.7 and 6.19.0. The 6.17 backport was never fixed, and 6.12 / 6.6 never had the bug. The advice is the latest 6.18 LTS or a current 7.x kernel — never 6.15–6.17. |
-| `rdna_hang_kernel_6_18_6_19` (retired by DEC-422; daemon ≤ v2.56.0) | 6.18.x **and** 6.19.x | RDNA3 and RDNA4 | Critical | Keyed on an unbisected report ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)), and its advice (pin 6.15–6.17) sent users to kernels that were never longterm, 6.17.9 onward of which carries the hang above. |
-| `smu_mismatch_navi48_r9700` (retired by DEC-422; daemon ≤ v2.56.0) | all current kernels | R9700 (PCI `0x7551`) | Critical | **Premise refuted (DEC-421):** the SMU interface-version message appears on every Navi 48 card, the RX 9070 XT included, and is not a fault (kernel 7.0 removed it as confusing). `pwm1` is read-only on all RDNA4 by design; the PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). |
+| `rdna_mes_hang_drm_amd_4765` | 6.18.0–6.18.6, and 6.17.9–6.17.13 | RDNA3 / RDNA3.5 / RDNA4, integrated GPUs included | Critical | Evicting a process on a MES GPU suspends the whole MES scheduler, so a compute job running alongside a 3D workload can hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). Fixed in 6.18.7 and 6.19.0. The 6.17 backport was never fixed, and 6.12 / 6.6 never had the bug. The advice is the latest 6.18 LTS or a current 7.x kernel — never 6.15–6.17. |
+| `rdna_hang_kernel_6_18_6_19` (retired; daemon ≤ v2.56.0) | 6.18.x **and** 6.19.x | RDNA3 and RDNA4 | Critical | Keyed on an unbisected report ([Phoronix, EOY 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)), and its advice (pin 6.15–6.17) sent users to kernels that were never longterm, 6.17.9 onward of which carries the hang above. |
+| `smu_mismatch_navi48_r9700` (retired; daemon ≤ v2.56.0) | all current kernels | R9700 (PCI `0x7551`) | Critical | **Premise refuted:** the SMU interface-version message appears on every Navi 48 card, the RX 9070 XT included, and is not a fault (kernel 7.0 removed it as confusing). `pwm1` is read-only on all RDNA4 by design; the PMFW `fan_curve` path works on at least some R9700s. A few R9700 units have unresolved per-unit fan faults ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). |
 
 For mitigation guidance, see `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions.
 

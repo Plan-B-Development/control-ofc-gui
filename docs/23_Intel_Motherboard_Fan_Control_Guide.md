@@ -390,8 +390,8 @@ CPU die temperatures.
 
 On Super I/O chips that also expose Intel PECI (e.g. NCT6798D wired
 through the LPC bus to the CPU), the kernel exposes labels like
-`PECI Agent 0` (`nct6775`) or `PECI 0.0` (`nct6683`). DEC-110 widens the GUI classifier so
-these match as `cpu_peci` with `medium_high` confidence and a
+`PECI Agent 0` (`nct6775`) or `PECI 0.0` (`nct6683`). The GUI classifier matches
+these as `cpu_peci` with `medium_high` confidence and a
 truthful "Intel CPU temperature reported via the PECI bus" tooltip.
 
 The `intel_pch_thermal` driver registers a hwmon device exposing the

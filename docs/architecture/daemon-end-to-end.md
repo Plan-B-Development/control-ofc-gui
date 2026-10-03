@@ -427,7 +427,7 @@ If the daemon crashes, the GPU firmware automatically reverts to its default fan
 | Decision | Implementation | Evidence |
 |----------|---------------|----------|
 | HTTP over Unix socket for IPC | `axum` + `hyper` + `UnixListener` | ADR `docs/ADRs/001-ipc-transport.md` |
-| Daemon owns all hardware access | GUI uses `DaemonClient` only | CLAUDE.md: "Absolute rule: no direct hardware access" |
+| Daemon owns all hardware access | GUI uses `DaemonClient` only | `docs/02_System_Architecture_and_Boundaries.md`: no client touches hardware |
 | Lease-based hwmon exclusivity | 60s TTL, take/release/renew | Prevents GUI↔daemon write conflicts |
 | parking_lot instead of std::sync | All mutexes/rwlocks non-poisoning | V2 audit P0-6 fix — prevents daemon crash cascade |
 | Stable device IDs (not hwmonN) | PCI/platform path extraction | Survives reboots — `hwmon:k10temp:0000:03:00.0:Tctl` |

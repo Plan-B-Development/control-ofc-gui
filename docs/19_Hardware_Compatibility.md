@@ -58,7 +58,7 @@ read-only (`-r--r--r--`), it is the in-kernel `nct6683`.
 `nct6775`-driven chips — see the `nct6775-platform.c` constants in the
 mainline driver source for cross-reference.)
 
-**NCT6797D / NCT6798D vs out-of-tree `nct6687` — chip-ID collision (DEC-104):**
+**NCT6797D / NCT6798D vs out-of-tree `nct6687` — chip-ID collision:**
 Older builds of the out-of-tree `nct6687` driver declare chip ID `0xd450` —
 the same chip ID assigned to the legitimate NCT6797D in
 [`nct6775-platform.c`](https://github.com/torvalds/linux/blob/master/drivers/hwmon/nct6775-platform.c)
@@ -86,7 +86,7 @@ current `nct6687d` no longer claims `0xd450`. See
 full remediation. The daemon detects the collision in `/diagnostics/hardware`
 → `module_collisions`, and the System State page shows it as a critical
 *Driver module collision* condition. **The daemon does not stop writing
-while it is reported** (DEC-433). First, until you have rebooted and it is
+while it is reported**. First, until you have rebooted and it is
 no longer reported, deactivate the active profile (**Stop** under the GUI
 sidebar's profile selector, or the tray's *Stop profile control*) and run no fan tests. That
 stops the curve, not every write: the daemon restores each header's
@@ -104,10 +104,10 @@ driver — blacklist it, then reboot — stops writes to the chip.
 | IT8665E | `it87` | **No** | `it87-dkms-git` (AUR) — ASUS AM4 300/400-series boards (PRIME X470-PRO, ROG STRIX B450-F, X470-F/-I — [issue #27](https://github.com/frankcrawford/it87/issues/27)) and X399-era boards. **Update the driver**: [PR #120](https://github.com/frankcrawford/it87/pull/120) (merged 2026-07-22) removes the MMIO path for IT8665E, fixing the fan-write regression ([issue #106](https://github.com/frankcrawford/it87/issues/106), closed). `mmio=off` is the fallback for builds older than the merge |
 | IT8686E | `it87` | **No** | `it87-dkms-git` (AUR) |
 | IT8688E | `it87` | **No** | `it87-dkms-git` (AUR) |
-| IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended: the 6.12 / 6.18 LTS kernels lack it, and mainline has no handling for the extra curve vectors that override manual mode on some boards (the fork's PR #128 does); the GUI still labels it out-of-tree for this reason (DEC-144) |
+| IT8689E | `it87` | **Yes (control) since 7.1** — six PWM + `FEAT_FANCTL_ONOFF` (commit `66b8eaf`, merged 2026-03-31; 7.1 released 2026-06-14) | `it87-dkms-git` (AUR) still recommended: the 6.12 / 6.18 LTS kernels lack it, and mainline has no handling for the extra curve vectors that override manual mode on some boards (the fork's PR #128 does); the GUI still labels it out-of-tree for this reason |
 | IT8696E | `it87` | **No** | `it87-dkms-git` (AUR) — primary on AM5 800-series and Z890 Gigabyte boards |
 | IT87952E | `it87` | **Yes since 6.3 for enumeration** (commit `d44cb4cd7456` — v6.2 lacks it, v6.3 has it; this row said 6.4 until 2026-09-24) — secondary-chip *control* on dual-IO Gigabyte boards needs the DKMS MMIO path | `it87-dkms-git` (AUR) for control — secondary chip on dual-IO Gigabyte boards (e.g. X870E AORUS MASTER, Z790 AORUS MASTER) |
-| "IT8883" | *(not a distinct sensor chip)* | — | Device-ID `0x8883` at a secondary Super-I/O address is **not a sensor chip** — it is an ITE eSPI→LPC **bridge** latched in configuration mode, answering in place of the chip behind it ([#64](https://github.com/frankcrawford/it87/issues/64); ITE lists the IT8883 as "3VSB and VBAT Supported", so it keeps standby power). `it87` has no entry for `0x8883` at all, while it *does* support the IT87952E — so while the bridge is latched the secondary is **unreachable, not unsupported**. **It is recoverable** (DEC-332, measured 2026-09-05): the latch is written by `nct6775`/`w83627ehf`, which unlock Super-I/O config mode before reading the DEVID. **`0xFFFF` is not a different fault** (DEC-421): issue [#70](https://github.com/frankcrawford/it87/issues/70) reads `0xFFFF` without the unlock key and `0x8883` with it, on the same blocked chip. Neither value is visible by default either — the driver prints `Unsupported chip (DEVID=…)` with `pr_debug` and exits silently on `0xFFFF`. So the recovery is one ladder: stop the trigger, reboot, and if the chip is still missing, remove mains power. DEC-326 measured the state correctly on 2026-09-04 but concluded "no local fix", which a controlled experiment then disproved; before that this row described it as a stuck-in-config-mode symptom recovered by `mmio=on`, which was wrong in a different way. See the STEALTH ICE row below. *(Corroborating: on the AAEON **Elkhart Lake embedded** board of [issue #117](https://github.com/frankcrawford/it87/issues/117), a contributor identifies `0x8883`/IT8883 as an ITE **LPC↔eSPI bridge chip** — not a Super-I/O sensor chip — with the maintainer investigating the real sensor chip behind it. Confidence C — contributor comment, not maintainer-confirmed.)* |
+| "IT8883" | *(not a distinct sensor chip)* | — | Device-ID `0x8883` at a secondary Super-I/O address is **not a sensor chip** — it is an ITE eSPI→LPC **bridge** latched in configuration mode, answering in place of the chip behind it ([#64](https://github.com/frankcrawford/it87/issues/64); ITE lists the IT8883 as "3VSB and VBAT Supported", so it keeps standby power). `it87` has no entry for `0x8883` at all, while it *does* support the IT87952E — so while the bridge is latched the secondary is **unreachable, not unsupported**. **It is recoverable** (measured 2026-09-05): the latch is written by `nct6775`/`w83627ehf`, which unlock Super-I/O config mode before reading the DEVID. **`0xFFFF` is not a different fault**: issue [#70](https://github.com/frankcrawford/it87/issues/70) reads `0xFFFF` without the unlock key and `0x8883` with it, on the same blocked chip. Neither value is visible by default either — the driver prints `Unsupported chip (DEVID=…)` with `pr_debug` and exits silently on `0xFFFF`. So the recovery is one ladder: stop the trigger, reboot, and if the chip is still missing, remove mains power. A measurement on 2026-09-04 read the state correctly but concluded "no local fix", which a controlled experiment then disproved; before that this row described it as a stuck-in-config-mode symptom recovered by `mmio=on`, which was wrong in a different way. See the STEALTH ICE row below. *(Corroborating: on the AAEON **Elkhart Lake embedded** board of [issue #117](https://github.com/frankcrawford/it87/issues/117), a contributor identifies `0x8883`/IT8883 as an ITE **LPC↔eSPI bridge chip** — not a Super-I/O sensor chip — with the maintainer investigating the real sensor chip behind it. Confidence C — contributor comment, not maintainer-confirmed.)* |
 
 The out-of-tree `it87` driver is maintained by Frank Crawford:
 https://github.com/frankcrawford/it87
@@ -143,7 +143,7 @@ current snapshot — **but see the v2.0 rename below before rebuilding.**
 the board's Gigabyte SIV whenever the driver can read it — `it8696_a008090a`
 instead of `it8696`. Control-OFC's stable header ids embed the chip name, so
 **control-ofc-daemon 3.0.0 and newer strip the suffix where they read the chip
-name** (DEC-442): every header, sensor, fan and voltage id stays what it was
+name**: every header, sensor, fan and voltage id stays what it was
 before the rebuild, the built-in board labels and the dual-chip check keep
 matching, and ids an older daemon saved under the suffixed spelling (header
 roles, preferred sensors, cooling devices, profiles) are read back canonical.
@@ -158,26 +158,26 @@ in `skipped_controls[]` as `backend_unavailable`) and the fans stay under the
 BIOS's control; the built-in labels and the dual-chip check stop matching too.
 Update the daemon first, or build commit `c567739` (2026-08-25), which has the
 same driver code as the last build before the rename, including PR #128. Profile
-members a GUI older than DEC-461 dropped after a rebuild under an older daemon are
+members a GUI older than 3.2.0 dropped after a rebuild under an older daemon are
 not recovered; a current GUI keeps a member whose header is missing (below). The manual's Driver Setup page has the commands.
 
 **Known issue — secondary chip not enumerated.** On some systems only the primary
 chip appears in `sensors` output (5 of 8 fan headers visible on an X870E AORUS
 MASTER, etc.). Profile members on the missing chip — on that board, both pump
 headers — are kept and marked **header missing** on the Controls page until the
-chip returns (DEC-461); a GUI before that deleted them and saved the loss. On a daemon older than 3.0.0, first rule out the v2.0 rename
+chip returns; a GUI before that deleted them and saved the loss. On a daemon older than 3.0.0, first rule out the v2.0 rename
 above — suffixed names mean both chips are present. Otherwise the secondary is blocked: an ITE eSPI→LPC bridge is
 latched in configuration mode and answering in place of the chip. The latch is
 written by anything that sends the Super-I/O unlock key to port 0x2E/0x4E —
 `nct6775` and `w83627ehf` do so before reading the device ID even on boards they
 cannot drive, and `sensors-detect` does it too. Measured on an X870E AORUS MASTER,
-BIOS F14c, it87 349.c567739 — cause and cure both reproduced 2026-09-05 (DEC-332,
-superseding DEC-326's "no local fix"); see the "IT8883" row above. The
+BIOS F14c, it87 349.c567739 — cause and cure both reproduced 2026-09-05 (superseding
+the previous day's "no local fix"); see the "IT8883" row above. The
 frankcrawford/it87 issue [#70](https://github.com/frankcrawford/it87/issues/70)
 (Gigabyte X870E AORUS PRO, missing SYS_FAN4/5/6) is the same state seen from the
 other side — there a clean power-cycle did **not** restore the chip either.
 
-**Recovery ladder (DEC-421 — the kernel log cannot tell you which reading the
+**Recovery ladder (the kernel log cannot tell you which reading the
 chip gives, so this is the order for both):**
 
 1. **Is the driver loaded?** `sudo dmesg | grep -i it87` should print a
@@ -213,7 +213,7 @@ frankcrawford/it87 [PR #120](https://github.com/frankcrawford/it87/pull/120)
 **rebuilding the DKMS module (`it87-dkms-git`) fixes the fan with no kernel parameter.**
 *Fallback for builds older than the merge:* set `options it87 mmio=off` instead.
 
-The control-ofc daemon detects this case (DEC-101): when DMI matches
+The control-ofc daemon detects this case: when DMI matches
 a known dual-chip board but only one ITE chip enumerated, the
 System State page surfaces a warning banner with the exact
 remediation steps. See `21_AMD_Motherboard_Fan_Control_Guide.md` §
@@ -272,7 +272,7 @@ it is not exhaustive. Entries are cross-referenced against upstream
 lm-sensors `configs/`, the kernel `asus_*` driver lists, the
 frankcrawford/it87 Gigabyte SIV sensor catalogue, LibreHardwareMonitor board
 definitions, ASRock manual block diagrams and exact-board logs (re-checked
-board by board on 2026-09-24, DEC-421). The fork's DMI-table *comments* are not
+board by board on 2026-09-24). The fork's DMI-table *comments* are not
 used as evidence — several were found attached to the wrong board.
 
 | Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
@@ -283,7 +283,7 @@ used as evidence — several were found attached to the wrong board.
 | | ASRock (B450 Gaming-ITX/ac; B450 Pro4, X470 Taichi) | NCT6792D (ITX) or NCT6779D (ATX / micro-ATX) | mainline `nct6775` |
 | **AM4 500-series** (X570 / B550 / A520) | ASUS (TUF GAMING X570-PLUS, ROG STRIX X570/B550, PRIME X570-PRO) | NCT6798D + asus_ec_sensors enrichment | mainline `nct6775` |
 | | MSI **NCT6687D camp** (MAG B550 TOMAHAWK, B550-A PRO, MPG B550 GAMING PLUS / EDGE; the 2021 MPG X570S EDGE MAX WIFI and CARBON MAX WIFI) | NCT6687D (reports `0xd592`), default register map | out-of-tree `nct6687d-dkms-git`, with `nct6683` blacklisted |
-| | MSI **NCT6797D camp** (X570-A PRO, MPG X570 GAMING PRO CARBON WIFI, MPG X570 GAMING PLUS / EDGE WIFI, MAG X570 TOMAHAWK WIFI, MEG X570 ACE / UNIFY / GODLIKE, MAG X570S TOMAHAWK / TORPEDO MAX) | NCT6797D (reports `0xd451`) | mainline `nct6775` — **must not load nct6687d here** (DEC-105 brick risk; never `force=1`) |
+| | MSI **NCT6797D camp** (X570-A PRO, MPG X570 GAMING PRO CARBON WIFI, MPG X570 GAMING PLUS / EDGE WIFI, MAG X570 TOMAHAWK WIFI, MEG X570 ACE / UNIFY / GODLIKE, MAG X570S TOMAHAWK / TORPEDO MAX) | NCT6797D (reports `0xd451`) | mainline `nct6775` — **must not load nct6687d here** (chip-ID collision, brick risk; never `force=1`) |
 | | Gigabyte AORUS (X570 AORUS MASTER / PRO / PRO WIFI / ULTRA / XTREME, B550 AORUS MASTER / PRO, B550 VISION D) | IT8688E + IT8792E (dual-chip) | out-of-tree `it87-dkms-git` |
 | | Gigabyte AORUS X570S (X570S AERO G, X570S AORUS MASTER) | IT8689E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git` |
 | | Gigabyte AORUS single-chip (B550M AORUS PRO, B550I AORUS PRO AX) | IT8688E only | out-of-tree `it87-dkms-git` |
@@ -301,12 +301,12 @@ used as evidence — several were found attached to the wrong board.
 | | MSI boards of those series NOT on the list (e.g. MAG B850 TOMAHAWK WIFI, the PZ / WHITE / UNIFY-X editions) | NCT6687D, alternate map | `nct6687d` + `fan_config=msi_alt1`, plus `msi_fan_brute_force=1` if needed |
 | | Gigabyte X870E AORUS **PRO** (incl. ICE / X3D) / **ELITE X3D** ([#89](https://github.com/frankcrawford/it87/issues/89)) / XTREME AI TOP / B850 AI TOP / X870 AORUS ELITE WIFI7 (incl. ICE) | IT8696E + IT87952E (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds work out of the box (older builds need `mmio=on`). The ELITE X3D is owner-confirmed with both chips controllable ([#89](https://github.com/frankcrawford/it87/issues/89)) |
 | | Gigabyte X870E AORUS **ELITE WIFI7** | **IT8696E only** (6 fan headers; [PR #131](https://github.com/frankcrawford/it87/pull/131)) | out-of-tree `it87-dkms-git`. Until 2026-09-24 the daemon's board table matched it with the dual-chip X3D and warned about a missing chip that the board does not have |
-| | **Gigabyte X870E AORUS MASTER** — split out of the row above 2026-09-04 (DEC-326) | IT8696E + IT87952E, the secondary blocked behind an ITE bridge latched in config mode (answers device-ID `0x8883`) | out-of-tree `it87-dkms-git` drives the **primary only** (5 of 8 headers) while the bridge is latched. **It IS recoverable** — keep `nct6775`/`w83627ehf` from loading, reboot, then a full power cut if needed (DEC-332, 2026-09-05; DEC-421). `mmio` is already the driver default and `force_id` does not help; neither is the remedy. Same nominal pairing as the ELITE X3D above, different outcome, which is why this table is per board and not per family. See the "IT8883" row and [#64](https://github.com/frankcrawford/it87/issues/64) |
-| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + IT87952E, the secondary reachable only once the eSPI→LPC bridge in front of it is out of config mode | out-of-tree `it87-dkms-git` drives the **primary only** while the bridge is latched; the secondary comes back after suppressing `nct6775`/`w83627ehf`, a reboot and, if needed, a full power cut. **Enrolled in the dual-chip table** (DEC-332) — it had been held out on the premise that nothing local could reach the secondary, which is false, and #81's own thread records its reporter driving `pwmN` on the second chip. `mmio=on` (already the default) and `force_id` are not the remedy; #81's opening post tried both. [#81](https://github.com/frankcrawford/it87/issues/81) · [#64](https://github.com/frankcrawford/it87/issues/64) is the bridge thread |
+| | **Gigabyte X870E AORUS MASTER** — split out of the row above 2026-09-04 | IT8696E + IT87952E, the secondary blocked behind an ITE bridge latched in config mode (answers device-ID `0x8883`) | out-of-tree `it87-dkms-git` drives the **primary only** (5 of 8 headers) while the bridge is latched. **It IS recoverable** — keep `nct6775`/`w83627ehf` from loading, reboot, then a full power cut if needed (2026-09-05). `mmio` is already the driver default and `force_id` does not help; neither is the remedy. Same nominal pairing as the ELITE X3D above, different outcome, which is why this table is per board and not per family. See the "IT8883" row and [#64](https://github.com/frankcrawford/it87/issues/64) |
+| | **Gigabyte X870 AORUS STEALTH ICE** | IT8696E + IT87952E, the secondary reachable only once the eSPI→LPC bridge in front of it is out of config mode | out-of-tree `it87-dkms-git` drives the **primary only** while the bridge is latched; the secondary comes back after suppressing `nct6775`/`w83627ehf`, a reboot and, if needed, a full power cut. **Enrolled in the dual-chip table** — it had been held out on the premise that nothing local could reach the secondary, which is false, and #81's own thread records its reporter driving `pwmN` on the second chip. `mmio=on` (already the default) and `force_id` are not the remedy; #81's opening post tried both. [#81](https://github.com/frankcrawford/it87/issues/81) · [#64](https://github.com/frankcrawford/it87/issues/64) is the bridge thread |
 | | ASRock X870 Nova WiFi | **NCT6796D-S** only (manual block diagram), reported as `nct6799` | mainline `nct6775` |
 | | ASRock X870E Nova WiFi | NCT6796D-S + NCT5585D (+ Fintek bridge) | mainline `nct6775` (both chips) |
 | | ASRock B850 / X870 Steel Legend WiFi, B850I Lightning WiFi | **NCT6686D only** | in-kernel `nct6683` read-only; out-of-tree driver for PWM |
-| | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686D @ 0x0a20 + NCT6796D-S @ 0x0290 (reported as `nct6799`) + Fintek F85227N bridge | `nct6687d` (or read-only `nct6683`) + mainline `nct6775` (DEC-106 collision-detector exemption). On an X870E Taichi an owner measured CHA_FAN1/2, CPU_FAN2 and AIO_PUMP on the `nct6799` chip and CHA_FAN3/4 on the NCT6686D, where `nct6687d` labels one channel "Pump Fan" — so assign the pump role by hand ([nct6687d #155](https://github.com/Fred78290/nct6687d/issues/155)) |
+| | **ASRock X870E Taichi Lite — dual-Nuvoton** | NCT6686D @ 0x0a20 + NCT6796D-S @ 0x0290 (reported as `nct6799`) + Fintek F85227N bridge | `nct6687d` (or read-only `nct6683`) + mainline `nct6775` (the collision detector exempts this pairing). On an X870E Taichi an owner measured CHA_FAN1/2, CPU_FAN2 and AIO_PUMP on the `nct6799` chip and CHA_FAN3/4 on the NCT6686D, where `nct6687d` labels one channel "Pump Fan" — so assign the pump role by hand ([nct6687d #155](https://github.com/Fred78290/nct6687d/issues/155)) |
 | **TR4 X399** (Threadripper 1000 / 2000) | Gigabyte (X399 AORUS PRO (incl. -CF) / XTREME / GAMING 7, X399 DESIGNARE EX (incl. -CF)) | **IT8686E + IT8792E** (dual-chip; [it87 #135](https://github.com/frankcrawford/it87/issues/135) dmesg on the PRO-CF: IT8686E at `0xa40`, IT8792E/IT8795E at `0xa60`; the SIV catalogue lists all four boards with this pair) | out-of-tree `it87-dkms-git` |
 | **sTRX4 TRX40** (Threadripper 3000) | Gigabyte (TRX40 AORUS XTREME / MASTER / PRO WIFI, TRX40 DESIGNARE) | **IT8688E + IT8792E** (dual-chip; the it87 fork's `GA-TRX40-AORUS-XTREME.conf` names `it8688-isa-0a40` + `it8792-isa-0a60`; the SIV catalogue lists all four boards with this pair) | out-of-tree `it87-dkms-git` |
 
@@ -318,9 +318,9 @@ generic table against their own system's output.
 
 Parallel table for Intel LGA1700 (12th–14th Gen Core) and LGA1851 (Core
 Ultra) platforms, plus the older Gigabyte Z390 / Z490 boards the daemon's
-dual-chip table enrols. Added in DEC-110 alongside the GUI's Intel vendor
+dual-chip table enrols. Added alongside the GUI's Intel vendor
 quirks and the daemon's CPU vendor detection, and re-checked board by board on
-2026-09-24 (DEC-421). As with the AMD table, every entry is cross-referenced
+2026-09-24. As with the AMD table, every entry is cross-referenced
 against a verifiable upstream source (kernel lists, lm-sensors `configs/`,
 Fred78290/nct6687d source, the it87 SIV catalogue, ASRock manuals).
 
@@ -348,7 +348,7 @@ Notes:
 
 - The daemon's `/diagnostics/hardware` response now includes a `cpu_vendor`
   field (`"Intel"` / `"AMD"` / `""`) populated from `/proc/cpuinfo`. The
-  GUI uses this to scope DEC-110 platform-specific quirks (the same
+  GUI uses this to scope Intel platform-specific quirks (the same
   chip can ship on different vendors' Intel boards and AMD boards with
   different quirks — e.g. the msi_alt1 NCT6687D boards on MSI Z890 vs MSI X870E).
 - Intel CPU temperature is always provided by the `coretemp` mainline
@@ -546,7 +546,7 @@ B850, B840, B860 or Z890 board on them.
 
 (This list used to offer "disable 'ACPI Hardware Monitor' in BIOS". No such BIOS
 item was found on any vendor's board, and the ACPI device that claims the ports
-on ASUS boards, `AMW0`, also hosts the WMI access path above — `BRD-o`, DEC-473.)
+on ASUS boards, `AMW0`, also hosts the WMI access path above.)
 
 **BIOS.** No setting makes the `nct6775` PWM files writable — they already are,
 and the daemon switches each header to manual itself. *Q-Fan Tuning* is a
@@ -588,8 +588,8 @@ mainline `nct6775` driver.
 - **RDNA2 and older (RX 6000, RX 5000, Vega, Polaris):** Expose the
   traditional `pwm1_enable=1` + `pwm1` control path. The daemon uses it for
   **Test GPU Fan Control** and **Restore GPU Fan to Automatic** only: no
-  profile drives these fans, and their firmware curve stays in charge
-  (DEC-445). RX 6000 = RDNA2,
+  profile drives these fans, and their firmware curve stays in charge.
+  RX 6000 = RDNA2,
   RX 5000 = RDNA1; RX 7000 is the first generation where the legacy
   path was removed in favour of PMFW `fan_curve`.
   AMD GPU family map: [AMD `amdgpu.ids` (libdrm)](https://gitlab.freedesktop.org/mesa/drm/-/blob/main/data/amdgpu.ids),
@@ -621,8 +621,7 @@ ppfeaturemask value and whether bit 14 is set.
 ## Intel discrete GPU (Arc) monitoring
 
 Intel **discrete** GPUs (Arc) are supported for **read-only** monitoring
-only — temperatures and fan RPM. Added in GUI v1.24.0 / daemon v1.12.0
-(DEC-121).
+only — temperatures and fan RPM. Added in GUI v1.24.0 / daemon v1.12.0.
 
 ### Drivers
 
@@ -683,7 +682,7 @@ confirmed.
 ## NVIDIA discrete GPU monitoring
 
 NVIDIA **discrete** GPUs are supported for **read-only** monitoring only —
-temperatures and fan telemetry. Added in GUI v2.11.0 / daemon v2.8.0 (DEC-204).
+temperatures and fan telemetry. Added in GUI v2.11.0 / daemon v2.8.0.
 The NVML path is **experimental** (built and fake-tested; not yet verified
 against NVIDIA hardware).
 
@@ -748,21 +747,21 @@ driver; the open `nouveau` leg shows the generic "NVIDIA D-GPU" label.
 
 ## Liquid cooling (AIO) — hwmon
 
-Phase 1 (DEC-156, daemon ≥ 1.18.0 / GUI ≥ 1.40.0 — built as 1.39.0, which was never released) supports **hwmon-attached** liquid coolers.
+Phase 1 (daemon ≥ 1.18.0 / GUI ≥ 1.40.0 — built as 1.39.0, which was never released) supports **hwmon-attached** liquid coolers.
 Coolers ride the ordinary hwmon path; the daemon classifies coolant sensors as `coolant_temp`,
 flags pump/fan headers `is_aio`, and reports a dynamic `aio_hwmon` capability. **Per-driver pump
 writability is asymmetric** — the GUI reflects the kernel's per-channel `is_writable` and never
-fakes control. **A coolant sensor is a safety input since DEC-443** (daemon ≥ 3.0.0): at or above
+fakes control. **A coolant sensor is a safety input since daemon 3.0.0**: at or above
 the coolant limit (default 60 °C, settable 40–70) the daemon forces every fan and pump to 100 %.
 
 | Driver (hwmon `name`) | Devices | Coolant temp | Pump/fan control |
 |---|---|---|---|
-| `nzxt-kraken3` (`x53`, `z53`, `kraken2023`, `kraken2023elite`; `kraken2024elite` from kernel 7.3) | NZXT Kraken X/Z-series, 2023, 2023 Elite, 2024 Elite | yes | **writable** — `pwm1` pump (+ `pwm2` fan on Z/2023/2024). The driver labels channel 1 "Pump speed", which the daemon's pump rule matches on every model. From daemon 2.56.1 (DEC-423) the daemon's cooler list includes `kraken2024elite`, so that model is flagged as an AIO and its radiator fan gets the 30 % pump/CPU floor that every fan channel on a liquid cooler gets, as on the other models (on 2.56.0 and older it gets the 20 % chassis floor; its pump is protected by the label either way) |
+| `nzxt-kraken3` (`x53`, `z53`, `kraken2023`, `kraken2023elite`; `kraken2024elite` from kernel 7.3) | NZXT Kraken X/Z-series, 2023, 2023 Elite, 2024 Elite | yes | **writable** — `pwm1` pump (+ `pwm2` fan on Z/2023/2024). The driver labels channel 1 "Pump speed", which the daemon's pump rule matches on every model. From daemon 2.56.1 the daemon's cooler list includes `kraken2024elite`, so that model is flagged as an AIO and its radiator fan gets the 30 % pump/CPU floor that every fan channel on a liquid cooler gets, as on the other models (on 2.56.0 and older it gets the 20 % chassis floor; its pump is protected by the label either way) |
 | `nzxt-kraken2` (`kraken2`) | older NZXT Kraken | yes | **monitor-only** (no `pwm` exposed). Note `fan1_input` is the fan and `fan2_input` the pump — the reverse of kraken3 |
 | `aquacomputer_d5next` (`d5next`, `highflownext`, `leakshield`, `octo`, `quadro`, `aquaero`, …) | Aquacomputer D5 Next pump; Octo / Quadro / Aquaero fan controllers; flow / leak devices | yes on the liquid devices (labelled channel) | **D5 Next: `pwm1` is the pump duty and `pwm2` the fan, both writable** (`d5next_ctrl_fan_offsets[] = { 0x97, 0x42 } /* Pump and fan speed */`, since 6.0). The daemon maps channel 1 of a cooler chip to the pump role, so the pump floor applies. Octo (`pwm1`–`8`), Quadro and Aquaero (`pwm1`–`4`) are writable fan controllers, not flagged AIO; flow / leak devices expose no `pwm`. (This row said "pump duty monitor-only" until 2026-09-24.) |
 | `asus_rog_ryujin` (`rog_ryujin`) | ASUS ROG RYUJIN II / III AIOs | yes (`temp1` labelled "Coolant temp") | **writable** — `pwm1` pump, `pwm2` internal fan, `pwm3` controller fans (RYUJIN II only). Channel 1 is labelled "Pump speed", which the daemon's pump rule matches; not flagged as an AIO. RYUJIN III EXTREME / EVA / WHITE editions added in 7.3 |
 | `gigabyte_waterforce` (`waterforce`) | Gigabyte AORUS WATERFORCE X 240 / 280 / 360 | yes | **monitor-only** — fan, pump and coolant readings, all read-only (since 6.8) |
-| `arctic_fan_controller` (`arctic_fan`) | ARCTIC Fan Controller (10 channels), kernel 7.2+ | no | **writable, with a driver hazard the daemon works around (DEC-425).** There is no `pwm_enable`, and every command the driver sends carries all ten channels. On 7.2 and 7.3 its duty cache starts at 0 at probe and after resume, so **the first write to one channel would send 0% to the other nine** until each has been written, and reading `pwmN` back returns that cache, not the device. From daemon 2.56.1 (DEC-425) the daemon first sets every channel still holding such a 0 to 100%, unless the daemon itself last set that channel to 0 (a curve at 0%, a zero-RPM fan) for the profile still controlling it, and does so before the write that would send it. A channel a profile switch or deactivation drops is left at its last duty or the exit floor, whichever is higher, and a 0 the old profile chose no longer counts (DEC-451). So a profile that controls only some channels leaves the rest at full speed instead of stopping them. It does this again by itself after a resume. The first report of each batch still sends 0 to the channels not yet reached, briefly, for as long as the batch takes (the driver waits up to 1 s for the device to acknowledge each write). If the device stops answering, the daemon stops at the first write that fails and logs one warning, then sets the remaining channels straight after the next write the device accepts. To keep uncontrolled fans quiet, control all ten channels. A change queued for kernel 7.4 starts the cache at 40% instead, and the daemon leaves that alone |
+| `arctic_fan_controller` (`arctic_fan`) | ARCTIC Fan Controller (10 channels), kernel 7.2+ | no | **writable, with a driver hazard the daemon works around.** There is no `pwm_enable`, and every command the driver sends carries all ten channels. On 7.2 and 7.3 its duty cache starts at 0 at probe and after resume, so **the first write to one channel would send 0% to the other nine** until each has been written, and reading `pwmN` back returns that cache, not the device. From daemon 2.56.1 the daemon first sets every channel still holding such a 0 to 100%, unless the daemon itself last set that channel to 0 (a curve at 0%, a zero-RPM fan) for the profile still controlling it, and does so before the write that would send it. A channel a profile switch or deactivation drops is left at its last duty or the exit floor, whichever is higher, and a 0 the old profile chose no longer counts. So a profile that controls only some channels leaves the rest at full speed instead of stopping them. It does this again by itself after a resume. The first report of each batch still sends 0 to the channels not yet reached, briefly, for as long as the batch takes (the driver waits up to 1 s for the device to acknowledge each write). If the device stops answering, the daemon stops at the first write that fails and logs one warning, then sets the remaining channels straight after the next write the device accepts. To keep uncontrolled fans quiet, control all ten channels. A change queued for kernel 7.4 starts the cache at 40% instead, and the daemon leaves that alone |
 | `corsair-cpro` (`corsaircpro`), `nzxt-smart2` (`nzxtsmart2`) | Commander Pro / RGB & Fan hubs | no (probes are generic) | writable fans, **not** flagged AIO (fan hubs, not coolers). A Commander Pro `pwmN` read returns an error unless that channel was set to a fixed duty |
 | USB-only (much Corsair iCUE/Commander Core, some NZXT) | — | — | **out of scope** — no mainline hwmon driver; the daemon never opens USB-HID |
 
@@ -784,7 +783,7 @@ Common conflict ranges:
 - `0x0A20–0x0A2F` — ITE IT87 (alternate)
 - `0x0A40–0x0A4F` — ITE IT87 (secondary dual-chip)
 - `0x0A60–0x0A6F` — ITE IT87 (secondary dual-chip)
-- `0x0B10–0x0B1F` — ITE IT87952E (secondary on the Z790 AORUS MASTER; daemon ≥ DEC-468)
+- `0x0B10–0x0B1F` — ITE IT87952E (secondary on the Z790 AORUS MASTER; daemon ≥ 3.3.0)
 
 The daemon detects these by comparing `/proc/ioports` ACPI entries against
 known SIO I/O ranges.
@@ -872,41 +871,41 @@ issues, ignores `blacklist`.
 ## Thermal Safety
 
 The daemon implements a hardware-independent thermal safety rule:
-- **Emergency:** hottest CPU temperature >= the trip point → force every OpenFan channel and writable hwmon header the machine has to 100% PWM (GPU fans excluded — PMFW firmware self-protects, DEC-130). The trip point is 105°C, raised per-machine to `min(CPU-reported ceiling + 5, 115)` where the kernel publishes the ceiling (DEC-308)
-- **Release:** a fresh reading of the hottest CPU temperature at or below 80°C → exit emergency and resume active profile control at once (no recovery rung since DEC-386). A sensor that goes stale or disappears does not release it
-- **Failsafe:** with nothing latched, if no CPU reading is fresh for 5 consecutive cycles → hold the fans the active profile controls at 40% or more (DEC-382), a skipped control's fans at their last duty (DEC-386); fans no profile controls stay under their firmware curve
+- **Emergency:** hottest CPU temperature >= the trip point → force every OpenFan channel and writable hwmon header the machine has to 100% PWM (GPU fans excluded — PMFW firmware self-protects). The trip point is 105°C, raised per-machine to `min(CPU-reported ceiling + 5, 115)` where the kernel publishes the ceiling
+- **Release:** a fresh reading of the hottest CPU temperature at or below 80°C → exit emergency and resume active profile control at once (there is no recovery rung). A sensor that goes stale or disappears does not release it
+- **Failsafe:** with nothing latched, if no CPU reading is fresh for 5 consecutive cycles → hold the fans the active profile controls at 40% or more, a skipped control's fans at their last duty; fans no profile controls stay under their firmware curve
 
 **Both duties are FLOORS over the active profile's output, not replacements for
-it (DEC-307).** Each OpenFan channel and writable hwmon header receives
+it.** Each OpenFan channel and writable hwmon header receives
 `max(commanded, forced)`; at 100% an output no control commands still receives the
 forced duty — that is what gives the emergency its reach. The 40% floor reaches only
 the fans the profile controls, and every other fan the emergency took is given
-back when it ends (DEC-382). The ladder can therefore
-only ever raise a fan. Before DEC-307 the forced duty replaced the profile's output, so
+back when it ends. The ladder can therefore
+only ever raise a fan. Older daemons replaced the profile's output with the forced duty, so
 the 60% and 40% rungs could drive a fan *down* below what its curve was asking for.
 
 The thermal safety state is reported in the hardware diagnostics response.
 
 ## Known kernel-version regressions
 
-The daemon ships a curated catalogue (`hwmon/kernel_warnings.rs`,
-DEC-098) that matches the running kernel against published amdgpu
+The daemon ships a curated catalogue (`hwmon/kernel_warnings.rs`)
+that matches the running kernel against published amdgpu
 regressions and surfaces matches via
 `GET /capabilities` (`devices.amd_gpu.kernel_warnings`). Every AMD GPU in the
 machine is checked, an integrated one beside a discrete card included, and the
-message names the affected cards (DEC-449, daemon ≥ 3.0.0). The GUI raises a
+message names the affected cards (daemon ≥ 3.0.0). The GUI raises a
 one-time `QMessageBox` when a high- or critical-severity warning fires,
 and lists every match on the System State page. Acknowledged warnings are
 remembered in `app_settings.acknowledged_kernel_warnings` so the popup
 does not re-fire on every reconnect.
 
-Currently catalogued (DEC-422):
+Currently catalogued:
 
 | `id` | Affected kernels | Affected hardware | Severity | Symptom |
 |---|---|---|---|---|
 | `rdna_mes_hang_drm_amd_4765` | 6.18.0–6.18.6, and 6.17.9–6.17.13 | RDNA3, RDNA3.5 and RDNA4 GPUs: RX 7000 / RX 9000, Radeon Pro W7000 and AI PRO, and the RDNA3 / RDNA3.5 integrated GPUs (780M, 890M, 8060S …) | Critical | A change that entered 6.18 made evicting a process on a MES GPU suspend the whole MES scheduler. That also stops the kernel's own queues, so a compute job running alongside a 3D workload can time out and hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)). The change was backported into 6.17.9, but the fix never was, and 6.17 is end-of-life. **Fixed in 6.18.7 and 6.19.0** by `3fd20580b96a` ([ChangeLog-6.18.7](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7)). The 6.12 and 6.6 longterm kernels never had it. Every GC 11.x / 12.x GPU runs MES, hence the hardware scope. The match is on the version number, so a distribution kernel that backported the fix may still be flagged, and one carrying the bug under a `.0` patch level cannot be detected. |
 
-**Retired by DEC-422.** Daemon v2.56.0 and older still raise these two, and the GUI keeps its guidance for both:
+**Retired.** Daemon v2.56.0 and older still raise these two, and the GUI keeps its guidance for both:
 
 - `rdna_hang_kernel_6_18_6_19` flagged every 6.18.x / 6.19.x kernel on RDNA3/RDNA4 as Critical. It advised pinning 6.15–6.17; none of those was ever a longterm kernel, and 6.17.9 onward carries the hang above. Its evidence was an unbisected report ([Phoronix, December 2025](https://www.phoronix.com/review/old-amdgpu-eoy2025)). Phoronix has since published working RX 7000 / RX 9000 results on 6.18 and 7.x. (ROCm #6101, which this row used to cite, carries one unbootable-kernel report on 6.18.20 / 6.19.10 with out-of-tree `amdgpu-dkms`, not hangs under load.)
 - `smu_mismatch_navi48_r9700` was keyed on the SMU interface-version message (driver `0x2E`, firmware `0x32` or `0x33`). That message appears on **every** Navi 48 card, the RX 9070 XT included, and is not a fault. The firmware is designed to be backward compatible, and kernel 7.0 removed the message because ["it just leads to user confusion"](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713). `pwm1` is read-only on every RDNA4 card by driver design; control goes through the PMFW `fan_curve`, which works on at least some R9700s. Separately, a few R9700 owners report the fan not responding under load, one at 109 °C ([ROCm #6101](https://github.com/ROCm/ROCm/issues/6101)). Those reports are per-unit and unresolved; AMD advised an RMA for the original reporter's card.
@@ -931,7 +930,7 @@ your `uname -a`, GPU PCI ID, and a short failure description.
 ## Sources
 
 Primary sources for the externally-verifiable claims in this document
-(re-verified during the DEC-114 audit; the AMD/Intel board-mapping tables
+(re-verified during a source audit; the AMD/Intel board-mapping tables
 are additionally cross-referenced against the upstream lm-sensors `configs/`
 directory and the driver DMI tables cited inline above):
 
@@ -955,7 +954,7 @@ directory and the driver DMI tables cited inline above):
 **GPU device IDs & kernel regressions**
 - AMD `amdgpu.ids` (libdrm) and `pci.ids` (hwdata) — Navi 48 `0x7550` (RX 9070 XT rev `0xC0` / RX 9070 rev `0xC3`) and `0x7551` (Radeon AI PRO R9700)
 - [Phoronix — RDNA3/RDNA4 hard hang on Linux 6.18/6.19 (EOY 2025)](https://www.phoronix.com/review/old-amdgpu-eoy2025)
-- [drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765) — a bisected hang, reported on RDNA4, in the MES eviction path that every RDNA3 / RDNA4 GPU runs. Introduced by `079ae5118e1f` in 6.18 and backported to 6.17.9 ([ChangeLog-6.17.9](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.17.9)); fixed by `3fd20580b96a` in 6.18.7 ([ChangeLog-6.18.7](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7)) and 6.19.0, never on 6.17.y (DEC-422)
+- [drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765) — a bisected hang, reported on RDNA4, in the MES eviction path that every RDNA3 / RDNA4 GPU runs. Introduced by `079ae5118e1f` in 6.18 and backported to 6.17.9 ([ChangeLog-6.17.9](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.17.9)); fixed by `3fd20580b96a` in 6.18.7 ([ChangeLog-6.18.7](https://cdn.kernel.org/pub/linux/kernel/v6.x/ChangeLog-6.18.7)) and 6.19.0, never on 6.17.y
 - [kernel.org releases](https://www.kernel.org/category/releases.html) — the longterm lines (6.18, 6.12, 6.6, 6.1, 5.15, 5.10); 6.15–6.17 were never longterm
 - [Kernel commit e471627d5627](https://git.kernel.org/torvalds/c/e471627d56272a791972f25e467348b611c31713) (v7.0) — "drm/amdgpu/pm: drop SMU driver if version not matched messages — It just leads to user confusion"
 - [ROCm Issue #6101](https://github.com/ROCm/ROCm/issues/6101) — per-unit R9700 fan faults; an AMD engineer there confirms the PMFW path works and calls the interface mismatch harmless. **Closed 2026-07-09 as `completed`**, with post-closure reports through 2026-08-28. Its 6.18.20 / 6.19.10 rows are an unbootable-kernel report on out-of-tree `amdgpu-dkms`, not evidence of hangs under load.

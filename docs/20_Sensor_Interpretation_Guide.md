@@ -41,7 +41,7 @@ human-readable string shown in tooltips. The `confidence` field indicates how
 certain the classification is.
 
 **Every surface that shows a sensor's class or confidence goes through one
-accessor, `AppState.classify_sensor(sensor)`** (`DC-g`). It supplies
+accessor, `AppState.classify_sensor(sensor)`**. It supplies
 `board_vendor` from `AppState.board_info` (which a blank rescan never
 downgrades) and the user's "Treat as coolant" overrides, so the Overview table,
 its summary line, the Sensor Detail dialog and the Dashboard series-panel
@@ -75,7 +75,7 @@ publishes Tdie (`temp2`) only for those; Zen 2 and later publish Tctl plus the
 per-CCD `Tccd` readings (up to 16 labels from 7.3). The kernel doc gives no
 general `Tctl = Tdie + offset` formula. The GUI never presents Tctl as the
 "actual" CPU temperature — its tooltip calls it a control value — but **nothing
-in the GUI prefers Tdie when it picks a sensor** (`DC-i`). The preferred-CPU
+in the GUI prefers Tdie when it picks a sensor**. The preferred-CPU
 recommendation (the ★ in Settings → preferred CPU sensor) is the daemon's
 `default_cpu`, which ranks Tctl first, then a package reading, then Tdie
 (`hwmon/classify.rs::cpu_class_rank`) — so on the five offset parts above it
@@ -88,7 +88,7 @@ sensor, in the daemon's list order, whose label names a package, Tctl or Tdie
 Kernel docs: https://docs.kernel.org/hwmon/sbtsi_temp.html
 
 The hwmon device is named **`sbtsi`** — only the module is `sbtsi_temp`; the
-GUI's classifier accepted only the module name until 2026-09-24 (DEC-421). From
+GUI's classifier accepted only the module name until 2026-09-24. From
 kernel 7.3 the driver depends on ARM / ARM64: it is meant to run on a BMC, not on
 the managed host, so x86 desktops stop seeing it at all.
 
@@ -145,7 +145,7 @@ signal beyond the label alone.
 | 3 | `thermal_diode` | medium |
 | 6 | `cpu_peci` | medium_high |
 
-**A `DIMM` label is checked before any type code** (`DC-f`). The kernel reads
+**A `DIMM` label is checked before any type code**. The kernel reads
 memory temperatures over PECI too: `PECI DIMM 0`–`3` carry `temp_type` 6, the
 same code as the CPU's own `PECI 0.0`–`3.1`, so the type-code rule alone would
 call a DIMM the CPU. Both the GUI (`memory_dimm`) and the daemon (`kind: mb_temp`)
@@ -170,7 +170,7 @@ Full temperature source label enumeration from the kernel source
 The GUI's `DIMM` rule catches `PCH DIMM 0-3` (`memory_dimm`); it has no rule for the
 other `PCH` labels, so they fall to `super_io_channel`.
 The daemon promotes `PCH CPU` and `PCH CHIP CPU MAX` to `cpu` because the label
-names the CPU. That is deliberate (DEC-429): each reads at least the CPU's own
+names the CPU. That is deliberate: each reads at least the CPU's own
 temperature, so neither can hide a hot CPU from the ladder.
 
 The temp_type codes are mapped from source ranges in the kernel:
@@ -217,7 +217,7 @@ dialog, but it does not change the classification or its confidence (see
 Kernel docs: https://docs.kernel.org/hwmon/asus_ec_sensors.html
 
 The hwmon device is named **`asusec`**; `asus_ec_sensors` is the module. The GUI's
-classifier accepted only the module name until 2026-09-24 (DEC-421).
+classifier accepted only the module name until 2026-09-24.
 
 High-confidence vendor-labeled sensors read directly from the ASUS embedded
 controller. The kernel driver exposes semantic labels that map to specific
@@ -235,7 +235,7 @@ board features.
 The water rows are the labels `asus-ec-sensors.c` publishes, with underscores.
 The classifier folds underscores to spaces, so the spaced `Water In` / `Water Out`
 that `asus_wmi_sensors` passes through from the BIOS match the same rows. Until
-`DC-e` only the spaced form matched, and every real `asusec` water channel fell
+that fold only the spaced form matched, and every real `asusec` water channel fell
 through to plain `coolant` at medium confidence. Water labels are matched on any
 chip, ahead of the driver branches.
 | Contains `Chipset` | `chipset` | high |
@@ -243,15 +243,15 @@ chip, ahead of the driver branches.
 | Contains `Motherboard` | `board_ambient` | high |
 | Other | `vendor_labeled` | high |
 
-Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip name + label
-(DEC-156): NZXT Kraken (`x53`/`z53`/`kraken2023`/`kraken2023elite`/`kraken2024elite`/`kraken2`) and Aquacomputer
+Beyond the ASUS EC, dedicated **hwmon liquid coolers** are classified by chip name + label:
+NZXT Kraken (`x53`/`z53`/`kraken2023`/`kraken2023elite`/`kraken2024elite`/`kraken2`) and Aquacomputer
 (`d5next`/`highflownext`/`leakshield`) coolant channels map to `coolant` (high confidence), and any
 `coolant`/`water`/`liquid` label maps to `coolant` on any chip (medium). The Kraken 2024 Elite
-(`kraken2024elite`, kernel 7.3+) joined the chip list in DEC-423; before that its "Coolant temp" label
+(`kraken2024elite`, kernel 7.3+) joined the chip list in daemon 2.56.1; before that its "Coolant temp" label
 was what reached `coolant`. The daemon reports these as
 the `coolant_temp` sensor kind.
 
-**Coolant is a safety input (DEC-443, daemon ≥ 3.0.0).** The hottest fresh
+**Coolant is a safety input (daemon ≥ 3.0.0).** The hottest fresh
 coolant reading at or above the coolant limit — Settings ▸ Daemon Configuration,
 40–70 °C, default 60 — forces every fan and pump to 100 % until the coolant is 5 °C
 cooler. Only a sensor **the daemon** classifies as `coolant_temp` triggers it — the
@@ -266,7 +266,7 @@ above miss it; on a sensor already overridden the same menu offers **Reset
 classification to auto**, and Settings → Sensors & Chart Series → **Clear overrides**
 removes them all. The override is the GUI's alone: the daemon's `kind` for the sensor
 does not change, and it has no effect on thermal safety — including the coolant
-emergency (DEC-443), which keys on the daemon's `kind`. What it drives is the GUI's
+emergency, which keys on the daemon's `kind`. What it drives is the GUI's
 own coolant view — the sensor's class everywhere it is shown, the coolant marking in
 the curve sensor picker, which sensor the AIO setup takes as the coolant sensor, and so
 which calibration (coolant or CPU) **Configure AIO** seeds the radiator-fan curve with.
@@ -366,7 +366,7 @@ References:
 
 ### nouveau / nvml (NVIDIA discrete GPU driver)
 
-Read-only temperatures from NVIDIA **discrete** GPUs (DEC-204). Surfaced as
+Read-only temperatures from NVIDIA **discrete** GPUs. Surfaced as
 sensor source `nvidia_gpu`, kind `gpu_temp`, and classified `gpu_package` at
 `high` confidence. Two `chip_name`s appear, one per driver world:
 
@@ -453,7 +453,7 @@ vendor comes from the board's DMI data; where the daemon cannot read it, neither
 can tell an ASUS board from any other, and `CPUTIN` keeps its normal classification —
 the rule fails open.
 
-**The daemon acts on the same triple (DEC-294).** Until that change this was a
+**The daemon acts on the same triple** (daemon ≥ 2.24.0). Before that this was a
 GUI *display* classification only: the daemon still returned `kind: "cpu"` for
 that channel, and its thermal ladder takes the **hottest** CPU sensor — so a pin
 reporting a plausible-looking constant 115 C outranked every healthy CPU sensor,
@@ -466,9 +466,9 @@ label containing `AMD TSI`, `TSI`, `PECI` or `CPU` classifies as `cpu`
 (`discovery.rs:263`), **unless it also contains `DIMM`**: nct6683's `PECI DIMM
 0`–`3` are memory temperatures, and as `cpu` they entered the ladder's
 hottest-CPU reduce and, on a board with no k10temp/coretemp, stood in for a
-missing CPU and kept the no-sensor floor off (`DC-f`, DEC-429). That list is the eleven nct6775-family chips plus
-`nct6683`, `nct6686` and `nct6687`. Before DEC-294, these labels fell through to a
-generic fallback that recognised neither `PECI` nor `TSI`. Until DEC-397 (`DOC-w`),
+missing CPU and kept the no-sensor floor off. That list is the eleven nct6775-family chips plus
+`nct6683`, `nct6686` and `nct6687`. Before daemon 2.24.0, these labels fell through to a
+generic fallback that recognised neither `PECI` nor `TSI`. Until daemon 2.51.2,
 the promotion named only five chips. On the other nine nct6775-family chips, an ASUS
 board therefore had its `CPUTIN` demoted and its `PECI`/`TSI` left as `mb`, so the
 Nuvoton chip gave the thermal ladder no CPU input at all.
@@ -561,7 +561,7 @@ class BoardSensorOverride:
     notes: list[str] = field(default_factory=list)
 ```
 
-**Board overrides are display-only** (`DC-h`). `lookup_board_override(board_vendor,
+**Board overrides are display-only**. `lookup_board_override(board_vendor,
 board_model, label)` has one caller, the Sensor Detail dialog, which shows a
 matching entry in its own "Board override" section. It does not replace the
 driver-based classification: the Overview table, its summary, tooltips and the
@@ -580,7 +580,7 @@ override beside it says `high`.
 
 > This table is a representative subset. The authoritative list is
 > `BOARD_SENSOR_OVERRIDES` in `src/control_ofc/knowledge/sensor_knowledge.py`,
-> which also carries the DEC-110 Intel/LGA1700 ASUS EC anchors (Z690/Z790).
+> which also carries the Intel/LGA1700 ASUS EC anchors (Z690/Z790).
 
 ### How to add new entries
 

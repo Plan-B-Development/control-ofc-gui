@@ -50,7 +50,7 @@ fan control path, which is Super I/O / EC based.
 
 | AMD Platform | Typical Boards | Common Linux Driver Path | Notes |
 |---|---|---|---|
-| **AM4 400-series** (B450, X470) | ASUS PRIME X470-PRO, ROG STRIX B450/X470 -E/-F/-I; MSI B450/X470; Gigabyte AORUS B450/X470; ASRock B450/X470 | `nct6775` (mainline) on the MSI and ASRock boards (NCT6779D / NCT6792D / NCT6795D / NCT6797D); `it87-dkms-git` on Gigabyte (IT8686E + IT8792E) **and on ASUS**, whose AM4 300/400-series boards carry an ITE IT8665E; `asus_wmi_sensors` / `asus_ec_sensors` for extra ASUS sensors (read-only) | Main hazards are the NCT6797D-vs-`nct6687` driver collision (DEC-104) and the ASUS WMI firmware bug — see "AM4 400-series specifics" below |
+| **AM4 400-series** (B450, X470) | ASUS PRIME X470-PRO, ROG STRIX B450/X470 -E/-F/-I; MSI B450/X470; Gigabyte AORUS B450/X470; ASRock B450/X470 | `nct6775` (mainline) on the MSI and ASRock boards (NCT6779D / NCT6792D / NCT6795D / NCT6797D); `it87-dkms-git` on Gigabyte (IT8686E + IT8792E) **and on ASUS**, whose AM4 300/400-series boards carry an ITE IT8665E; `asus_wmi_sensors` / `asus_ec_sensors` for extra ASUS sensors (read-only) | Main hazards are the NCT6797D-vs-`nct6687` driver collision and the ASUS WMI firmware bug — see "AM4 400-series specifics" below |
 | **AM4 500-series** (X570, B550, A520) | ASUS X570/B550, MSI B550/X570, Gigabyte X570/B550, ASRock X570/B550 | `nct6775` (ASUS, ASRock, MSI's original X570 boards); `nct6687d-dkms-git` on MSI B550 and X570S boards; `it87-dkms-git` on Gigabyte; `nct6683` (read-only) for the B550 Taichi's EC | Out-of-tree drivers become common here |
 | **AM5 600-series** (X670E, X670, B650E, B650, A620) | ASUS X670/B650, MSI B650/X670, ASRock A620/B650/X670, Gigabyte X670/B650 | `nct6775` (ASUS NCT6799D, ASRock NCT6796D-S); `nct6687d-dkms-git` (MSI); `it87-dkms-git` (Gigabyte); ASRock NCT6686D boards need `asrock-nct6683` or `nct6687d` for PWM; plus ASUS EC helpers | Monitoring often works before write/control does |
 | **AM5 800-series** (X870E, X870, B850, B840) | ASUS X870/B850, MSI X870/B850, Gigabyte X870/B850, ASRock X870/B850 | `nct6775` (ASUS NCT6701D, reported as `nct6799`); `nct6687d-dkms-git` with the msi_alt1 map (MSI); `it87-dkms-git` (Gigabyte); ASRock mixes NCT6796D-S and NCT6686D | Expect model-specific exceptions; support is still evolving |
@@ -169,7 +169,7 @@ yay -S nct6687d-dkms-git
 The B450 / X470 generation is mostly straightforward on Linux, but four
 generation-specific hazards are worth calling out before you wade into
 the per-vendor guidance below. All four are addressed by the daemon's
-`/diagnostics/hardware` endpoint and the GUI's System State page (DEC-104).
+`/diagnostics/hardware` endpoint and the GUI's System State page.
 
 ### 1. NCT6797D vs the out-of-tree `nct6687` driver
 
@@ -219,7 +219,7 @@ included.
 
 The System State page surfaces this as a critical *Driver module
 collision* condition (`module_collisions`) when both modules are loaded at
-once. The daemon does not stop writing while it is reported (DEC-433).
+once. The daemon does not stop writing while it is reported.
 First, until you have rebooted and it is no longer reported, deactivate the
 active profile (**Stop** under the GUI sidebar's profile selector, or the tray's
 *Stop profile control*) and run no fan tests.
@@ -321,8 +321,8 @@ Taichi is the exception — see below.)
 
 The B550 / X570 / A520 generation is the most heterogeneous on Linux —
 all four Super-I/O chip families ship in this generation and each
-vendor uses a different one. Coverage was hardened in DEC-106 and re-checked
-board by board in DEC-421; the practical hazards by vendor:
+vendor uses a different one. Coverage was hardened in May 2026 and re-checked
+board by board on 2026-09-24; the practical hazards by vendor:
 
 ### MSI (NCT6687D or NCT6797D)
 
@@ -342,7 +342,7 @@ MSI's AM4 500-series boards split into two non-interchangeable camps:
   GODLIKE, and MAG X570S TOMAHAWK / TORPEDO MAX** ship the **NCT6797D**
   (reports `0xd451`). The in-kernel `nct6775` driver supports them out of the
   box — DO NOT install `nct6687d` here, and never load it with `force=1`: the
-  DEC-105 chip-ID overlap can corrupt non-volatile fan registers.
+  NCT679x / `nct6687` chip-ID overlap can corrupt non-volatile fan registers.
 
 To identify which camp your board is in:
 
@@ -423,7 +423,7 @@ NCT6687D with the **default** register map. Use `nct6687d-dkms-git`, blacklist
 `nct6683`, and **never** force `fan_config=msi_alt1` here — it makes every
 SYS_FAN read 0 RPM
 ([nct6687d #167](https://github.com/Fred78290/nct6687d/issues/167)). The
-DEC-105 chip-ID overlap does **not** apply to these boards, because their chip
+NCT679x / `nct6687` chip-ID overlap does **not** apply to these boards, because their chip
 reports `0xd592`, not `0xd451` — the brick scenario needs `nct6687` claiming an
 NCT679x. See the MSI section for the auto-allowlist details.
 
@@ -536,10 +536,10 @@ and AIO_PUMP on the `nct6799` chip and CHA_FAN3/4 on the NCT6686D
 names the NCT6686D's channels with MSI's labels, so its "Pump Fan" is a chassis
 header there, while the real pump header is unlabelled. Assign the pump role to
 the real pump header — **Set role…** on its Hardware-page card, or the fan
-wizard — so the pump floor covers it. Since DEC-444 the GUI marks nct6687d's MSI
+wizard — so the pump floor covers it. Since GUI 3.0.0 the GUI marks nct6687d's MSI
 labels *unverified* on any non-MSI board and asks for the real pump.
 
-The DEC-106 collision-detector refinement recognises this
+The collision detector recognises this
 configuration and does NOT emit the CRITICAL banner for this board
 even though both `nct6687` and `nct6775` modules are present. If a
 collision banner DOES appear, verify both chips enumerated:
@@ -548,7 +548,7 @@ collision banner DOES appear, verify both chips enumerated:
 cat /sys/class/hwmon/hwmon*/name
 ```
 
-If only one nct6 chip name is visible, follow the DEC-105 / collision
+If only one nct6 chip name is visible, follow the chip-ID collision
 remediation BEFORE touching modules. References:
 Fred78290/nct6687d issue #155, Level1Techs ASRock Taichi X870E thread.
 
@@ -628,10 +628,10 @@ the 600-series Steel Legend boards.
 
 ### A secondary Super-I/O that will not enumerate — a latched bridge, and how to clear it
 
-**Rewritten three times. 2026-09-04 (DEC-326) withdrew a "use `mmio=on`" account
-that was wrong. 2026-09-05 (DEC-332) withdrew that rewrite's own conclusion —
+**Rewritten three times. 2026-09-04 withdrew a "use `mmio=on`" account
+that was wrong. 2026-09-05 withdrew that rewrite's own conclusion —
 "there is no local fix" — after a controlled experiment produced both the cause
-and the cure. 2026-09-24 (DEC-421) withdrew the "`0x8883` and `0xFFFF` are
+and the cure. 2026-09-24 withdrew the "`0x8883` and `0xFFFF` are
 different faults" split: they are two readings of one blocked state, and neither
 is visible in the kernel log by default. The measurements below are unchanged.**
 
@@ -681,7 +681,7 @@ byte-identical unlock behaviour in the same function, not by measurement.
 1. Stop `nct6775` and `w83627ehf` loading, and do not run `sensors-detect`. The
    `control-ofc-daemon` package ships
    `/usr/lib/modprobe.d/control-ofc-superio.conf`, which suppresses both
-   automatically on every Gigabyte board from daemon 2.56.1 (DEC-424; 2.56.0 and
+   automatically on every Gigabyte board from daemon 2.56.1 (2.56.0 and
    older cover only the boards they list), and logs each module it declines:
    `sudo journalctl -b -t control-ofc-superio-guard`. No line there means it did
    not act. To do it by hand, create `/etc/modprobe.d/control-ofc-superio-local.conf`
@@ -814,8 +814,7 @@ conflicts. Remediation options:
 
 (This list used to offer "disable 'ACPI Hardware Monitor' in BIOS". No such BIOS
 item was found on any vendor's board, and the ACPI device that claims the ports
-on ASUS boards, `AMW0`, is the same one that hosts the WMI path in option 1 —
-`BRD-o`, DEC-473.)
+on ASUS boards, `AMW0`, is the same one that hosts the WMI path in option 1.)
 
 Reference: https://docs.kernel.org/hwmon/nct6775.html
 
@@ -950,7 +949,7 @@ Two community projects target ASRock boards specifically:
    Taichi Lite. It applies **MSI's register map and MSI's fan labels**, so
    voltages can be wrong and a channel labelled "Pump Fan" may be a chassis
    header — check before trusting it (the GUI marks such a label *unverified*
-   on a non-MSI board, DEC-444). `nct6687d-dkms-git` on the AUR.
+   on a non-MSI board). `nct6687d-dkms-git` on the AUR.
 
 3. **nct6686d** — a kernel module for the NCT6686D based on the NCT6687D
    driver, tested only on the A620I Lightning WiFi; its author reports it
@@ -1139,7 +1138,7 @@ Reference: https://github.com/frankcrawford/it87
   limitation; this is IT8696E rev 0 (primary) plus a secondary.
 
   **⚠ The secondary can be masked by a latched bridge — measured, and
-  recoverable (DEC-332, 2026-09-05).** On BIOS **F14c** with `it87-dkms-git`
+  recoverable (2026-09-05).** On BIOS **F14c** with `it87-dkms-git`
   **349.c567739** (upstream HEAD), the kernel finds
   `IT8696E chip at 0xa40 [MMIO at 0xfe100000]` and then gets device-ID
   `0x8883` from the secondary address, which the driver does not recognise
@@ -1151,7 +1150,7 @@ Reference: https://github.com/frankcrawford/it87
   DEVID. Suppressing those two and then cutting mains power restored the
   secondary as `it87952-isa-0a60` — 3 fans, 3 PWMs, 3 thermistor temps, 8 of
   8 headers. Neither `mmio` (already the driver default) nor `force_id` is
-  the remedy; DEC-326 recorded this state as having "no local fix" on
+  the remedy; an earlier write-up recorded this state as having "no local fix" on
   2026-09-04, which the experiment disproved the next day.
 
   This **does not retract** the earlier report below, which was made on
@@ -1168,10 +1167,10 @@ Reference: https://github.com/frankcrawford/it87
   [issue #103](https://github.com/frankcrawford/it87/issues/103) and the it87
   project's own Gigabyte sensor catalogue (SIV `A008090A`, which this board
   reports). An annotation in it87 PR #100 orders them SYS_FAN4 / FAN5_PUMP /
-  FAN6_PUMP instead, read with three identical fans. DEC-444 (2026-09-28)
+  FAN6_PUMP instead, read with three identical fans. A test on 2026-09-28
   settled it on the reference host: with FAN5_PUMP and FAN6_PUMP empty, the one
   fan, on SYS_FAN4, reads on pwm3 — PR #100 puts FAN6_PUMP there — so the GUI's
-  labels are now verified (register row BRD-i, closed). The pwm1/pwm2 order
+  labels are now verified. The pwm1/pwm2 order
   rests on the agreeing sources; both are PUMP labels, so the floor is the same
   either way.
 
@@ -1180,7 +1179,7 @@ Reference: https://github.com/frankcrawford/it87
   away from the Super-I/O, reboot, and if the chip is still missing remove mains
   power — the ladder in doc 19 § ITE. (Older, pre-2026-03 builds also need
   `options it87 mmio=on`.) See frankcrawford/it87 issue
-  [#70](https://github.com/frankcrawford/it87/issues/70) and DEC-101 for the
+  [#70](https://github.com/frankcrawford/it87/issues/70) for the
   diagnostics surfaced by the GUI. **it87 builds from 2026-09-09 rename this
   board's chips to `it8696_a008090a` / `it87952_a008090a`**; control-ofc-daemon
   3.0.0 and newer strip the suffix so no header id changes, while an older
@@ -1224,7 +1223,7 @@ driver claims each hwmon device. Common conflicts:
 | Driver A | Driver B | Problem |
 |---|---|---|
 | `nct6683` (in-kernel) | `nct6687` (out-of-tree) | Both bind the NCT6687D (and the NCT6686D); with both loaded they can claim the same chip at once — readings garble and PWM writes fail ([nct6687d #204](https://github.com/Fred78290/nct6687d/issues/204)). Blacklist `nct6683` |
-| `nct6687` (out-of-tree) | `nct6775` (in-kernel) | On an NCT679x board, an `nct6687` that claims the chip (old builds by default; any build with `force=1`) can corrupt non-volatile fan registers — the DEC-105 collision |
+| `nct6687` (out-of-tree) | `nct6775` (in-kernel) | On an NCT679x board, an `nct6687` that claims the chip (old builds by default; any build with `force=1`) can corrupt non-volatile fan registers — the chip-ID collision |
 
 To blacklist a conflicting module:
 
@@ -1276,7 +1275,7 @@ Prioritise these hwmon driver names when discovered:
   names as the in-kernel driver, so check the bound driver)
 - `it87` (ITE, mainline or out-of-tree — hwmon names `it86xx` / `it87xx`, with
   a board suffix such as `it8696_a008090a` on builds from 2026-09-09; the daemon
-  reports the chip without it from 3.0.0, DEC-442)
+  reports the chip without it from 3.0.0)
 - `asus_ec_sensors` (ASUS EC, read-only sensors — hwmon name `asusec`)
 - `asus_wmi_sensors` (ASUS WMI, read-only sensors)
 
@@ -1376,7 +1375,7 @@ limitations.
 
 If you have an AMD discrete GPU paired with one of the boards in this
 guide, also check the daemon's kernel-warning catalogue. One regression is
-currently flagged (DEC-422):
+currently flagged:
 
 - **`rdna_mes_hang_drm_amd_4765` (Critical):** raised on Linux **6.18.0–6.18.6 and 6.17.9–6.17.13** with an RDNA3, RDNA3.5 or RDNA4 GPU, the integrated ones included. A compute job running alongside a 3D workload can hang the GPU ([drm/amd #4765](https://gitlab.freedesktop.org/drm/amd/-/issues/4765)); it is **fixed in 6.18.7 and 6.19.0**. Update to the latest 6.18 longterm point release or a current 7.x kernel — **not** to 6.15–6.17, which were never longterm, are end-of-life, and from 6.17.9 on carry this bug.
 
@@ -1384,7 +1383,7 @@ Daemon v2.56.0 and older raise two retired advisories instead. `rdna_hang_kernel
 
 The GUI raises a popup when an advisory matches your hardware — once per
 session, until you choose "Don't show again"; the
-catalogue is curated in `hwmon/kernel_warnings.rs` (daemon, DEC-098) and
+catalogue is curated in `hwmon/kernel_warnings.rs` (daemon) and
 surfaced via `GET /capabilities`. See
 `docs/19_Hardware_Compatibility.md` § Known kernel-version regressions
 for the full table and mitigation guidance.

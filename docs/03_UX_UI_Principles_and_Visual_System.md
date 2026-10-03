@@ -370,7 +370,7 @@ The product is a technical utility. Visual identity should not draw attention aw
 
 ## Component standard — the shared library and the theme
 New or edited GUI code reuses the shared library and the theme system; it does not re-roll
-primitives or hardcode styling. (Moved here from the gitignored `CLAUDE.md`, DEC-440.)
+primitives or hardcode styling.
 
 - **Reuse `src/control_ofc/ui/components/` before building a widget** — `Card` /
   `SectionHeader` (cards), `make_button` (buttons), `StatusPill` (badges),
