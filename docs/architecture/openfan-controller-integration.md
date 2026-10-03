@@ -289,7 +289,8 @@ The GUI no longer issues SetPwm — the daemon's profile engine is the sole writ
 - **Since DEC-452** a `202` + poll run (`POST /fans/openfan/{ch}/calibration`, `GET`/`DELETE
   /diagnostics/openfan-calibration`): down from 100 % until the fan is confirmed stopped (the stall
   duty), then back up until it is confirmed spinning (the restart duty); `hold_seconds` 2–15 is the
-  only tunable. The old upward sweep of 2–20 steps is gone; its route survives as a deprecated
+  only tunable, and the daemon lengthens it to four OpenFan poll intervals where that is longer, so
+  three readings from polls started after each step's write fit (`OFAN-a`). The old upward sweep of 2–20 steps is gone; its route survives as a deprecated
   wrapper.
 - One run at a time, on the shared diagnostic slot plus the run's own `alive` claim (it replaced the
   `AtomicBool` guard).

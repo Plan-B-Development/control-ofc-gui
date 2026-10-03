@@ -2709,8 +2709,10 @@ the **restart** duty as the minimum that keeps the fan running.
   - **Otherwise the acknowledgement is required** (`400 validation_error` without it). The walk
     reaches 0 %, and a channel with no `pump` assignment carries no pump evidence (`PTR-i`). A
     client sends `true` only after the user confirms the channel does not power a pump.
-  - `hold_seconds` (default 5) is clamped into `2..=15`; any other field is rejected by the typed
-    extractor (axum's plain-text `422`, not the envelope). There are no duty or step tunables.
+  - `hold_seconds` (default 5) is clamped into `2..=15`, then raised to fit the confirming polls:
+    four OpenFan poll intervals (`polling.poll_interval_ms`; 4 s at the default 1 s), which can
+    exceed 15 on a slow-polling system (`OFAN-a`). `hold_ms` reports the hold used. Any other field is rejected by the typed extractor (axum's plain-text `422`, not the
+    envelope). There are no duty or step tunables.
   - **`202`** with the run snapshot; the run is detached, on the **same** single-flight slot as
     every hardware diagnostic. Poll `GET /diagnostics/openfan-calibration`.
   - **Refusals, in this order, all before anything is written:** `503 hardware_unavailable`
@@ -2726,18 +2728,21 @@ the **restart** duty as the minimum that keeps the fan running.
     controller; `409 validation_error` when another diagnostic holds the slot.
 - **The walk.** Descent from 100 % in 10 % steps to 30 %, then 2 % steps, until the fan is
   confirmed stopped. Ascent from there in 2 % steps up to 30 % (one 10 % step for a stall found
-  above 30 %) until it is confirmed spinning. A step's verdict needs three fresh 500 ms samples
-  — only readings taken after that step's write — and its last three to agree (all 0 →
+  above 30 %) until it is confirmed spinning. A step's verdict needs three fresh readings —
+  each from a distinct OpenFan poll that **started** after that step's write returned, however
+  many 500 ms samples see it (`OFAN-a`; earlier daemons counted every sample of a reading
+  cached after the write) — and its last three to agree (all 0 →
   stopped, all > 0 → spinning); fewer than three, or a mix, is `unconfirmed` and the walk moves
-  on. At the default 1 s poll even the 2 s minimum hold yields three. Worst case at the
-  default hold is about 3 minutes; a typical fan takes 1.5–2.
+  on. The hold is never shorter than four poll intervals, so it fits three. Worst case at the
+  default hold and poll is about 3 minutes; a typical fan takes 1.5–2.
 - **Gates, on every 500 ms sample and before every write**: shutdown, cancel, the pump-protection
   union (`ROLE-f`, daemon ≥ 3.5.0: a channel assigned `pump` aborts with `pump_protected`), the 85 °C limit,
   the ladder forcing, stale temperatures, the hottest fresh CPU reading rising more than
   `rise_limit_c` (5 °C) above `start_cpu_temp_c`, and the engine-pause keepalive (renewed per
   sample, DEC-296). These apply to the descent and ascent only. An abort or cancel that may
   have left the fan stopped kicks it at 100 % first, held until it is seen spinning (three
-  fresh samples) or 10 s. The kick is owed when the fan was not last confirmed spinning — or,
+  fresh readings) or 10 s — or four poll intervals, where that is longer. The kick is owed
+  when the fan was not last confirmed spinning — or,
   where there is no verdict at all (a failed write, no fresh reading), when the walk reached
   30 % or found a stall; a stall can sit above 30 %, so the duty alone does not decide it. The
   kick is not gated (it runs after a cancel or an abort) and stops only on shutdown. No kick
@@ -2767,7 +2772,7 @@ the **restart** duty as the minimum that keeps the fan running.
   `did_not_restart` (still stopped at the top of the ascent; the kick followed) |
   `no_fan_detected` (0 rpm at 100 %) | `aborted` | `cancelled`. `restart_failed_at_full: true`
   means a kick ran — this one, or one after an early stop — and the fan was not confirmed
-  spinning within its 10 s window. `abort_reason` is `thermal_limit` | `thermal_force` |
+  spinning within its window. `abort_reason` is `thermal_limit` | `thermal_force` |
   `stale_temperature` | `thermal_rise` | `no_cpu_temperature` | `write_failed` |
   `rpm_unreadable` (no reading arrived after a write within its hold) | `shutting_down` |
   `pump_protected` (daemon ≥ 3.5.0: the channel was assigned `pump` mid-run) | `superseded` | `task_failed` (the daemon's calibration task ended without a result — a
@@ -2783,14 +2788,16 @@ the **restart** duty as the minimum that keeps the fan running.
 - `DELETE /diagnostics/openfan-calibration` — asks the running calibration to stop: `202` with
   the snapshot, `409 validation_error` when none is running. **Honoured within one sample
   (≤ 500 ms) during the descent and ascent**; a kick or restore already under way runs to its
-  end (up to the kick's 10 s), and a kick owed after the cancel runs too, then the restore.
+  end (up to the kick's window, 10 s at the default poll), and a kick owed after the cancel
+  runs too, then the restore.
 
 ### OpenFan calibrate (deprecated)
 - `POST /fans/openfan/{ch}/calibrate` — **deprecated since DEC-452.** **No GUI caller.** Starts
   the same run as the route above and holds the request open until it ends, so a client needs a
   timeout of several minutes.
   - **Body** (JSON): `acknowledge_below_floor` — **now required, as on the new route**, a change
-    for any direct client that called it bare — plus `hold_seconds` (default 5, clamped 2–15).
+    for any direct client that called it bare — plus `hold_seconds` (default 5, clamped 2–15,
+    then raised as on the route above).
     `steps` is still accepted and **ignored**; unknown fields are not rejected.
   - **`200`**: `{api_version, fan_id, points: [{pwm_percent, rpm, phase, observation}],
     start_pwm?, stop_pwm?, min_rpm, max_rpm}`. **Since DEC-452 `stop_pwm` is the measured stall
