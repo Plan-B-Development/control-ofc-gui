@@ -25,6 +25,8 @@ name: Release
 #                    new Release. This is what makes `pacman -Syu` see the
 #                    version (DEC-241); a green build-test + github-release with
 #                    a red notify-repo is a release users cannot upgrade to.
+#                    Refuses to dispatch while the daemon's latest Release is
+#                    below the PKGBUILD's control-ofc-daemon floor (REL-b).
 #                    Needs the PACMAN_REPO_TOKEN secret — the only cross-repo
 #                    credential in this workflow, and the only job here that can
 #                    fail for a reason unrelated to the code being released.
@@ -446,6 +448,81 @@ jobs:
             fi
           done
           echo "::warning::peer Release still not published after 25m — dispatching anyway; the second publish will correct the pair."
+
+      - name: Checkout PKGBUILD at tag
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.ref_name }}
+          sparse-checkout: packaging/PKGBUILD
+          sparse-checkout-cone-mode: false
+
+      # REL-b. v3.0.0 reached the pacman repository requiring a daemon the
+      # repository did not serve yet, so `pacman -Syu` failed on an unresolvable
+      # dependency until the daemon published. pacman-repo assembles from each
+      # project's LATEST Release (`gh release download` with no tag), so that is
+      # what the GUI's `control-ofc-daemon>=X.Y.Z` floor must be satisfied by
+      # before we ask it to publish.
+      #
+      # Runs after the peer wait above, so a coordinated release whose daemon is
+      # still in flight passes once the daemon's Release object exists.
+      #
+      # Fails CLOSED, unlike the peer wait. Dispatching an unsatisfiable GUI is
+      # the incident this guards against, and the cost of a false stop is one
+      # re-run of this job. The GitHub Release is already published either way.
+      - name: Require the daemon's latest Release to satisfy the PKGBUILD floor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PEER: Plan-B-Development/control-ofc-daemon
+        run: |
+          set -euo pipefail
+
+          # Only the depends=(...) array, so a makedepends/optdepends or comment
+          # mention can never stand in for the real runtime floor.
+          dep="$(awk '/^depends=\(/{f=1} f{print} f&&/\)/{exit}' packaging/PKGBUILD \
+                 | grep -oE "'control-ofc-daemon[^']*'" | head -n1 | tr -d "'")" || dep=''
+          case "$dep" in
+            '')
+              echo "::error file=packaging/PKGBUILD::no control-ofc-daemon entry in depends=() — cannot check the daemon floor."
+              exit 1 ;;
+            control-ofc-daemon)
+              echo "control-ofc-daemon is unversioned in depends=(); no floor to check."
+              exit 0 ;;
+            control-ofc-daemon\>=*) floor="${dep#control-ofc-daemon>=}" ;;
+            *)
+              echo "::error file=packaging/PKGBUILD::unsupported daemon constraint '${dep}' — this guard understands only '>='. Extend it before relying on another operator."
+              exit 1 ;;
+          esac
+          if ! [[ "$floor" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error file=packaging/PKGBUILD::daemon floor '${floor}' is not X.Y.Z."
+            exit 1
+          fi
+
+          latest=''
+          for attempt in 1 2 3; do
+            if latest="$(gh api "repos/${PEER}/releases/latest" --jq '.tag_name')"; then
+              break
+            fi
+            latest=''
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          if [ -z "$latest" ]; then
+            echo "::error::Could not read ${PEER}'s latest Release. Not dispatching: the floor (>= ${floor}) is unverified. Re-run this job; no new tag is needed."
+            exit 1
+          fi
+          latest="${latest#v}"
+          if ! [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${PEER}'s latest Release tag 'v${latest}' is not vX.Y.Z; cannot compare it to the floor ${floor}."
+            exit 1
+          fi
+
+          # sort -V orders numeric X.Y.Z correctly; the floor is satisfied when
+          # it sorts first (or equal).
+          lowest="$(printf '%s\n%s\n' "$floor" "$latest" | sort -V | head -n1)"
+          if [ "$lowest" != "$floor" ]; then
+            echo "::error::This GUI requires control-ofc-daemon>=${floor}, but ${PEER}'s latest Release is ${latest}. Publishing now would serve a GUI that pacman cannot install. Release the daemon first (dependency-first), then RE-RUN THIS JOB. The GitHub Release is fine; no new tag is needed."
+            exit 1
+          fi
+          echo "Daemon floor satisfied: latest Release ${latest} >= ${floor}."
 
       - name: Trigger a repository rebuild
         env:
