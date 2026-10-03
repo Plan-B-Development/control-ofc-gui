@@ -161,19 +161,62 @@ class TestAsrockAm4Quirks:
 class TestModuleCollisionDetection:
     """Daemon-reported and GUI-fallback collision pair handling."""
 
-    def test_gui_fallback_flags_nct6687_with_nct6775(self):
-        # The CRITICAL pair must be detected by the GUI's static table for
-        # users on older daemons that don't emit `module_collisions` yet.
+    def test_gui_does_not_flag_nct6687_with_nct6775_on_its_own(self):
+        # DC-cm: the pair is the daemon's (`module_collisions`); a GUI name-pair
+        # copy cannot run DEC-106's two-chip test and flagged dual-Nuvoton boards.
         conflicts = detect_module_conflicts(["nct6687", "nct6775", "k10temp", "amdgpu"])
         pairs = {tuple(sorted([c.module_a, c.module_b])) for c in conflicts}
-        assert ("nct6687", "nct6775") in pairs
-
-    def test_gui_fallback_silent_when_only_one_of_pair_loaded(self):
-        # Lone nct6687 must NOT trigger the collision banner — many MSI
-        # users intentionally run only the out-of-tree driver.
-        conflicts = detect_module_conflicts(["nct6687", "k10temp"])
-        pairs = {tuple(sorted([c.module_a, c.module_b])) for c in conflicts}
         assert ("nct6687", "nct6775") not in pairs
+
+    def test_dual_nuvoton_board_the_daemon_cleared_raises_no_card(self):
+        """DC-cm: on an ASRock AM5 Taichi both drivers are needed; the daemon
+        suppresses the collision (DEC-106), so no card may tell the user to
+        blacklist one of them."""
+        from control_ofc.api.models import (
+            BoardInfo,
+            HwmonChipInfo,
+            HwmonDiagnostics,
+            KernelModuleInfo,
+        )
+        from control_ofc.services.duty_drift import NO_DRIFT
+        from control_ofc.ui.widgets.readiness_report import detect_readiness_problems
+
+        diag = HardwareDiagnosticsResult(
+            hwmon=HwmonDiagnostics(
+                chips_detected=[
+                    HwmonChipInfo(chip_name="nct6686", device_id="nct6687.2592"),
+                    HwmonChipInfo(chip_name="nct6799", device_id="nct6775.656"),
+                ],
+                total_headers=8,
+                writable_headers=8,
+            ),
+            board=BoardInfo(vendor="ASRock", name="X870E Taichi Lite"),
+            kernel_modules=[
+                KernelModuleInfo(name=m, loaded=True) for m in ("nct6687", "nct6775", "k10temp")
+            ],
+            module_collisions=[],
+        )
+        keys = {p["key"] for p in detect_readiness_problems(diag, duty_drift=NO_DRIFT)}
+        assert not keys & {"module_collision", "module_conflict"}, keys
+
+    def test_gui_only_conflict_does_not_promote_the_collision_quirk(self):
+        """DC-cm: `module_conflict` now means the nct6683/nct6687 pair, so it
+        must not mark the nct6687/nct6775 brick note "observed"."""
+        from control_ofc.ui.widgets.readiness_report import (
+            EVIDENCE_OBSERVED,
+            quirk_evidence,
+        )
+
+        quirks = [
+            q
+            for q in lookup_vendor_quirks("Micro-Star International Co., Ltd.", "nct6797")
+            if q.trigger == "module_collision"
+        ]
+        assert quirks, "precondition: the collision quirk exists"
+        diag = HardwareDiagnosticsResult()
+        for q in quirks:
+            assert quirk_evidence(diag, q, {"module_conflict"})[0] != EVIDENCE_OBSERVED
+            assert quirk_evidence(diag, q, {"module_collision"})[0] == EVIDENCE_OBSERVED
 
     def test_daemon_module_collisions_round_trip(self):
         # The GUI parser must turn the daemon JSON into a ModuleCollisionInfo
@@ -222,29 +265,6 @@ class TestModuleCollisionDetection:
         result = parse_hardware_diagnostics(payload)
         assert len(result.module_collisions) == 1
         assert result.module_collisions[0].severity == "info"
-
-    def test_gui_fallback_suppressed_when_daemon_reports_same_pair(self):
-        # Verifies the suppression logic in diagnostics_page.py: when the
-        # daemon already reported a collision pair, the GUI-only fallback
-        # banner must NOT also fire for the same pair. This is the
-        # `daemon_pairs = {tuple(sorted([...]))…}` filter in the page
-        # render path; here we test the underlying invariant directly.
-        loaded = ["nct6687", "nct6775", "k10temp"]
-        gui_pairs = {
-            tuple(sorted([c.module_a, c.module_b])) for c in detect_module_conflicts(loaded)
-        }
-        # The daemon would emit the same pair in this case.
-        daemon_pair = tuple(sorted(["nct6687", "nct6775"]))
-        assert daemon_pair in gui_pairs, (
-            "GUI fallback must still detect the pair so the suppression "
-            "logic has something to filter"
-        )
-        # The deduplication invariant — both representations canonicalise
-        # to the same sorted tuple regardless of which side put which
-        # module first.
-        assert tuple(sorted(["nct6775", "nct6687"])) == daemon_pair, (
-            "Sorted-tuple canonicalisation must be order-independent"
-        )
 
 
 class TestAm4LabelFallback:

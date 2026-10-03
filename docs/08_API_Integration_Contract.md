@@ -1826,9 +1826,11 @@ and the GUI parser defaults to `[]`):
 
   The reference GUI renders the entry as a critical *Driver module
   collision* condition on System State, with the remediation in the
-  card's detail. It suppresses its own `CONFLICTING_MODULE_SETS`
-  fallback for the same pair, so one problem does not raise two
-  conditions. All daemon-supplied strings in this field are HTML-escaped
+  card's detail. It does not check this pair itself (DC-cm): a name-pair
+  copy cannot run the DEC-106 test below and flagged dual-Nuvoton
+  boards. Its own `CONFLICTING_MODULE_SETS` holds only pairs the daemon
+  does not check (`nct6683` + `nct6687`), shown as *Conflicting driver
+  modules loaded* when the daemon reports no collision. All daemon-supplied strings in this field are HTML-escaped
   before they reach the Qt RichText label.
 
   **DEC-106 refinement:** the daemon suppresses the `(nct6687, nct6775)`

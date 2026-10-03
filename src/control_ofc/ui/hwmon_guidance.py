@@ -224,8 +224,9 @@ QUIRK_CONSEQUENCES: frozenset[str] = frozenset({"hardware_damage", "control_loss
 # mechanism rather than minting a second card saying the same thing. "" means
 # the quirk is never promotable — it is permanent reference material.
 #
-# `module_collision` covers `module_conflict` too (the GUI-side fallback for
-# daemons predating `module_collisions`); the promotion check tests both keys.
+# `module_conflict` is NOT an alias of `module_collision`: it detects the
+# GUI-only nct6683/nct6687 pair, a different mechanism from the nct6687/nct6775
+# brick the collision quirks describe (DC-cm).
 QUIRK_TRIGGERS: frozenset[str] = frozenset({"module_collision", "bios_revert", "dual_chip", ""})
 
 
@@ -2422,6 +2423,13 @@ def lookup_vendor_quirks(
 # Module conflict detection
 # ---------------------------------------------------------------------------
 
+# Pairs only the GUI checks. The (nct6687, nct6775) pair is the daemon's alone
+# (`module_collisions`, DEC-105): its DEC-106 two-chip test is what clears a
+# legitimate dual-Nuvoton board (ASRock AM5 Taichi), and a GUI name-pair copy
+# cannot run it, so it raised a critical "blacklist one" card telling those
+# users to remove the driver their fan control needs (DC-cm). Every daemon the
+# GUI controls (>= 2.0) reports that field.
+
 CONFLICTING_MODULE_SETS: list[tuple[str, str, str]] = [
     (
         "nct6683",
@@ -2430,39 +2438,6 @@ CONFLICTING_MODULE_SETS: list[tuple[str, str, str]] = [
         "Both can bind the same chip at once, so readings garble and PWM "
         "writes fail (nct6687d #202, #204). Blacklist nct6683 if using nct6687d: "
         "echo 'blacklist nct6683' | sudo tee /etc/modprobe.d/blacklist-nct6683.conf",
-    ),
-    # DEC-105: GUI-side fallback for daemons that predate the daemon's
-    # `module_collisions` field. When the daemon DOES emit module_collisions,
-    # system_state_view.py suppresses this banner so the user does not see
-    # two warnings for the same problem.
-    (
-        "nct6687",
-        "nct6775",
-        "nct6687 (out-of-tree) and nct6775 (in-kernel) are both loaded. If "
-        "nct6687 has claimed an NCT679x chip (e.g. the NCT6797D on MSI AM4 "
-        "boards) it can scribble into non-volatile fan registers — CPU_FAN has "
-        "been bricked by this in the wild. Older nct6687 builds claimed chip ID "
-        "0xd450 by default (removed 2026-05-19, nct6687d PR #164), and any build "
-        "loaded with force=1 claims every Nuvoton ID from 0xD000 to 0xDFFF. "
-        "FIRST, until you have rebooted and this is no longer reported, "
-        "deactivate the active profile (Stop under the sidebar's profile selector, "
-        "or the tray's 'Stop profile control') and run no fan tests. That stops "
-        "the curve, not every write: the daemon does "
-        "not stop on its own, it restores each header's original mode once (100 % "
-        "if it cannot confirm it), and a thermal emergency still drives "
-        "writable headers to 100 %. Only removing the wrong driver (blacklist it, "
-        "then reboot) stops writes to the chip. "
-        "(1) Identify the chip FIRST: sudo dmesg | grep -i 'found nct' — if "
-        "both drivers report a chip at the same address, they claimed the "
-        "same one. "
-        "(2) For an NCT6797D / NCT6798D (MSI AM4 boards e.g. B450M MORTAR, "
-        "MAG B450 TOMAHAWK MAX, MAG X570 TOMAHAWK WIFI), blacklist nct6687: "
-        "echo 'blacklist nct6687' | sudo tee /etc/modprobe.d/blacklist-nct6687.conf. "
-        "(3) For a genuine NCT6687D (MSI B550 and newer), keep nct6687 and "
-        "never load it with force=1; nct6775 has nothing of its own to bind "
-        "there unless the board has a second Nuvoton chip (ASRock AM5 Taichi "
-        "boards need both drivers). "
-        "Blacklisting the wrong driver removes the working fan-control path.",
     ),
 ]
 

@@ -9,6 +9,10 @@
   with one holding no fan header roles, yet the banner still said to repair "the file" and restart — which
   loaded the new file cleanly and left your pump roles lost in the kept copy. With control-ofc-daemon 3.6.0
   the banner names that copy and says to stop the daemon, repair it and put it back before starting it.
+- **No false "Conflicting driver modules" alarm on dual-Nuvoton boards.** On a board with two Nuvoton chips
+  (ASRock AM5 Taichi: `nct6687` and `nct6775` each driving its own chip) System State raised a critical card
+  telling you to blacklist one of the drivers — the one your fan control needs. control-ofc-daemon already
+  checks that pair and clears it on these boards; the GUI now leaves the pair to the daemon.
 
 ## [3.5.0] — 2026-10-03
 

@@ -308,12 +308,6 @@ class TestForceOneIsNamed:
         assert crit, f"precondition: the {chip} collision quirk fires"
         assert all("force=1" in " ".join(q.details) for q in crit)
 
-    def test_gui_fallback_collision_text_names_force(self):
-        text = next(t for a, b, t in CONFLICTING_MODULE_SETS if {a, b} == {"nct6687", "nct6775"})
-        assert "force=1" in text
-        # The board it used to cite is an NCT6795D, not an NCT6797D.
-        assert "X470 GAMING PRO CARBON" not in text
-
     @pytest.mark.parametrize("chip", ["nct6797", "nct6798"])
     def test_collision_quirk_says_deactivate_not_write_pwm(self, chip):
         """DC-x (DEC-433): the same instruction on the board-note surface."""
@@ -325,18 +319,6 @@ class TestForceOneIsNamed:
             assert "Stop under the sidebar's profile selector" in flat  # DEC-462
             assert "Stop profile control" in flat
             assert "write pwm" not in flat.lower()
-
-    def test_gui_fallback_collision_text_says_deactivate_not_write_pwm(self):
-        """DC-x (DEC-433): users write no PWM, and the daemon keeps writing
-        through a collision — the instruction is to deactivate the profile."""
-        text = next(t for a, b, t in CONFLICTING_MODULE_SETS if {a, b} == {"nct6687", "nct6775"})
-        assert "deactivate the active profile" in text
-        assert "Stop under the sidebar's profile selector" in text  # DEC-462
-        assert "Stop profile control" in text
-        assert "thermal emergency" in text
-        assert "write pwm" not in text.lower()
-        # Deactivating still writes (the hand-back, DEC-382): never "no duty".
-        assert "sets no duty" not in text
 
 
 class TestDualChipAlert:

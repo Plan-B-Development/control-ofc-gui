@@ -438,7 +438,7 @@ def build_acpi_detail(diag: HardwareDiagnosticsResult) -> str | None:
 
 
 def build_module_collision_detail(diag: HardwareDiagnosticsResult) -> str | None:
-    """HTML detail for the module-collision issue card (daemon + GUI fallback)."""
+    """HTML detail for the module-collision card: the daemon's pairs, then the GUI-only ones."""
     parts: list[str] = []
     daemon_collisions = getattr(diag, "module_collisions", []) or []
     for col in daemon_collisions:

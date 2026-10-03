@@ -1576,8 +1576,8 @@ class ModuleCollisionInfo:
     """Pair of loaded driver modules that race for the same chip (DEC-105).
 
     Distinct from `AcpiConflictInfo` (about I/O port ranges) and the
-    GUI-side `CONFLICTING_MODULE_SETS` (a static name-pair fallback used
-    when the daemon doesn't report this field). When the daemon reports a
+    GUI-side `CONFLICTING_MODULE_SETS` (pairs the daemon does not check;
+    the daemon owns this field's pair, DC-cm). When the daemon reports a
     collision the GUI renders a critical condition whose remediation tells the
     user to deactivate the active profile until the load ordering is resolved
     — the daemon refuses no writes (DEC-433).

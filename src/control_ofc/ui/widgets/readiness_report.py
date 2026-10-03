@@ -465,14 +465,10 @@ def quirk_evidence(
 
     trigger = quirk.trigger
     if trigger:
-        # `module_conflict` is the GUI-side fallback for daemons that predate
-        # `module_collisions`; it detects the same pair, so it promotes the same
-        # notes. Missing it would silence the damage advisories on exactly the
-        # older daemons least likely to be protected elsewhere.
-        present = trigger in condition_keys or (
-            trigger == "module_collision" and "module_conflict" in condition_keys
-        )
-        if present:
+        # Only the daemon's own key promotes: `module_conflict` is the GUI-only
+        # nct6683/nct6687 pair, not the nct6687/nct6775 brick these notes
+        # describe (DC-cm).
+        if trigger in condition_keys:
             return (EVIDENCE_OBSERVED, "observed on this system", trigger)
         if trigger in _CONCLUSIVE_ABSENCE:
             return (EVIDENCE_NOT_OBSERVED, "not present on this system", "")

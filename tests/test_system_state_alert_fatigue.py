@@ -1117,7 +1117,7 @@ def test_a_module_conflict_dismissal_survives_an_unrelated_module_loading():
             cpu_vendor="AMD",
         )
 
-    pair = ["nct6775", "nct6687"]
+    pair = ["nct6683", "nct6687"]
     before = _with(pair)
     assert "module_conflict" in {
         c.key for c in build_condition_cards(before, duty_drift=NO_DRIFT).cards
