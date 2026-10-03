@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.6.0] — 2026-10-03
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The CPU fan role floor and the
+settings-file banner's kept-copy name need control-ofc-daemon 3.6.0; with an older daemon neither changes.
+
 ### Added
 
 - **A fan you mark as the CPU fan shows the floor the daemon now keeps it at.** With control-ofc-daemon
