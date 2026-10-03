@@ -1415,8 +1415,8 @@ run outlives its window.
   a declared splitter scopes every RPM claim to the one tach-reporting fan; a pump-protected
   header is "below 30 % not tested, by design"; an empty header is "no fan detected (inferred)",
   and a stall flag on it is explained as not a stall (`PTR-k` — an older daemon sets one there; from
-  daemon 3.2.0 an uncontrolled header whose fan never spun has no verdict, DEC-458, except a header
-  with no mode switch after a diagnostic, `PTR-ag`); a device override is an observation; a
+  daemon 3.2.0 an uncontrolled header whose fan never spun has no verdict, DEC-458; up to 3.6.0
+  a header with no mode switch after a diagnostic still had one, `PTR-ag`); a device override is an observation; a
   firmware-controlled header is a state.
 - **Provenance** on every finding: measured, commanded, derived, user-supplied, device-reported,
   unverified. The daemon's `unknown` reads **"Inconclusive"** in the report only.
