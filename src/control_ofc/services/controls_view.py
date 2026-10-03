@@ -10,7 +10,7 @@ No value is fabricated.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from control_ofc.api.models import AmdGpuCapability
@@ -29,7 +29,8 @@ from control_ofc.services.profile_service import (
     control_minimum_pct,
     infer_control_role,
     infer_member_role,
-    pump_role_floor_pct,
+    member_floor_role,
+    role_floor_pct,
 )
 from control_ofc.ui.fan_presence import (
     PRESENCE_BADGE,
@@ -94,29 +95,35 @@ class MinPwmBadge:
     tooltip: str
 
 
-def min_pwm_badge(control, pump_header_ids: frozenset[str]) -> MinPwmBadge:
+#: How the badge names a header role that lifted the floor (DEC-417, `ROLE-a`).
+_FLOOR_ROLE_NOUN = {"pump": "pump", "cpu_fan": "CPU-fan"}
+
+
+def min_pwm_badge(control, floor_roles: Mapping[str, str]) -> MinPwmBadge:
     """The Min badge for ``control``: its strictest member floor, and why.
 
     The label-derived floor (``minimum_pct`` against the role floor, DEC-095/162)
-    unioned with the header pump-role term (`TS-w`): the daemon floors a member
-    whose header is assigned ``pump`` at 30% on the assignment alone, so a member
-    authored before the assignment would otherwise show 20% here.
+    unioned with the header-role term (`TS-w`, `ROLE-a`): the daemon floors a
+    member whose header is assigned ``pump`` — or ``cpu_fan``, where it advertises
+    ``cpu_fan_role_floor`` — at 30% on the assignment alone, so a member authored
+    before the assignment would otherwise show 20% here. ``floor_roles`` is
+    :func:`floor_role_header_roles`, id → role, so the tooltip can name the role.
 
     Only the BADGE takes that term. The card's manual slider keeps the
     label-derived floor, by the user's choice (DEC-417); the daemon clamps a
     request below 30% on such a member up to 30%, as it always has.
 
-    A pump found by its label raises the whole control's ``minimum_pct``; a pump
-    ROLE raises only its own member. So where the role is what lifts the badge and
-    the control has other floored fans, the tooltip says whom the figure covers —
-    and gives the other fans ``control.minimum_pct``, the number the daemon holds
-    them at (``member_effective_floor``'s non-pump branch), never the badge's
-    ``base``, which also counts the GUI's 20% role default and so overstates it
-    for a profile whose minimum sits below that.
+    A pump or CPU fan found by its label raises the whole control's
+    ``minimum_pct``; a role raises only its own member. So where the role is what
+    lifts the badge and the control has other floored fans, the tooltip says whom
+    the figure covers — and gives the other fans ``control.minimum_pct``, the
+    number the daemon holds them at (``member_effective_floor``'s non-floored
+    branch), never the badge's ``base``, which also counts the GUI's 20% role
+    default and so overstates it for a profile whose minimum sits below that.
     """
     members = control.members
     base = max(control.minimum_pct, control_minimum_pct(members))
-    role_floor = pump_role_floor_pct(members, pump_header_ids)
+    role_floor = role_floor_pct(members, floor_roles)
     floor = max(base, role_floor)
     if floor <= 0.0:
         return MinPwmBadge(0.0, "")
@@ -124,11 +131,18 @@ def min_pwm_badge(control, pump_header_ids: frozenset[str]) -> MinPwmBadge:
     if role == CONTROL_ROLE_CPU_PUMP:
         tip = "Minimum PWM derived from a CPU or pump member. 30% protects the pump from stalling."
     elif role_floor > base:
+        by_member = {m.member_id: member_floor_role(m, floor_roles) for m in members}
+        assigned = {mid for mid, r in by_member.items() if r}
+        nouns = sorted({_FLOOR_ROLE_NOUN.get(by_member[mid] or "", "") for mid in assigned} - {""})
+        noun = nouns[0] if len(nouns) == 1 else "pump or CPU-fan"
         tip = (
             f"Minimum PWM raised to {role_floor:.0f}% because a member's header is "
-            f"assigned the pump role. {role_floor:.0f}% protects the pump from stalling."
+            f"assigned the {noun} role."
         )
-        assigned = {m.member_id for m in members if pump_role_floor_pct([m], pump_header_ids)}
+        if "pump" in nouns:
+            tip += f" {role_floor:.0f}% protects the pump from stalling."
+        else:
+            tip += f" The daemon holds a CPU fan at {role_floor:.0f}% or above."
         others = [
             m
             for m in members
@@ -137,7 +151,7 @@ def min_pwm_badge(control, pump_header_ids: frozenset[str]) -> MinPwmBadge:
         if others:
             whom = "member" if len(assigned) == 1 else "members"
             tip += (
-                f" It applies to the pump-assigned {whom}; the other fans in this "
+                f" It applies to the {noun}-assigned {whom}; the other fans in this "
                 f"control keep {control.minimum_pct:.0f}%."
             )
     elif role == CONTROL_ROLE_CHASSIS:

@@ -52,6 +52,7 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     HwmonHeader,
+    OpenFanRole,
     OverrideStatusEntry,
 )
 from control_ofc.services.overview_view import fan_control_method
@@ -59,8 +60,8 @@ from control_ofc.services.profile_service import (
     CurveConfig,
     CurveType,
     Profile,
+    floor_role_header_roles,
     member_minimum_pct,
-    pump_role_header_ids,
 )
 
 # Card-key prefix for a read-only fan's own card.
@@ -277,6 +278,7 @@ def build_fan_card_vms(
     overrides: list[OverrideStatusEntry],
     headers: list[HwmonHeader] | None = None,
     caps: Capabilities | None = None,
+    openfan_roles: list[OpenFanRole] | None = None,
     sensor_values: dict[str, float] | None = None,
     display_name: Callable[[str], str] | None = None,
     stalled_ids: Collection[str],
@@ -294,7 +296,11 @@ def build_fan_card_vms(
             path and therefore get a read-only card. Empty/None → hwmon fans are
             treated as not controllable (we cannot evidence a write path without
             the header).
-        caps: daemon capabilities, used for the GPU write-path decision.
+        caps: daemon capabilities, used for the GPU write-path decision and
+            whether an assigned CPU fan is floored (`ROLE-a`).
+        openfan_roles: ``AppState.openfan_roles`` — an OpenFan channel's pump or
+            CPU-fan role floors it daemon-side, so it lifts the floor a card's
+            LOW_RPM state is judged against. Empty/None → no channel roles.
         sensor_values: ``sensor_id -> value_c`` snapshot (page-resolved), used to
             fill each card's ``temp_c`` from its curve's sensor. Keeps this
             module Qt-free and free of any daemon call.
@@ -313,9 +319,10 @@ def build_fan_card_vms(
     sv = sensor_values or {}
     name = display_name or (lambda fid: fid)
     hdrs = headers or []
-    # DEC-417: a header's pump role is the daemon's third floor term; without it a
-    # member authored before the assignment reads a 20% floor the daemon holds at 30.
-    pump_ids = pump_role_header_ids(hdrs)
+    # DEC-417 / `ROLE-a`: a header's pump or CPU-fan role is the daemon's third
+    # floor term; without it a member authored before the assignment reads a 20%
+    # floor the daemon holds at 30.
+    floor_roles = floor_role_header_roles(hdrs, caps, openfan_roles)
     override_control_ids = {o.control_id for o in overrides}
 
     cards: list[FanCardVM] = []
@@ -352,7 +359,7 @@ def build_fan_card_vms(
                 states.append(FanState.OFFLINE)
                 continue
             present.append(fan)
-            floor = member_minimum_pct(control, member, pump_ids)
+            floor = member_minimum_pct(control, member, floor_roles)
             states.append(
                 _derive_state(
                     fan, overridden=overridden, floor=floor, stalled=fan.id in stalled_ids

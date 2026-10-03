@@ -239,14 +239,16 @@ reject + an independent eval-time clamp). The GUI-side defaults are:
   `PUMP`-labelled header does not strip the floor the label already earned — and
   the tag is deliberately not removed when the role is later cleared, since
   clearing an assignment is not a request to lower a floor. Note the daemon
-  reaches the same 30% independently via `assigned_role_is_pump`, so this is
+  reaches the same 30% independently via `assigned_role_earns_hard_floor`, so this is
   what the GUI *displays*, not what protects the hardware.
   **Only Configure AIO bakes the tag** (`aio_member_for_header`); the member
   picker and quick-assign do not, and a member authored before its header was
   assigned `pump` predates the tag. So since DEC-417 the **Min badge** and the
   **Dashboard fan-card state** also union the role in *live* at display time
-  (`pump_role_header_ids` — `HwmonHeader.role == "pump"`, the same predicate the
-  tag uses), without touching the profile. That mirror follows the role both
+  (`floor_role_header_roles` — `HwmonHeader.role == "pump"`, the same predicate the
+  tag uses, and since `ROLE-a` `"cpu_fan"` where the daemon advertises
+  `control.cpu_fan_role_floor`, whose assignment it floors at 30% too), without
+  touching the profile. That mirror follows the role both
   ways, as the daemon's assignment term does — straight away for a role the GUI
   writes (it re-reads the headers after its own role writes), and at the next
   300 s header re-read for one written outside it. Three things deliberately do NOT
@@ -258,7 +260,10 @@ reject + an independent eval-time clamp). The GUI-side defaults are:
   shows 30% and its tooltip says the figure covers the pump-assigned member,
   giving the other fans the control's own `minimum_pct` (the daemon's number
   for them).
-- **20%** for chassis / OpenFan-only controls.
+- **20%** for chassis / OpenFan-only controls. An OpenFan channel assigned `pump` (`ROLE-f`), or
+  `cpu_fan` where the daemon advertises `control.cpu_fan_role_floor` (`ROLE-a`), is held at
+  30% by the daemon on the role alone; the Min badge and fan cards show that (the role term
+  above), the stamped `minimum_pct` does not.
 - **0%** for GPU-only controls (the card has its own PMFW `OD_RANGE`
   minimum — board-specific, often around 15%; the kernel rejects fan-curve
   points below it and the daemon clamps to it; see DEC-053).

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
@@ -73,8 +74,8 @@ from control_ofc.services.profile_service import (
     Profile,
     ProfileService,
     apply_role_floor,
+    floor_role_header_roles,
     mix_candidate_curves,
-    pump_role_header_ids,
     sync_candidate_controls,
 )
 from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
@@ -659,6 +660,8 @@ class ControlsPage(QWidget):
             # DEC-417: a header's pump role raises the Min badge of the card that
             # holds it, so a role assigned after the cards were built repaints them.
             self._state.headers_updated.connect(self._refresh_min_pwm_badges)
+            # `ROLE-a`: and so does an OpenFan channel's role (`ROLE-f`).
+            self._state.openfan_roles_updated.connect(self._refresh_min_pwm_badges)
             # DEC-461: a member whose header is absent is kept and badged, so the
             # badge follows the headers — and the mode, since demo judges none.
             self._state.headers_updated.connect(self._refresh_member_presence)
@@ -1248,7 +1251,7 @@ class ControlsPage(QWidget):
                 card_size=tier,
                 user_size=self._stored_card_size(control.id),
                 display_name=self._state.member_display_name,
-                pump_header_ids=self._pump_role_header_ids,
+                floor_roles=self._floor_role_header_roles,
                 detected_hwmon_ids=self._detected_hwmon_ids,
             )
             card.selected.connect(self._on_control_selected)
@@ -2189,12 +2192,15 @@ class ControlsPage(QWidget):
         )
         self._shared_switch_banner.setVisible(error is not None)
 
-    def _pump_role_header_ids(self) -> frozenset[str]:
-        """The live ids of headers whose role is ``pump`` (DEC-417), read by every
-        control card's Min badge through the one shared predicate."""
+    def _floor_role_header_roles(self) -> Mapping[str, str]:
+        """The live id → role of headers whose role the daemon floors (DEC-417,
+        `ROLE-a`), read by every control card's Min badge through the one shared
+        predicate."""
         if self._state is None:
-            return frozenset()
-        return pump_role_header_ids(self._state.hwmon_headers)
+            return {}
+        return floor_role_header_roles(
+            self._state.hwmon_headers, self._state.capabilities, self._state.openfan_roles
+        )
 
     def _detected_hwmon_ids(self) -> frozenset[str] | None:
         """The hwmon headers the daemon reports, or ``None`` when not known
@@ -2360,6 +2366,9 @@ class ControlsPage(QWidget):
             and bool(getattr(gpu, "profile_writable", False))
             and bool(getattr(gpu, "gpu_zero_rpm_available", False))
         )
+        # `ROLE-a`: whether a CPU-fan role lifts the Min badge is capability-gated,
+        # and the capabilities can land after the headers did.
+        self._refresh_min_pwm_badges()
         if not hasattr(caps, "features") or caps.features is None:
             return
         # Idempotent both ways: capabilities re-fire on every refresh and every

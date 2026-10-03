@@ -1,7 +1,7 @@
 """DEC-417 (`TS-w`): a header's pump ROLE reaches the displayed floor.
 
 The daemon floors a member at 30% when its labels say CPU/pump OR its header is
-assigned the ``pump`` role (``assigned_role_is_pump`` → ``member_effective_floor``).
+assigned the ``pump`` role (``assigned_role_earns_hard_floor`` → ``member_effective_floor``).
 The GUI mirrored only the label terms, so a member authored before its header was
 assigned ``pump`` — or through a picker that never tags it — showed 20%.
 
@@ -30,10 +30,10 @@ from control_ofc.services.profile_service import (
     CurveType,
     LogicalControl,
     Profile,
+    floor_role_header_roles,
     infer_member_role,
     member_minimum_pct,
-    pump_role_floor_pct,
-    pump_role_header_ids,
+    role_floor_pct,
 )
 from control_ofc.ui.pages.controls_page import ControlsPage
 from control_ofc.ui.widgets.control_card import ControlCard
@@ -78,22 +78,24 @@ def test_fixture_is_chassis_by_label():
 # ── The shared predicate ──────────────────────────────────────────────
 
 
-class TestPumpRoleHeaderIds:
-    def test_only_the_pump_role_counts(self):
+class TestFloorRoleHeaderRoles:
+    def test_only_the_pump_role_counts_without_the_cpu_fan_capability(self):
+        """`ROLE-a`'s CPU-fan term is capability-gated; ``test_cpu_fan_role_floor``
+        covers the daemon that advertises it."""
         pump, rad, cpu = _header(1, "pump"), _header(2, "radiator_fan"), _header(3, "cpu_fan")
-        assert pump_role_header_ids([pump, rad, cpu]) == frozenset({pump.id})
+        assert dict(floor_role_header_roles([pump, rad, cpu], None, ())) == {pump.id: "pump"}
 
     def test_no_headers_is_no_roles(self):
-        assert pump_role_header_ids(None) == frozenset()
-        assert pump_role_header_ids([]) == frozenset()
+        assert dict(floor_role_header_roles(None, None, None)) == {}
+        assert dict(floor_role_header_roles([], None, ())) == {}
 
     def test_only_an_hwmon_member_takes_the_role(self):
         """An id collision from another source must not borrow a header's role."""
         header = _header(role="pump")
-        ids = pump_role_header_ids([header])
+        ids = floor_role_header_roles([header], None, ())
         stray = ControlMember(source="openfan", member_id=header.id)
-        assert pump_role_floor_pct([stray], ids) == 0.0
-        assert pump_role_floor_pct([_member(header)], ids) == PUMP_FLOOR
+        assert role_floor_pct([stray], ids) == 0.0
+        assert role_floor_pct([_member(header)], ids) == PUMP_FLOOR
 
 
 class TestMemberMinimumPct:
@@ -101,22 +103,24 @@ class TestMemberMinimumPct:
         header = _header(role="pump")
         member = _member(header)
         control = _control(member)
-        with_role = member_minimum_pct(control, member, pump_role_header_ids([header]))
-        without = member_minimum_pct(control, member, frozenset())
+        with_role = member_minimum_pct(control, member, floor_role_header_roles([header], None, ()))
+        without = member_minimum_pct(control, member, {})
         assert (without, with_role) == (CHASSIS_FLOOR, PUMP_FLOOR)
 
     def test_union_only_never_lowers_a_higher_floor(self):
         header = _header(role="pump")
         member = _member(header)
         control = _control(member, minimum_pct=45.0)
-        assert member_minimum_pct(control, member, pump_role_header_ids([header])) == 45.0
+        assert (
+            member_minimum_pct(control, member, floor_role_header_roles([header], None, ())) == 45.0
+        )
 
     def test_the_role_reaches_only_its_own_member(self):
         """The daemon floors the assigned member, not its neighbours."""
         pump_h, fan_h = _header(1, "pump"), _header(2, "chassis_fan")
         pump, fan = _member(pump_h, "Loop A"), _member(fan_h, "Rad")
         control = _control(pump, fan)
-        ids = pump_role_header_ids([pump_h, fan_h])
+        ids = floor_role_header_roles([pump_h, fan_h], None, ())
         assert member_minimum_pct(control, pump, ids) == PUMP_FLOOR
         assert member_minimum_pct(control, fan, ids) == CHASSIS_FLOOR
 
@@ -127,14 +131,16 @@ class TestMemberMinimumPct:
 class TestMinPwmBadge:
     def test_a_role_lifts_the_badge_and_says_so(self):
         header = _header(role="pump")
-        badge = min_pwm_badge(_control(_member(header)), pump_role_header_ids([header]))
+        badge = min_pwm_badge(
+            _control(_member(header)), floor_role_header_roles([header], None, ())
+        )
         assert badge.floor_pct == PUMP_FLOOR
         assert "assigned the pump role" in badge.tooltip
         # A lone member: nobody else to name.
         assert "other fans" not in badge.tooltip
 
     def test_without_the_role_it_is_the_chassis_badge(self):
-        badge = min_pwm_badge(_control(_member(_header(role="chassis_fan"))), frozenset())
+        badge = min_pwm_badge(_control(_member(_header(role="chassis_fan"))), {})
         assert badge.floor_pct == CHASSIS_FLOOR
         assert "assigned the pump role" not in badge.tooltip
         assert "chassis fans" in badge.tooltip
@@ -142,7 +148,7 @@ class TestMinPwmBadge:
     def test_a_mixed_control_says_whom_the_figure_covers(self):
         pump_h, fan_h = _header(1, "pump"), _header(2, "chassis_fan")
         control = _control(_member(pump_h, "Loop A"), _member(fan_h, "Rad"))
-        badge = min_pwm_badge(control, pump_role_header_ids([pump_h, fan_h]))
+        badge = min_pwm_badge(control, floor_role_header_roles([pump_h, fan_h], None, ()))
         assert badge.floor_pct == PUMP_FLOOR
         assert (
             f"It applies to the pump-assigned member; the other fans in this control "
@@ -156,7 +162,7 @@ class TestMinPwmBadge:
         that discriminates."""
         pump_h, fan_h = _header(1, "pump"), _header(2, "chassis_fan")
         control = _control(_member(pump_h, "Loop A"), _member(fan_h, "Rad"), minimum_pct=10.0)
-        badge = min_pwm_badge(control, pump_role_header_ids([pump_h, fan_h]))
+        badge = min_pwm_badge(control, floor_role_header_roles([pump_h, fan_h], None, ()))
         assert control.minimum_pct < CHASSIS_FLOOR  # precondition: the two differ
         assert badge.floor_pct == PUMP_FLOOR
         assert f"the other fans in this control keep {control.minimum_pct:.0f}%." in badge.tooltip
@@ -167,7 +173,7 @@ class TestMinPwmBadge:
         text (which says it covers one member) must not appear."""
         header = _header(role="pump")
         control = _control(_member(header, "AIO Pump"))
-        badge = min_pwm_badge(control, pump_role_header_ids([header]))
+        badge = min_pwm_badge(control, floor_role_header_roles([header], None, ()))
         assert badge.floor_pct == PUMP_FLOOR
         assert "derived from a CPU or pump member" in badge.tooltip
         assert "assigned the pump role" not in badge.tooltip
@@ -175,7 +181,7 @@ class TestMinPwmBadge:
     def test_a_higher_user_floor_is_not_credited_to_the_role(self):
         header = _header(role="pump")
         control = _control(_member(header), minimum_pct=45.0)
-        badge = min_pwm_badge(control, pump_role_header_ids([header]))
+        badge = min_pwm_badge(control, floor_role_header_roles([header], None, ()))
         assert badge.floor_pct == 45.0
         assert "assigned the pump role" not in badge.tooltip
 
@@ -186,8 +192,8 @@ class TestMinPwmBadge:
 def test_card_badge_takes_the_role_and_the_slider_keeps_the_label_floor(qtbot):
     header = _header(role="pump")
     control = _control(_member(header))
-    ids = pump_role_header_ids([header])
-    card = ControlCard(control, _curves(), pump_header_ids=lambda: ids)
+    ids = floor_role_header_roles([header], None, ())
+    card = ControlCard(control, _curves(), floor_roles=lambda: ids)
     qtbot.addWidget(card)
     assert card._min_pwm_label.text() == f"Min: {PUMP_FLOOR:.0f}%"
     card._manual_btn.setChecked(True)

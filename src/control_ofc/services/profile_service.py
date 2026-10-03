@@ -20,9 +20,11 @@ import json
 import logging
 import math
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
@@ -36,6 +38,7 @@ from control_ofc.knowledge.sensor_knowledge import (
     sensor_is_coolant,
 )
 from control_ofc.paths import atomic_write, load_json_capped, profiles_dir
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.shared_fan_switch import (
     SharedSwitchRuleError,
     describe_shared_switch_violations,
@@ -437,7 +440,7 @@ def role_tagged_member_label(label: str, header_role: str) -> str:
     assignment. On a board whose Super-I/O publishes no pwmN_label files that
     assignment is the *only* evidence a pump exists, and without this the GUI
     stamped minimum_pct = 20 on a header the daemon independently floors at
-    30% (assigned_role_is_pump -> member_effective_floor). The floor was
+    30% (assigned_role_earns_hard_floor -> member_effective_floor). The floor was
     never actually at risk; the displayed number was a lie, which is the DEC-257
     failure repeated one evidence-source later.
 
@@ -458,34 +461,88 @@ def role_tagged_member_label(label: str, header_role: str) -> str:
     return f"{label}{AIO_PUMP_TAG}"
 
 
-def pump_role_header_ids(headers) -> frozenset[str]:
-    """Ids of the hwmon headers whose daemon-resolved role is ``pump`` (DEC-417).
+#: The header roles the daemon's assignment floor term counts
+#: (``assigned_role_earns_hard_floor``): ``pump`` (DEC-311), and ``cpu_fan`` from
+#: the daemon that advertises ``control.cpu_fan_role_floor`` (`ROLE-a`).
+_FLOOR_ROLE_PUMP = "pump"
+_FLOOR_ROLE_CPU_FAN = "cpu_fan"
 
-    The display-time twin of :func:`role_tagged_member_label`, on the same
-    predicate (``HwmonHeader.role == "pump"``). That function bakes the role into
-    a member's label when the member is authored; this one lets a display site
-    union the role in for a member authored *before* the assignment, or through a
-    picker that never tags it (`TS-w`). The daemon floors such a member at 30% on
-    the assignment alone (``assigned_role_is_pump`` → ``member_effective_floor``),
-    so a floor derived from the label alone shows 20% for it.
 
-    Display only, and live: it follows the header's role both ways, as the
-    daemon's assignment term does. It is deliberately NOT
-    ``header_is_pump_protected`` — that union also carries terms the label
-    classifier already mirrors, and on daemons 2.31.0 to 2.35.3 a published floor
-    that no enforcement site applies (`WIRE-b`).
+def _openfan_role_key(member_id: str) -> str | None:
+    """An OpenFan channel id in the daemon's padded spelling (``openfan:ch04``),
+    or ``None`` when ``member_id`` is not one.
+
+    The daemon looks a channel's assignment up through ``roles::role_key``, so a
+    profile naming ``openfan:ch4`` drives — and is floored as — channel 4; the
+    GUI matches the same way. ``None`` keeps an OpenFan member whose id is not a
+    channel from borrowing a header's role by an id collision.
     """
-    return frozenset(h.id for h in headers or () if getattr(h, "role", "") == "pump")
+    prefix, sep, channel = member_id.partition("openfan:ch")
+    if prefix or not sep or not channel.isascii() or not channel.isdigit():
+        return None
+    return f"openfan:ch{int(channel):02d}"
 
 
-def pump_role_floor_pct(members: list[ControlMember], pump_header_ids: frozenset[str]) -> float:
-    """The floor a header's pump role gives these members: 30% when any hwmon
-    member's header is in ``pump_header_ids``, else 0 (DEC-417).
+def floor_role_header_roles(headers, capabilities, openfan_roles) -> Mapping[str, str]:
+    """Id → role for the hwmon headers and OpenFan channels whose role the daemon
+    floors at 30% on the role alone (DEC-417, `ROLE-a`).
+
+    The display-time mirror of the daemon's assignment term
+    (``assigned_role_earns_hard_floor``). A header's role is baked into a
+    member's label only for ``pump`` and only by Configure AIO
+    (:func:`role_tagged_member_label`), so a member authored before the
+    assignment, or through a picker that never tags it (`TS-w`), is chassis by
+    its label while the daemon holds it at 30% — a floor derived from the label
+    alone shows 20% for it. An OpenFan channel (``openfan_roles``, `ROLE-f`) has no
+    label at all, so its role is the only evidence either side has.
+
+    ``cpu_fan`` counts only where ``capabilities`` advertise
+    ``cpu_fan_role_floor``: an older daemon gives an assigned CPU fan no floor,
+    and showing one there would be a floor nothing enforces. ``openfan_roles`` is
+    required, with no default, so a caller cannot silently drop the channels
+    (the DEC-379 shape); it is empty where the daemon has no OpenFan roles.
+
+    Display only, and live: it follows the role both ways, as the daemon's
+    assignment term does. It is deliberately NOT ``header_is_pump_protected`` —
+    that union also carries terms the label classifier already mirrors, and on
+    daemons 2.31.0 to 2.35.3 a published floor that no enforcement site applies
+    (`WIRE-b`); nor does it carry a CPU fan, which the daemon floors but never
+    protects from a stop.
+    """
+    roles = {_FLOOR_ROLE_PUMP}
+    if daemon_supports("cpu_fan_role_floor", capabilities) is True:
+        roles.add(_FLOOR_ROLE_CPU_FAN)
+    floor_roles = {h.id: h.role for h in headers or () if getattr(h, "role", "") in roles}
+    for r in openfan_roles or ():
+        key = _openfan_role_key(getattr(r, "fan_id", ""))
+        if key is not None and getattr(r, "role", "") in roles:
+            floor_roles[key] = r.role
+    return MappingProxyType(floor_roles)
+
+
+def member_floor_role(member: ControlMember, floor_roles: Mapping[str, str]) -> str | None:
+    """The role in ``floor_roles`` that floors ``member``, or ``None``.
+
+    hwmon members match the header id; OpenFan members the channel in the
+    daemon's padded spelling. Any other source takes no role (a GPU is never a
+    pump or a CPU fan), so an id collision cannot borrow one.
+    """
+    if member.source == "hwmon":
+        return floor_roles.get(member.member_id)
+    if member.source == "openfan":
+        key = _openfan_role_key(member.member_id)
+        return floor_roles.get(key) if key is not None else None
+    return None
+
+
+def role_floor_pct(members: list[ControlMember], floor_roles: Mapping[str, str]) -> float:
+    """The floor a role gives these members: 30% when any member is floored by
+    ``floor_roles`` (from :func:`floor_role_header_roles`), else 0.
 
     Union only — callers take the ``max`` with the label-derived floor, so this can
     raise a displayed floor and never lower one.
     """
-    if any(m.source == "hwmon" and m.member_id in pump_header_ids for m in members):
+    if any(member_floor_role(m, floor_roles) for m in members):
         return role_minimum_pct(CONTROL_ROLE_CPU_PUMP)
     return 0.0
 
@@ -580,7 +637,7 @@ def control_minimum_pct(members: list[ControlMember]) -> float:
 
 
 def member_minimum_pct(
-    control: LogicalControl, member: ControlMember, pump_header_ids: frozenset[str]
+    control: LogicalControl, member: ControlMember, floor_roles: Mapping[str, str]
 ) -> float:
     """Effective minimum-PWM floor for a single member of ``control`` (DEC-119).
 
@@ -598,10 +655,10 @@ def member_minimum_pct(
     GPU members and is byte-for-byte identical to the pre-DEC-119 control-wide
     behaviour for every non-GPU member and every homogeneous control.
 
-    ``pump_header_ids`` (from :func:`pump_role_header_ids`) adds the daemon's
-    third floor term, the header's pump role (DEC-417). It is required, with no
-    default: a caller that could silently omit it would show 20% for a member the
-    daemon floors at 30% — the DEC-379 shape.
+    ``floor_roles`` (from :func:`floor_role_header_roles`) adds the daemon's
+    third floor term, the header's pump or CPU-fan role (DEC-417, `ROLE-a`). It is
+    required, with no default: a caller that could silently omit it would show 20%
+    for a member the daemon floors at 30% — the DEC-379 shape.
     """
     role = infer_member_role(member)
     if role == CONTROL_ROLE_GPU:
@@ -609,7 +666,7 @@ def member_minimum_pct(
     return max(
         control.minimum_pct,
         role_minimum_pct(role),
-        pump_role_floor_pct([member], pump_header_ids),
+        role_floor_pct([member], floor_roles),
     )
 
 

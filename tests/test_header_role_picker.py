@@ -93,8 +93,9 @@ class TestChoices:
         assert "unknown" not in tokens
 
     def test_cpu_fan_says_it_adds_no_floor(self):
-        """An assigned `cpu_fan` feeds no floor daemon-side (only `pump` does);
-        copy implying protection would lie about hardware safety."""
+        """An assigned `cpu_fan` feeds no floor on a daemon without
+        `cpu_fan_role_floor`; copy implying protection would lie about hardware
+        safety. The daemon that floors it: `test_cpu_fan_role_floor_role_a`."""
         cpu = next(c for c in ROLE_CHOICES if c.token == "cpu_fan")
         assert "adds no floor" in cpu.effect
 

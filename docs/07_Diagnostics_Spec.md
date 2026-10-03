@@ -1106,7 +1106,10 @@ protected whatever the user chose). Synchronous on the UI thread.
 
 - **Enablement:** capability `control.header_roles` and a writable header. A running PWM Test
   Report does **not** disable it (the daemon re-checks roles at every step).
-- **CPU fan** is display-only when assigned: only `pump` feeds a floor daemon-side.
+- **CPU fan**, assigned, earns the daemon's CPU floor in the active profile where it advertises
+  `control.cpu_fan_role_floor` (`ROLE-a`); it is never pump protection (identify still stops it).
+  The choice's text and the outcome message say which applies (`choices_for_daemon`); on an older
+  daemon an assigned CPU fan is display-only.
 - **A failure** says "nothing was changed" only on a daemon error envelope (it persists first).
   A timeout or dropped connection says the daemon did not confirm; the page re-reads the
   headers, and says the card may lag when that re-read fails too.

@@ -28,6 +28,7 @@ from .header_role_view import (
     ROLE_PUMP,
     ROLE_RADIATOR,
     RoleChoice,
+    choices_for_daemon,
 )
 from .pump_protection import openfan_channel_is_pump_protected
 
@@ -76,11 +77,19 @@ def openfan_roles_supported(capabilities: Capabilities | None) -> bool:
     return daemon_supports("openfan_header_roles", capabilities) is True
 
 
+#: The channel's "CPU fan" choice from a daemon that floors an assigned CPU fan
+#: (`ROLE-a`, ``cpu_fan_role_floor``).
+OPENFAN_CPU_FAN_FLOORED_CHOICE = RoleChoice(
+    ROLE_CPU,
+    "CPU fan",
+    "Holds it at or above the CPU fan safety floor in the active profile. It is "
+    "not a pump: identify still stops it to show you which fan it is.",
+)
+
+
 def openfan_role_choices(capabilities: Capabilities | None) -> tuple[RoleChoice, ...]:
-    """The picker's choices for this daemon: "No fan" only where it is accepted."""
-    if daemon_supports("header_role_no_fan", capabilities) is True:
-        return OPENFAN_ROLE_CHOICES
-    return tuple(c for c in OPENFAN_ROLE_CHOICES if c.token != ROLE_NO_FAN)
+    """The picker's choices for this daemon (``choices_for_daemon``)."""
+    return choices_for_daemon(OPENFAN_ROLE_CHOICES, capabilities, OPENFAN_CPU_FAN_FLOORED_CHOICE)
 
 
 @dataclass(frozen=True)

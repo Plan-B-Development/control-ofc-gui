@@ -6,7 +6,7 @@ Editing members/curve/overrides happens in a dialog, not on the card.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -66,7 +66,7 @@ class ControlCard(ResizableGridCard):
         user_size: tuple[int, int] | None = None,
         parent=None,
         display_name: Callable[[str, str], str] | None = None,
-        pump_header_ids: Callable[[], frozenset[str]] | None = None,
+        floor_roles: Callable[[], Mapping[str, str]] | None = None,
         detected_hwmon_ids: Callable[[], frozenset[str] | None] | None = None,
     ) -> None:
         super().__init__(parent)
@@ -74,14 +74,15 @@ class ControlCard(ResizableGridCard):
         # so a rename made anywhere reaches these rows. Defaults to the old
         # cached-label behaviour when no resolver is supplied (tests, previews).
         self._display_name = display_name or (lambda mid, label: label or mid)
-        # DEC-417: the live ids of headers whose role is `pump`, read by the Min
-        # badge. A resolver rather than a snapshot, like `display_name`, so a role
-        # assigned after the card was built still reaches it on the next repaint
+        # DEC-417 / `ROLE-a`: the live id → role of headers whose pump or CPU-fan
+        # role the daemon floors, read by the Min badge. A resolver rather than a
+        # snapshot, like `display_name`, so a role assigned after the card was
+        # built still reaches it on the next repaint
         # (`refresh_min_pwm_badge`). No resolver (tests, previews) means no roles.
-        self._pump_header_ids = pump_header_ids or frozenset
+        self._floor_roles = floor_roles or dict
         # DEC-461: the canonical ids of the hwmon headers the daemon reports, or
         # None when that is not known (no headers yet, demo). A resolver for the
-        # same reason as `pump_header_ids`; `refresh_member_presence` repaints.
+        # same reason as `floor_roles`; `refresh_member_presence` repaints.
         # No resolver (tests, previews) means nothing is judged missing.
         self._detected_hwmon_ids = detected_hwmon_ids or (lambda: None)
         self._control = control
@@ -900,7 +901,7 @@ class ControlCard(ResizableGridCard):
 
     def _update_min_pwm_badge(self, control: LogicalControl) -> None:
         """Render the Min badge from its view-model (``controls_view.min_pwm_badge``)."""
-        badge = min_pwm_badge(control, self._pump_header_ids())
+        badge = min_pwm_badge(control, self._floor_roles())
         if badge.floor_pct <= 0.0:
             self._min_pwm_label.setText("")
             self._min_pwm_label.setToolTip("")

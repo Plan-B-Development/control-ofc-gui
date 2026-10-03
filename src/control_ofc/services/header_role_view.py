@@ -16,10 +16,12 @@ Three rules from DEC-311/312 shape everything here:
   hardware labels ``PUMP`` stays protected whatever the user assigns. So the
   outcome is read back from the daemon (``effective_role`` and the re-read
   header's ``stop_permitted``), never predicted from the choice.
-* **Only ``pump`` feeds a floor.** An assigned ``cpu_fan`` adds none — the CPU
-  floor comes from a label that names the CPU fan (daemon
-  ``profile.rs::assigned_role_is_pump`` is the only floor term an assignment
-  feeds). The copy says so instead of implying a protection that is not there.
+* **``pump`` and ``cpu_fan`` feed a floor, and only ``pump`` protection.** An
+  assigned ``cpu_fan`` earns the CPU floor in the active profile only from a
+  daemon that advertises ``cpu_fan_role_floor`` (`ROLE-a`, daemon
+  ``profile.rs::assigned_role_earns_hard_floor``); an older one adds none, and the
+  copy says whichever is true for the daemon in hand. Either way a CPU fan is not
+  a pump: identify still stops it (DEC-311).
 """
 
 from __future__ import annotations
@@ -94,11 +96,35 @@ ROLE_CHOICES: tuple[RoleChoice, ...] = (
 )
 
 
+#: The "CPU fan" choice from a daemon that floors an assigned CPU fan (`ROLE-a`,
+#: ``cpu_fan_role_floor``). It replaces the ``ROLE_CHOICES`` entry, whose "adds
+#: no floor" is true only of an older daemon.
+CPU_FAN_FLOORED_CHOICE = RoleChoice(
+    ROLE_CPU,
+    "CPU fan",
+    "Holds it at or above the CPU fan safety floor in the active profile, as a "
+    "hardware label naming the CPU fan does. It is not a pump: identify still stops "
+    "it to show you which fan it is. The stall/restart probe is not offered on a CPU fan.",
+)
+
+
+def choices_for_daemon(
+    choices: tuple[RoleChoice, ...],
+    capabilities: Capabilities | None,
+    cpu_fan_floored: RoleChoice,
+) -> tuple[RoleChoice, ...]:
+    """``choices`` as true for this daemon: "No fan" only where it is accepted, and
+    the CPU-fan choice that names the floor only where the daemon applies it."""
+    if daemon_supports("cpu_fan_role_floor", capabilities) is True:
+        choices = tuple(cpu_fan_floored if c.token == ROLE_CPU else c for c in choices)
+    if daemon_supports("header_role_no_fan", capabilities) is not True:
+        choices = tuple(c for c in choices if c.token != ROLE_NO_FAN)
+    return choices
+
+
 def role_choices(capabilities: Capabilities | None) -> tuple[RoleChoice, ...]:
-    """The picker's choices for this daemon: "No fan" only where it is accepted."""
-    if daemon_supports("header_role_no_fan", capabilities) is True:
-        return ROLE_CHOICES
-    return tuple(c for c in ROLE_CHOICES if c.token != ROLE_NO_FAN)
+    """The picker's choices for this daemon (:func:`choices_for_daemon`)."""
+    return choices_for_daemon(ROLE_CHOICES, capabilities, CPU_FAN_FLOORED_CHOICE)
 
 
 def current_choice(header: HwmonHeader | OpenFanRole) -> str | None:
@@ -120,7 +146,10 @@ class RolePlan:
     #: True when nothing would change daemon-side, so nothing is sent.
     noop: bool
     #: True when this removes a pump role the USER assigned — the only role write
-    #: that can lower protection, and so the only one that asks first.
+    #: that can lower pump protection, and so the only one that asks first.
+    #: Removing an assigned ``cpu_fan`` can lower the engine floor too
+    #: (`ROLE-a`), but a CPU fan is never protected from a stop, so it does not
+    #: ask; the Min badge shows the change.
     removes_user_pump: bool
 
 
@@ -173,7 +202,13 @@ def outcome_message(
     else:
         text = f"{name} is now set to {effective}."
     if result.role == ROLE_CPU:
-        text += " An assigned CPU-fan role adds no floor."
+        if daemon_supports("cpu_fan_role_floor", capabilities) is True:
+            text += (
+                " The daemon holds it at or above the CPU fan safety floor in the "
+                "active profile; identify can still stop it."
+            )
+        else:
+            text += " An assigned CPU-fan role adds no floor."
     if refreshed is not None and result.effective_role != ROLE_PUMP:
         if header_is_pump_protected(refreshed, capabilities):
             text += (

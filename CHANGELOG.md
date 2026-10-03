@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A fan you mark as the CPU fan shows the floor the daemon now keeps it at.** With control-ofc-daemon
+  3.6.0, a header or OpenFan channel you set to **CPU fan** is held at or above the CPU fan safety floor
+  in the active profile, as a header whose own label names the CPU fan already was. The control card's
+  Min badge and the Dashboard fan cards show that floor, and the role picker says so — and that a CPU
+  fan is not a pump, so identify still stops it. With an older daemon nothing changes: the picker still
+  says an assigned CPU-fan role adds no floor (`ROLE-a`).
+
 ### Fixed
 
 - **The settings-file banner names the right file after a failed start.** When control-ofc-daemon could not

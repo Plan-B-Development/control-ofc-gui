@@ -175,7 +175,7 @@ class TestRoleAwareDiscovery:
 class TestFloorTruthfulness:
     def test_assigned_pump_on_a_labelless_header_gets_30(self):
         """The UI lie this fixes: the daemon floors it at 30 regardless, via
-        `assigned_role_is_pump`; before this the GUI stamped and displayed 20."""
+        `assigned_role_earns_hard_floor`; before this the GUI stamped and displayed 20."""
         headers = [_mb_header(5, role="pump", role_source="user_assigned")]
         det = detect_aio_setup(headers, [], {})
         ctl = LogicalControl(id="c", name="AIO Pump", members=[det.pump_member])

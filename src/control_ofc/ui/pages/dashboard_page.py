@@ -1122,6 +1122,7 @@ class DashboardPage(QWidget):
             overrides=status.overrides if status else [],
             headers=self._state.hwmon_headers,
             caps=self._state.capabilities,
+            openfan_roles=self._state.openfan_roles,
             sensor_values={s.id: s.value_c for s in (self._state.sensors or [])},
             display_name=self._state.fan_display_name,
             stalled_ids=self._state.stalled_fan_ids,

@@ -341,6 +341,12 @@ class ControlCapability:
     #: OpenFan channel. Gate the OpenFan role picker on this — an older daemon
     #: rejects the id with a 400 and 404s the route.
     openfan_header_roles: bool = False
+    #: `ROLE-a`: a header or OpenFan channel the user assigned ``cpu_fan`` gets
+    #: the 30% CPU/pump floor in the active profile, as a ``CPU_FAN`` label does.
+    #: A floor only — identify still stops it and ``stop_permitted`` does not
+    #: change. Gate any display of that floor on this: an older daemon gives an
+    #: assigned CPU fan none.
+    cpu_fan_role_floor: bool = False
     #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
     #: coalesce and rewrites a duty that moved, giving up after three
     #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then

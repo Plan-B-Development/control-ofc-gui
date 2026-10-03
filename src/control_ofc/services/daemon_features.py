@@ -98,6 +98,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # DEC-475, control.openfan_header_roles. Roles on OpenFan channels.
         # `/ofc:release` confirms the version.
         "openfan_header_roles": "3.5.0",
+        # `ROLE-a`, control.cpu_fan_role_floor. An assigned `cpu_fan` earns the
+        # CPU floor. `/ofc:release` confirms the version.
+        "cpu_fan_role_floor": "3.6.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -155,6 +158,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "pwm_verification_records": "pwm_verification_records",
         "header_role_no_fan": "header_role_no_fan",
         "openfan_header_roles": "openfan_header_roles",
+        "cpu_fan_role_floor": "cpu_fan_role_floor",
     }
 )
 
@@ -186,6 +190,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "pwm_verification_records": "remembering which fan headers passed verification",
         "header_role_no_fan": "marking a fan header as having no fan",
         "openfan_header_roles": "roles on OpenFan channels",
+        "cpu_fan_role_floor": "a floor for a fan you mark as the CPU fan",
     }
 )
 
