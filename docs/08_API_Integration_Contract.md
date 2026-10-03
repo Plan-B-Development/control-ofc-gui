@@ -943,9 +943,10 @@ field the entire notification was one `warn!` in the daemon's journal. **No clie
 
 A `phase: "startup"` degradation is the one that drops header roles, because the boot load seeds
 every runtime-mutable key. A `phase: "reload"` degradation (a SIGHUP that could not parse the file)
-is narrower: it re-applies defaults to the running config but commits only `profile_search_dirs` and
-the exit floor (DEC-388), so header roles keep whatever startup established, while an exit floor set in
-`runtime.toml` falls back to the value in `daemon.toml`.
+is narrower: header roles keep whatever startup established, and on daemons after 3.6.0 (`DC-cu`) the
+reload commits nothing else either — `profile_search_dirs`, the exit floor (DEC-388) and the coolant
+limit (DEC-443) keep their running values. Up to 3.6.0 an exit floor or coolant limit set in
+`runtime.toml` fell back to the value in `daemon.toml`.
 
 A `phase: "update"` degradation (daemon ≥ 2.51.0, `TS-r`) means a `POST /config/*` setter found the
 file unreadable, kept the original as `runtime.toml.invalid-<unix-ts>` (DEC-255) and replaced it.
