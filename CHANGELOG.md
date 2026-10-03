@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [3.4.0] — 2026-10-03
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. **Set role… ▸ No fan** needs
+control-ofc-daemon 3.4.0; with an older daemon the option is simply not offered.
+
 ### Added
 
 - **Mark a fan header as empty.** **Set role… ▸ No fan** on a Hardware-page header card (needs
