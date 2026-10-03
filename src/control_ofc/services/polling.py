@@ -23,6 +23,7 @@ from control_ofc.api.models import (
 from control_ofc.constants import CAPABILITIES_REFRESH_INTERVAL_S, POLL_INTERVAL_MS
 from control_ofc.paths import profiles_dir
 from control_ofc.services.app_state import AppState
+from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 
@@ -43,6 +44,8 @@ class _PollWorker(QObject):
     #: is static configuration, and §19 forbids increasing poll load
     #: simply because more fields became visible.
     cooling_devices_ready = Signal(object)  # CoolingDeviceInventory
+    #: `ROLE-f`: each OpenFan channel's role, on the capabilities interval.
+    openfan_roles_ready = Signal(list)  # list[OpenFanRole]
     active_profile_ready = Signal(object)  # ActiveProfileInfo | None
     hw_diagnostics_ready = Signal(object)  # HardwareDiagnosticsResult
 
@@ -171,6 +174,13 @@ class _PollWorker(QObject):
                         # back to per-header cards, which never depended on
                         # topology (§1). Never fail a poll over it.
                         log.warning("Failed to query cooling devices — topology view may be stale")
+                # `ROLE-f`: capability-gated like the topology above — an older
+                # daemon 404s the route.
+                if daemon_supports("openfan_header_roles", caps) is True:
+                    try:
+                        self.openfan_roles_ready.emit(client.openfan_roles())
+                    except (DaemonError, ConnectionError, OSError):
+                        log.warning("Failed to query OpenFan channel roles")
                 try:
                     self.active_profile_ready.emit(client.active_profile())
                 except (DaemonError, ConnectionError, OSError):
@@ -397,6 +407,7 @@ class PollingService(QObject):
             self._worker.request_headers_refresh, Qt.ConnectionType.QueuedConnection
         )
         self._worker.cooling_devices_ready.connect(state.set_cooling_devices)
+        self._worker.openfan_roles_ready.connect(state.set_openfan_roles)
         self._worker.active_profile_ready.connect(self._on_active_profile)
         self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)
         self._worker.connected.connect(self._on_connected)

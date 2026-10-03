@@ -42,18 +42,45 @@ PRE_RUN_WARNINGS = (
     "up until it starts again, and reports both duties. It takes about 1.5 to 2 "
     "minutes, up to about 3.",
     "The fan on this channel will be stopped during the test. The daemon cannot "
-    "tell whether an OpenFan channel powers a pump, so it asks you to confirm "
-    "that it does not.",
+    "tell whether an OpenFan channel powers a pump, so it asks you to confirm that "
+    "it does not.",
     "Curve control for every fan is paused while this runs, and each fan holds "
     "its last duty. Thermal safety is unaffected and still overrides everything; "
     "the test stops itself if the CPU warms noticeably.",
 )
+
+#: Replaces the second warning where the daemon protects assigned pumps
+#: (`ROLE-f`). Gated, like `pump_identify_warning`: the refusal is the daemon's,
+#: and a daemon without roles walks any channel it is asked to (`UDOC-i`).
+PUMP_ROLE_WARNING = (
+    "The fan on this channel will be stopped during the test. A channel you set "
+    "to Pump on the Hardware page is never calibrated; for any other channel the "
+    "daemon cannot tell whether it powers a pump, so it asks you to confirm that "
+    "it does not."
+)
+
+
+def pre_run_warnings(pump_roles: bool) -> tuple[str, ...]:
+    """The dialog's intro; ``pump_roles`` is ``openfan_roles_supported(caps)``."""
+    if not pump_roles:
+        return PRE_RUN_WARNINGS
+    return (PRE_RUN_WARNINGS[0], PUMP_ROLE_WARNING, *PRE_RUN_WARNINGS[2:])
+
 
 DEMO_REFUSAL = (
     "Demo mode has no OpenFan controller to calibrate. Connect to the daemon to run this test."
 )
 
 NO_CHANNELS_TEXT = "No OpenFan channel is reporting. Connect an OpenFan controller first."
+
+
+def pump_channel_refusal(channel_label: str) -> str:
+    """Why a pump channel cannot be calibrated (`ROLE-f`)."""
+    return (
+        f"{channel_label} is set to Pump, so the daemon will not calibrate it: the "
+        "test stops the fan, and a pump is never stopped. To calibrate it, change "
+        "its role on the Hardware page first."
+    )
 
 
 def pump_confirmation_text(channel_label: str) -> str:
@@ -80,6 +107,9 @@ class ChannelOption:
     label: str
     #: The picker text: the name plus the live RPM.
     text: str
+    #: The daemon protects this channel as a pump (`ROLE-f`), so it refuses to
+    #: calibrate it. Listed, so the user sees why, but never startable.
+    pump_protected: bool = False
 
 
 def _channel_label(channel: int, display_name: str) -> str:
@@ -91,7 +121,9 @@ def _channel_label(channel: int, display_name: str) -> str:
 
 
 def build_channel_options(
-    fans: Iterable[object], display_name: Callable[[str], str]
+    fans: Iterable[object],
+    display_name: Callable[[str], str],
+    pump_protected: Callable[[str], bool] = lambda _fan_id: False,
 ) -> list[ChannelOption]:
     """Every OpenFan channel ``/fans`` reports, with its current RPM (DEC-453).
 
@@ -110,7 +142,10 @@ def build_channel_options(
         label = _channel_label(channel, display_name(fan_id))
         rpm = getattr(fan, "rpm", None)
         rpm_text = "no RPM reading" if rpm is None else f"{rpm} rpm now"
-        options.append(ChannelOption(fan_id, channel, label, f"{label} — {rpm_text}"))
+        pump = pump_protected(fan_id)
+        if pump:
+            rpm_text += " — pump, not calibrated"
+        options.append(ChannelOption(fan_id, channel, label, f"{label} — {rpm_text}", pump))
     options.sort(key=lambda o: o.channel)
     return options
 
@@ -165,6 +200,8 @@ _ABORT_WORDS = {
     "write_failed": "a write to the controller failed",
     "rpm_unreadable": "no RPM reading arrived after a write",
     "shutting_down": "the daemon was shutting down",
+    "pump_protected": "the channel was set to Pump during the test, and a pump is never "
+    "walked toward a stop",
     "superseded": "the daemon's diagnostic pause was lost to another test",
     "task_failed": "the daemon's calibration task ended unexpectedly — a daemon defect worth "
     "reporting",

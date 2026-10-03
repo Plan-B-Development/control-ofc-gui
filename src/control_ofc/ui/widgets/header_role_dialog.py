@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.api.models import HwmonHeader
+from control_ofc.api.models import HwmonHeader, OpenFanRole
 from control_ofc.services.header_inspector_view import role_label, role_source_label
 from control_ofc.services.header_role_view import (
     ROLE_CHOICES,
@@ -44,11 +44,12 @@ class HeaderRoleDialog(ModalDialog):
 
     def __init__(
         self,
-        header: HwmonHeader,
+        header: HwmonHeader | OpenFanRole,
         display_name: str,
         *,
         label_caveat: str = "",
         choices: tuple[RoleChoice, ...] = ROLE_CHOICES,
+        intro_text: str = "",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(f"Set role — {display_name}", parent)
@@ -57,10 +58,15 @@ class HeaderRoleDialog(ModalDialog):
         body = self.body_layout()
         body.setSpacing(8)
 
+        # `ROLE-f`: an OpenFan channel passes its own intro — it has no hardware
+        # label for an assignment to sit on top of.
         intro = QLabel(
-            f"What does {display_name} drive? This sets your assignment only: a role "
-            "that comes from the hardware label or the chip stays underneath it, and "
-            "the daemon keeps protecting a header its label names a pump.",
+            intro_text
+            or (
+                f"What does {display_name} drive? This sets your assignment only: a role "
+                "that comes from the hardware label or the chip stays underneath it, and "
+                "the daemon keeps protecting a header its label names a pump."
+            ),
             self,
         )
         intro.setObjectName("HeaderRole_Label_intro")

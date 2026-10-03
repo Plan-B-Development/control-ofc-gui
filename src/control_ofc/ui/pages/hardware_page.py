@@ -76,13 +76,25 @@ from control_ofc.services.header_role_view import (
     nct6687_label_note,
     nct6687_label_prompt,
     outcome_message,
+    plan_role_change,
     role_choices,
     role_editable,
 )
-from control_ofc.services.header_role_writes import apply_role_writes
+from control_ofc.services.header_role_writes import WRITE_ERRORS, apply_role_writes
 from control_ofc.services.openfan_calibration_view import build_channel_options
+from control_ofc.services.openfan_role_view import (
+    OPENFAN_ROLE_INTRO,
+    OpenFanRoleRow,
+    build_openfan_role_rows,
+    openfan_outcome_message,
+    openfan_role_choices,
+    openfan_roles_supported,
+)
 from control_ofc.services.profile_service import ProfileService
-from control_ofc.services.pump_protection import header_is_pump_protected
+from control_ofc.services.pump_protection import (
+    header_is_pump_protected,
+    openfan_channel_is_pump_protected,
+)
 from control_ofc.services.pwm_report.runner import VERIFY_PAGE_HARDWARE, VERIFY_PAGE_SYSTEM_STATE
 from control_ofc.services.pwm_verification import verification_signature
 from control_ofc.services.verify_evidence import VerifyEvidence
@@ -334,6 +346,7 @@ class HardwarePage(QWidget):
             self._state.headers_updated.connect(self._expire_role_outcome)
             self._state.capabilities_updated.connect(self._refresh_cooling_section)
             self._state.cooling_devices_updated.connect(self._refresh_cooling_section)
+            self._state.openfan_roles_updated.connect(self._refresh_openfan_roles)
             # §6.3's "Last validated" row is daemon-persisted, so it must be
             # fetched once the capability handshake says the route exists. Keyed
             # to `capabilities_updated` rather than the 1 Hz poll deliberately:
@@ -561,6 +574,42 @@ class HardwarePage(QWidget):
         self._header_flow = FlowLayout(self._header_container, margin=0, h_spacing=10, v_spacing=10)
         v.addWidget(self._header_container)
 
+        # `ROLE-f` (DEC-475): roles on OpenFan channels. An OpenFan channel has
+        # no label, so the user's `pump` assignment is the daemon's only pump
+        # evidence for it. Hidden unless the daemon serves the route and there
+        # is a channel to list.
+        self._openfan_box = QWidget(card)
+        self._openfan_box.setObjectName("Hardware_Box_openfanRoles")
+        openfan_layout = QVBoxLayout(self._openfan_box)
+        openfan_layout.setContentsMargins(0, 6, 0, 0)
+        openfan_layout.setSpacing(6)
+        openfan_heading = QLabel("OpenFan Channels", self._openfan_box)
+        openfan_heading.setObjectName("Hardware_Label_openfanHeading")
+        openfan_heading.setProperty("class", "CardMeta")
+        openfan_layout.addWidget(openfan_heading)
+        openfan_note = QLabel(
+            "An OpenFan channel has no hardware label, so the daemon treats a pump "
+            "plugged into one as a pump only once you set its role to Pump.",
+            self._openfan_box,
+        )
+        openfan_note.setObjectName("Hardware_Label_openfanNote")
+        openfan_note.setProperty("class", "CardMeta")
+        openfan_note.setWordWrap(True)
+        openfan_layout.addWidget(openfan_note)
+        self._openfan_rows = QWidget(self._openfan_box)
+        self._openfan_rows_layout = QVBoxLayout(self._openfan_rows)
+        self._openfan_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._openfan_rows_layout.setSpacing(4)
+        openfan_layout.addWidget(self._openfan_rows)
+        self._openfan_outcome = QLabel("", self._openfan_box)
+        self._openfan_outcome.setObjectName("Hardware_Label_openfanOutcome")
+        self._openfan_outcome.setWordWrap(True)
+        self._openfan_outcome.setVisible(False)
+        openfan_layout.addWidget(self._openfan_outcome)
+        self._openfan_row_views: list[OpenFanRoleRow] | None = None
+        self._openfan_box.setVisible(False)
+        v.addWidget(self._openfan_box)
+
         self._cooling_empty = QLabel("", card)
         self._cooling_empty.setObjectName("Hardware_Label_coolingEmpty")
         self._cooling_empty.setProperty("class", "CardMeta")
@@ -762,6 +811,7 @@ class HardwarePage(QWidget):
         )
         self._sync_header_cards(header_views)
         self._refresh_label_prompt(headers)
+        self._refresh_openfan_roles()
 
         self._cooling_count.setText(
             f"{len(device_views)} device(s) · {len(header_views)} PWM header(s)"
@@ -788,6 +838,115 @@ class HardwarePage(QWidget):
             self._cooling_empty.setVisible(False)
 
         self._sync_diagnostic_enablement()
+
+    def _refresh_openfan_roles(self, *_args) -> None:
+        """Re-render the OpenFan Channels list (`ROLE-f`).
+
+        Rebuilt only when what it shows changes — the 1 Hz poll calls this, and
+        recreating the buttons every second would take keyboard focus away.
+        """
+        if not hasattr(self, "_openfan_box"):
+            return
+        state = self._state
+        rows: list[OpenFanRoleRow] = []
+        if state is not None and openfan_roles_supported(self._capabilities()):
+            rows = build_openfan_role_rows(state.fans, state.openfan_roles, state.fan_display_name)
+        self._openfan_box.setVisible(bool(rows))
+        if rows == self._openfan_row_views:
+            return
+        self._openfan_row_views = rows
+        layout = self._openfan_rows_layout
+        while layout.count():
+            item = layout.takeAt(0)
+            if (widget := item.widget()) is not None:
+                # Detached first, so nothing finds the old row before the
+                # deferred delete runs.
+                widget.setParent(None)
+                widget.deleteLater()
+        for row in rows:
+            slug = row.fan_id.replace(":", "_")
+            line = QWidget(self._openfan_rows)
+            line.setObjectName(f"Hardware_Row_openfanRole_{slug}")
+            h = QHBoxLayout(line)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(8)
+            name = QLabel(row.name, line)
+            name.setObjectName(f"Hardware_Label_openfanName_{slug}")
+            h.addWidget(name, 1)
+            pill = StatusPill(
+                row.role_text, row.tone, line, object_name=f"Hardware_Pill_openfanRole_{slug}"
+            )
+            h.addWidget(pill)
+            button = make_button(
+                "Set role…",
+                "secondary",
+                object_name=f"Hardware_Btn_openfanRole_{slug}",
+                accessible_name=f"Choose what {row.name} drives",
+                parent=line,
+            )
+            button.clicked.connect(lambda _=False, fid=row.fan_id: self._on_openfan_set_role(fid))
+            h.addWidget(button)
+            layout.addWidget(line)
+
+    def _on_openfan_set_role(self, fan_id: str) -> None:
+        message = self.change_openfan_role(fan_id, self)
+        if message is None:
+            return
+        self._openfan_outcome.setText(message)
+        self._openfan_outcome.setVisible(bool(message))
+
+    def change_openfan_role(self, fan_id: str, parent: QWidget | None) -> str | None:
+        """Pick, confirm and write one OpenFan channel's role (`ROLE-f`).
+
+        The channel counterpart of :meth:`change_header_role`: the same picker
+        and the same pump-removal confirmation, with the outcome read back from
+        a fresh ``GET /fans/openfan/roles``. ``None`` means the user cancelled
+        or nothing would change.
+        """
+        state = self._state
+        role = state.openfan_role(fan_id) if state else None
+        if state is None or role is None:
+            return "That OpenFan channel is no longer reported by the daemon."
+        caps = self._capabilities()
+        if not openfan_roles_supported(caps):
+            return unsupported_feature_message("openfan_header_roles")
+        if self._client is None:
+            return "Cannot set a role: no daemon connection."
+        name = state.fan_display_name(fan_id)
+        dialog = HeaderRoleDialog(
+            role,
+            name,
+            choices=openfan_role_choices(caps),
+            intro_text=OPENFAN_ROLE_INTRO.format(name=name),
+            parent=parent,
+        )
+        if not dialog.exec():
+            return None
+        new_role = dialog.chosen_role()
+        plan = plan_role_change(role, new_role)
+        if plan.noop:
+            return None
+        if plan.removes_user_pump and not confirm_remove_pump_protection(parent, [name]):
+            return f"{name} kept its pump role."
+        result = None
+        error: Exception | None = None
+        try:
+            result = self._client.set_header_role(fan_id, new_role)
+        except WRITE_ERRORS as exc:
+            log.warning("Could not set role %s on %s: %s", new_role, fan_id, exc)
+            error = exc
+        refreshed = None
+        try:
+            roles = self._client.openfan_roles()
+        except WRITE_ERRORS as exc:
+            log.warning("OpenFan role re-fetch after a role change failed: %s", exc)
+        else:
+            # Emits `openfan_roles_updated`, which re-renders the list.
+            state.set_openfan_roles(roles)
+            refreshed = next((r for r in roles if r.fan_id == fan_id), None)
+        if error is not None or result is None:
+            return failure_message(name, new_role, error, reread=refreshed is not None)
+        return openfan_outcome_message(name, result, refreshed)
 
     def _active_profile(self):
         """The active profile object, for the DERIVED pump strategy (§2).
@@ -1635,7 +1794,13 @@ class HardwarePage(QWidget):
     def _openfan_channel_options(self):
         if self._state is None:
             return []
-        return build_channel_options(self._state.fans, self._state.fan_display_name)
+        state = self._state
+        return build_channel_options(
+            state.fans,
+            state.fan_display_name,
+            # `ROLE-f`: the daemon refuses a pump channel; the dialog says so first.
+            lambda fan_id: openfan_channel_is_pump_protected(state.openfan_role(fan_id)),
+        )
 
     def _open_openfan_calibration(self) -> None:
         if self._state is None:
@@ -1649,7 +1814,12 @@ class HardwarePage(QWidget):
         if not demo and not self._ensure_ofancal_worker():
             self._show_diag_message("Cannot calibrate: no daemon connection.")
             return
-        dialog = OpenFanCalibrationDialog(self._openfan_channel_options(), demo=demo, parent=self)
+        dialog = OpenFanCalibrationDialog(
+            self._openfan_channel_options(),
+            demo=demo,
+            pump_roles=openfan_roles_supported(self._capabilities()),
+            parent=self,
+        )
         dialog.start_requested.connect(self._ofancal_start_request.emit)
         dialog.poll_requested.connect(self._ofancal_poll_request.emit)
         dialog.cancel_requested.connect(self._ofancal_cancel_request.emit)

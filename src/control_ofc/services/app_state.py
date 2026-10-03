@@ -19,6 +19,7 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     HwmonHeader,
+    OpenFanRole,
     OperationMode,
     SensorReading,
 )
@@ -94,6 +95,7 @@ class AppState(QObject):
     sensors_updated = Signal(list)  # list[SensorReading]
     fans_updated = Signal(list)  # list[FanReading]
     headers_updated = Signal(list)  # list[HwmonHeader]
+    openfan_roles_updated = Signal(list)  # list[OpenFanRole] (`ROLE-f`)
     # `TS-ae`: ask the poll worker to re-read `/hwmon/headers` on its next cycle.
     # Raised after the GUI's own daemon-confirmed activation, which can change
     # `stop_permitted` without changing the active id (DEC-384: re-applying one
@@ -134,6 +136,10 @@ class AppState(QObject):
         self.sensors: list[SensorReading] = []
         self.fans: list[FanReading] = []
         self.hwmon_headers: list[HwmonHeader] = []
+        # `ROLE-f` (DEC-475): each OpenFan channel's role and pump protection,
+        # on the capabilities interval and after a role write. Empty when the
+        # daemon has no such route (`control.openfan_header_roles`).
+        self.openfan_roles: list[OpenFanRole] = []
         # AIO-MB Phase 6: cooling-device topology, refreshed on the
         # capabilities interval. `None` means "not fetched yet or this
         # daemon has no such route" — distinct from an inventory with an
@@ -316,6 +322,14 @@ class AppState(QObject):
         the worker reads the headers on its own thread, off the UI loop.
         """
         self.hwmon_headers_refresh_requested.emit()
+
+    def set_openfan_roles(self, roles: list[OpenFanRole]) -> None:
+        self.openfan_roles = roles
+        self.openfan_roles_updated.emit(roles)
+
+    def openfan_role(self, fan_id: str) -> OpenFanRole | None:
+        """The reported role of one OpenFan channel, or ``None``."""
+        return next((r for r in self.openfan_roles if r.fan_id == fan_id), None)
 
     def set_cooling_devices(self, inventory: CoolingDeviceInventory) -> None:
         self.cooling_devices = inventory

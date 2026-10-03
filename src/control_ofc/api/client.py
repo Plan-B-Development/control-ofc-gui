@@ -31,6 +31,7 @@ from control_ofc.api.models import (
     HwmonVerifyResult,
     IdentifyResult,
     OpenFanCalibrationRun,
+    OpenFanRole,
     OverrideGrant,
     OverrideReleaseResult,
     OverrideRenewResult,
@@ -64,6 +65,7 @@ from control_ofc.api.models import (
     parse_hwmon_verify_result,
     parse_identify_result,
     parse_openfan_calibration_run,
+    parse_openfan_roles,
     parse_override_grant,
     parse_override_release,
     parse_override_renew,
@@ -551,6 +553,15 @@ class DaemonClient:
         return parse_header_role(
             self._post("/config/header-role", json={"header_id": header_id, "role": role})
         )
+
+    def openfan_roles(self) -> list[OpenFanRole]:
+        """GET /fans/openfan/roles — every OpenFan channel's role and pump
+        protection (`ROLE-f`, DEC-475; capability control.openfan_header_roles).
+
+        A role is assigned with :meth:`set_header_role`, passing the channel's
+        fan id (``openfan:ch03``).
+        """
+        return parse_openfan_roles(self._get("/fans/openfan/roles"))
 
     def get_cooling_devices(self) -> CoolingDeviceInventory:
         """GET /inventory/cooling-devices — the configured cooling assemblies

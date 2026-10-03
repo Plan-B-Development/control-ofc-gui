@@ -605,7 +605,8 @@ class TestPumpSafeIdentifyCopy:
         state = self._state_with_pump(header_roles=True)
         wiz = FanConfigWizard(state)
         qtbot.addWidget(wiz)
-        # An OpenFan channel has no header at all, so it can never be a pump.
+        # An OpenFan channel is a pump only by an assignment the daemon reports
+        # (`ROLE-f`); this state has none.
         assert wiz.is_pump_target("openfan:ch00") is False
         assert wiz.identify_verb("openfan:ch00") == "stop"
 

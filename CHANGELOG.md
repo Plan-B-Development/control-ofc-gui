@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A pump on an OpenFan channel can be protected.** The Hardware page lists *OpenFan Channels* with
+  **Set role…** beside each, where control-ofc-daemon advertises `control.openfan_header_roles` (daemon 3.5.0).
+  Setting a channel to **Pump** makes the daemon hold it at or above the pump safety floor and never stop it;
+  the Fan Wizard then says it will change the pump's speed rather than stop it, and **Calibrate OpenFan
+  Channel…** lists it as *pump, not calibrated* and will not start it. Removing a pump you assigned asks
+  first. Before this an OpenFan channel could not be a pump, so a curve could stop a pump plugged into one.
+
 ## [3.4.1] — 2026-10-03
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Nothing in this release needs a

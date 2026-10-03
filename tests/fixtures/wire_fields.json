@@ -1454,6 +1454,30 @@
       "note": "Enrolled by DEC-453 (W-OFAN Run 2, WIRE-l): the OpenFan calibration dialog renders the run (services/openfan_calibration_view.py) and keys its end on completed_unix_ms, which the daemon sets only in the terminal publish."
     },
     {
+      "daemon": "OpenFanRoleEntry",
+      "gui": "OpenFanRole",
+      "endpoints": [
+        "GET /fans/openfan/roles"
+      ],
+      "fields": [
+        "fan_id",
+        "channel",
+        "role",
+        "role_source",
+        "stop_permitted",
+        "effective_min_pwm_pct"
+      ],
+      "not_assertable": {
+        "fan_id": "Shared with another declared struct (OpenFanCalibrationRun), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. services/openfan_role_view.py keys the Hardware page's rows on it.",
+        "channel": "Shared with another declared struct (OpenFanCalibrationRun), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The rows are ordered by it.",
+        "role": "Shared with another declared struct (PwmHeaderEntry), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The row's pill shows it.",
+        "role_source": "Shared with another declared struct (PwmHeaderEntry), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. A not-reporting channel is listed only when it is user_assigned.",
+        "stop_permitted": "Shared with another declared struct (PwmHeaderEntry), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. services/pump_protection.py::openfan_channel_is_pump_protected decides on it.",
+        "effective_min_pwm_pct": "Shared with another declared struct (PwmHeaderEntry), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The GUI shows protection, not the floor figure, for an OpenFan channel."
+      },
+      "note": "Enrolled by DEC-475 (ROLE-f): the Hardware page's OpenFan Channels list, the Fan Wizard's identify wording and the calibration dialog's pump refusal read it."
+    },
+    {
       "daemon": "CalPoint",
       "gui": "CalPoint",
       "endpoints": [

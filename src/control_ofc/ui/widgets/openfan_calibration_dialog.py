@@ -32,10 +32,11 @@ from PySide6.QtWidgets import (
 from control_ofc.services.openfan_calibration_view import (
     DEMO_REFUSAL,
     NO_CHANNELS_TEXT,
-    PRE_RUN_WARNINGS,
     CalibrationView,
     ChannelOption,
     build_calibration_view,
+    pre_run_warnings,
+    pump_channel_refusal,
     pump_confirmation_text,
 )
 from control_ofc.ui.components.a11y import name_value_control
@@ -82,6 +83,7 @@ class OpenFanCalibrationDialog(ModalDialog):
         options: list[ChannelOption],
         *,
         demo: bool = False,
+        pump_roles: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__("Calibrate OpenFan Channel", parent)
@@ -104,7 +106,7 @@ class OpenFanCalibrationDialog(ModalDialog):
 
         body = self.body_layout()
 
-        self._intro = QLabel("\n\n".join(PRE_RUN_WARNINGS))
+        self._intro = QLabel("\n\n".join(pre_run_warnings(pump_roles)))
         self._intro.setObjectName("OfanCal_Label_intro")
         self._intro.setWordWrap(True)
         body.addWidget(self._intro)
@@ -259,17 +261,35 @@ class OpenFanCalibrationDialog(ModalDialog):
 
     def _refresh_start(self, *_args) -> None:
         running = self.is_running
-        has_channel = self.selected_option() is not None
+        opt = self.selected_option()
+        has_channel = opt is not None
+        # `ROLE-f`: a pump channel is listed but never startable, and the
+        # confirmation that it is NOT a pump is withdrawn rather than left
+        # ticked for when its role changes back.
+        pump = opt is not None and opt.pump_protected
+        if pump and self._pump_check.isChecked():
+            self._pump_check.blockSignals(True)
+            self._pump_check.setChecked(False)
+            self._pump_check.blockSignals(False)
+        self._pump_check.setVisible(has_channel and not pump)
         blocked = ""
         if self._demo:
             blocked = DEMO_REFUSAL
         elif not has_channel:
             blocked = NO_CHANNELS_TEXT
+        elif pump and not running:
+            blocked = pump_channel_refusal(opt.label)
         self._blocked_lbl.setText(blocked)
         self._blocked_lbl.setVisible(bool(blocked))
         self._channel_combo.setEnabled(not running and has_channel)
-        self._pump_check.setEnabled(not running and not self._demo and has_channel)
-        can_start = not running and not self._demo and has_channel and self._pump_check.isChecked()
+        self._pump_check.setEnabled(not running and not self._demo and has_channel and not pump)
+        can_start = (
+            not running
+            and not self._demo
+            and has_channel
+            and not pump
+            and self._pump_check.isChecked()
+        )
         self._start_btn.setEnabled(can_start)
         if blocked:
             self._start_btn.setToolTip(blocked)
@@ -286,7 +306,13 @@ class OpenFanCalibrationDialog(ModalDialog):
         # Belt and braces: the button is disabled in each of these cases, but
         # the acknowledgement it leads to is a safety statement, so the rule is
         # enforced where the request is made too.
-        if opt is None or self._demo or not self._pump_check.isChecked() or self.is_running:
+        if (
+            opt is None
+            or opt.pump_protected
+            or self._demo
+            or not self._pump_check.isChecked()
+            or self.is_running
+        ):
             return
         self._started = True
         self._finished = False

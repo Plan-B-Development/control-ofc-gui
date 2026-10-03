@@ -363,6 +363,18 @@ GUI treats every flag as false / old behaviour (AIP-180):
   **GUI use (GUI ≥ 3.4.0):** registered in `daemon_features` as `header_role_no_fan`; gates the
   **No fan** choice in the Set role… picker. A header showing `no_fan` that the daemon does not
   protect as a pump gets a dimmed Hardware card whose status reads *No fan* instead of alarming.
+- `openfan_header_roles` (bool, `ROLE-f`, daemon ≥ 3.5.0) — `POST /config/header-role` accepts an
+  OpenFan channel id (`openfan:ch00`…`openfan:ch09`), and `GET /fans/openfan/roles` reports each
+  channel's role and pump protection. A channel assigned `pump` is the daemon's only pump evidence
+  for an OpenFan channel: it earns the 30 % floor and stop-snap exemption on every profile and
+  override, a `pump_perturb` identify, and a refused calibration. Absent → `false`. **Gate on
+  this:** an older daemon rejects the id with `400 validation_error` and 404s the route.
+  **GUI use (DEC-475):** registered in `daemon_features` as `openfan_header_roles`; gates the
+  Hardware page's *OpenFan Channels* list and its **Set role…** (the header picker's dialog and
+  pump-removal confirmation, written through `set_header_role(fan_id, …)` and read back from a
+  fresh `GET /fans/openfan/roles`), and the poll's fetch of the route on the capabilities
+  interval. `stop_permitted` (`services/pump_protection.py::openfan_channel_is_pump_protected`)
+  drives the Fan Wizard's identify wording and the calibration dialog's refusal.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -2648,7 +2660,8 @@ climbed from 0 %, so its "stop" was always the step below its "start" — `WIRE-
 **GUI use (DEC-453, GUI ≥ 3.1.0):** the Hardware page's **Calibrate OpenFan Channel…** dialog.
 It sends `acknowledge_below_floor: true` only after the user ticks a per-channel "does not power
 a pump" confirmation, which is unticked on every channel change and after every run; it never
-sends `hold_seconds`. It renders only the run its own `202` named (`run_id`), polls at 1 Hz, and
+sends `hold_seconds`. A channel the daemon reports protected as a pump (`ROLE-f`) is listed as
+*pump, not calibrated* with Start disabled and no confirmation box. It renders only the run its own `202` named (`run_id`), polls at 1 Hz, and
 treats a run as ended only once `completed_unix_ms` is set. `state` reads `running` through the
 kick and the restore — the terminal publish sets it, the stamp and `restore_outcome` together — so
 the dialog offers Cancel only while `phase` is `descent` or `ascent`: a `DELETE` during the kick or
@@ -2657,16 +2670,22 @@ run's end (`409`), does not end its tracking; the next snapshot, or a `404`, doe
 the **restart** duty as the minimum that keeps the fan running.
 
 - `POST /fans/openfan/{ch}/calibration` — body `{"acknowledge_below_floor": true, "hold_seconds"?: N}`.
-  - **The acknowledgement is required** (`400 validation_error` without it). The walk reaches 0 %,
-    and **the daemon holds no pump evidence for an OpenFan channel** — every pump predicate is
-    hwmon-only (`PTR-i`) — so it cannot refuse a pump the way the stall probe does. A client
-    sends `true` only after the user confirms the channel does not power a pump.
+  - **A channel assigned the `pump` role is refused** (`ROLE-f`, daemon ≥ 3.5.0): `400
+    validation_error` with `details.reason: "pump_protected"`, whatever the acknowledgement says.
+    The walk re-reads the same union before every write, so a `pump` assignment landing mid-run
+    aborts it (`abort_reason: "pump_protected"`) within one 500 ms sample — a step already past
+    the check can still reach the channel. The restore re-reads the union and writes no less than
+    the pump floor, including after a cancel or a recovery kick.
+  - **Otherwise the acknowledgement is required** (`400 validation_error` without it). The walk
+    reaches 0 %, and a channel with no `pump` assignment carries no pump evidence (`PTR-i`). A
+    client sends `true` only after the user confirms the channel does not power a pump.
   - `hold_seconds` (default 5) is clamped into `2..=15`; any other field is rejected by the typed
     extractor (axum's plain-text `422`, not the envelope). There are no duty or step tunables.
   - **`202`** with the run snapshot; the run is detached, on the **same** single-flight slot as
     every hardware diagnostic. Poll `GET /diagnostics/openfan-calibration`.
   - **Refusals, in this order, all before anything is written:** `503 hardware_unavailable`
-    while shutting down; `400 validation_error` without the acknowledgement; `503
+    while shutting down; `400 validation_error` `pump_protected` for an assigned pump (daemon ≥
+    3.5.0); `400 validation_error` without the acknowledgement; `503
     hardware_unavailable` with no controller; `400 validation_error` for a channel above 9;
     `409 thermal_abort` above 85 °C; `409 validation_error` `retryable: true` while the thermal
     ladder is forcing or when every temperature reading is stale (DEC-295 / DEC-385); `400
@@ -2682,7 +2701,8 @@ the **restart** duty as the minimum that keeps the fan running.
   stopped, all > 0 → spinning); fewer than three, or a mix, is `unconfirmed` and the walk moves
   on. At the default 1 s poll even the 2 s minimum hold yields three. Worst case at the
   default hold is about 3 minutes; a typical fan takes 1.5–2.
-- **Gates, on every 500 ms sample and before every write**: shutdown, cancel, the 85 °C limit,
+- **Gates, on every 500 ms sample and before every write**: shutdown, cancel, the pump-protection
+  union (`ROLE-f`, daemon ≥ 3.5.0: a channel assigned `pump` aborts with `pump_protected`), the 85 °C limit,
   the ladder forcing, stale temperatures, the hottest fresh CPU reading rising more than
   `rise_limit_c` (5 °C) above `start_cpu_temp_c`, and the engine-pause keepalive (renewed per
   sample, DEC-296). These apply to the descent and ascent only. An abort or cancel that may
@@ -2720,14 +2740,15 @@ the **restart** duty as the minimum that keeps the fan running.
   spinning within its 10 s window. `abort_reason` is `thermal_limit` | `thermal_force` |
   `stale_temperature` | `thermal_rise` | `no_cpu_temperature` | `write_failed` |
   `rpm_unreadable` (no reading arrived after a write within its hold) | `shutting_down` |
-  `superseded` | `task_failed` (the daemon's calibration task ended without a result — a
+  `pump_protected` (daemon ≥ 3.5.0: the channel was assigned `pump` mid-run) | `superseded` | `task_failed` (the daemon's calibration task ended without a result — a
   defect; the channel's restore was attempted but not recorded, so `restore_outcome` stays
   `pending`). Each point is `{pwm_percent, rpm, phase, observation}` with `observation` in
   `spinning` | `stopped` | `unconfirmed` | `interrupted`. `min_rpm` is the lowest non-zero reading.
   `restore_outcome` is `pending` | `restored` | `restored_full_speed` | `write_failed` |
   `skipped_thermal_force` | `not_needed`; `restore_failed` is true when the channel was left
-  anywhere but its original duty — `write_failed`, `skipped_thermal_force`, and
-  `restored_full_speed` unless that duty was itself 100 %. **All tokens are opaque;
+  anywhere but its original duty — `write_failed`, `skipped_thermal_force`,
+  `restored_full_speed` unless that duty was itself 100 %, and (daemon ≥ 3.5.0) `restored` after a
+  `pump_protected` abort raised the channel to the pump floor above its original duty. **All tokens are opaque;
   render an unrecognised one** (273-i).
 - `DELETE /diagnostics/openfan-calibration` — asks the running calibration to stop: `202` with
   the snapshot, `409 validation_error` when none is running. **Honoured within one sample
@@ -3099,7 +3120,9 @@ DEC-311 narrows this further for the case that mattered most: a header the daemo
 pump can no longer be held at 0 by anyone. "Knows to be a pump" is a **union** — the header's own
 label/chip evidence OR the user's assignment OR (DEC-384) a member of the **active profile** bound to
 the header whose `member_label` or id label contains `pump` or `aio` — so `POST /config/header-role
-{"role": "chassis_fan"}` on an `AIO_PUMP` header does **not** hand back permission to stop it. The
+{"role": "chassis_fan"}` on an `AIO_PUMP` header does **not** hand back permission to stop it. On an
+OpenFan channel (`ROLE-f`, daemon ≥ 3.5.0) the user's assignment is the **only** term: the label and
+profile terms are hwmon-only, so a profile member named "Pump" on a channel protects nothing. The
 profile term is the evidence the engine's 30 % floor already acts on; before DEC-384 identify
 ignored it, so on a chip with no label files a member the profile called "Pump" was held at 30 % by
 every tick and driven to 0 by identify. It deliberately excludes the floor's other arms: a
@@ -3198,6 +3221,20 @@ Old daemons predating the route answer `404`, which the GUI treats as
     running PWM controller — new hwmon fan-control hardware still requires a
     daemon restart; the GUI repeats this caveat in the result line. (The
     OpenFan controller is the exception, and has its own route below.)
+
+### OpenFan roles (`ROLE-f`, daemon ≥ 3.5.0)
+- `GET /fans/openfan/roles` — gated on `control.openfan_header_roles`.
+  - Response `200`: `{"api_version": int, "channels": [{"fan_id": "openfan:ch00", "channel": 0,
+    "role": "pump", "role_source": "user_assigned", "stop_permitted": false,
+    "effective_min_pwm_pct": 30}, …]}` — one entry per channel the controller can have
+    (`NUM_CHANNELS`, 10 — independent of `devices.openfan.channels`, which reads `0` with no
+    controller adopted), so a role recorded while the controller was
+    unplugged stays visible and clearable.
+  - `role` is the DISPLAY role (the assignment, else `unknown`); `role_source` is
+    `user_assigned` or `none`. `stop_permitted` is the daemon's pump-protection union — the
+    predicate identify, calibration and the engine floor act on; read it, never `role == "pump"`
+    (DEC-312). `effective_min_pwm_pct` is the floor the daemon enforces by itself: the pump floor
+    when protected, else `0` (the profile's `minimum_pct` governs).
 
 ### OpenFan rescan (DEC-265, daemon ≥ 2.18.0)
 - `POST /fans/openfan/rescan` — adopt an OpenFanController without a restart
@@ -3728,7 +3765,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
 - `POST /config/startup-delay` — `{"delay_secs": 0..30}`; persisted to `runtime.toml`, takes effect on next restart. Daemon ≥ 2.23.0 answers with the **shared DEC-243 setter shape** (`{"updated", "key", "value", "note"}`) as well as the original `delay_secs`, so one client-side parser covers every `POST /config/*`; older daemons send `delay_secs` and `note` only, which parses fine because the caller supplies the key and reads only `note`.
   - **The GUI no longer pushes this on Settings → Save or Settings → Import (DEC-285).** It is an ordinary row on the Daemon Configuration card, written only by its own control and only when the value actually changed. The old best-effort push bypassed the no-op-write guard, so pressing Save once wrote the key into `runtime.toml`, flipped its `source` to `runtime`, and permanently shadowed the operator's `daemon.toml` with a value nobody had chosen. `AppSettings.daemon_startup_delay_secs` was deleted with it (settings schema v4), so an imported/shared config can no longer carry one machine's daemon setting onto another's.
 - `POST /config/preferred-cpu-sensor` / `POST /config/preferred-mb-sensor` — persist the user's preferred CPU / motherboard temperature sensor by stable id (body `{"sensor_id": string | null}`; `null` clears the preference). The id is validated against the live sensor set — an unknown id (or a missing key) is `400 validation_error`; a persistence failure is `503 persistence_failed`. Advisory only (thermal safety still keys off `kind`) — reflected in `/inventory/hwmon` `default_cpu` (`source: "user"`) + `preferences` and the readiness `selected_cpu_sensor_missing` item. Daemon ≥ 2.6.0 (DEC-200); older daemons answer `404` and the GUI hides the feature for the session. The GUI offers these from the Overview page's sensor-table context menu and the Settings page.
-- `POST /config/header-role` (DEC-311, daemon ≥ 2.28.0; **GUI caller since v2.51.0 — `DaemonClient.set_header_role()`, from the Configure-AIO dialog's pump step, DEC-312; the Fan Wizard's Liquid Cooling step (DEC-319); and, since DEC-444, the header-role picker on the Hardware page's header cards and the PWM Test Report's scope page, which assigns any of the four tokens — five with `"no_fan"` where `control.header_role_no_fan` is advertised — or clears with `null`, never an explicit `"unknown"`**) — assign or clear one PWM header's role. **The `role` key is REQUIRED**: a *missing* key is `400 validation_error`, which is distinct from `"role": null`, so a client that omits null fields cannot clear an assignment. Tokens are exact-case and must not be normalised client-side — an unrecognised token has to surface the daemon's `400` rather than be coerced into something weaker. The `200` body carries `effective_role` (the role the daemon actually resolved) alongside `role` (what was stored); they differ after a clear, and `effective_role` is the one to display. Assigning a `pump` role also releases any live identify hold on that header daemon-side, so an identify "stop" in progress ends when the call returns. Body `{"header_id": string, "role": "unknown"|"cpu_fan"|"pump"|"radiator_fan"|"chassis_fan"|"no_fan" | null}` (`"no_fan"` daemon ≥ 3.4.0, `control.header_role_no_fan`); `null` clears and the header falls back to its detected role. An unrecognised role token is `400 validation_error` — **never silently defaulted**, because a typo that became `"unknown"` would drop a pump's protection while the response said "updated". Assigning to a header the daemon has not discovered is also `400`; *clearing* is always permitted, even for a vanished id, so a stale assignment can never become unreachable. Persistence failure is `503 persistence_failed`. Persist-first: on a write failure nothing the daemon acts on changes.
+- `POST /config/header-role` (DEC-311, daemon ≥ 2.28.0; **GUI caller since v2.51.0 — `DaemonClient.set_header_role()`, from the Configure-AIO dialog's pump step, DEC-312; the Fan Wizard's Liquid Cooling step (DEC-319); and, since DEC-444, the header-role picker on the Hardware page's header cards and the PWM Test Report's scope page, which assigns any of the four tokens — five with `"no_fan"` where `control.header_role_no_fan` is advertised — or clears with `null`, never an explicit `"unknown"`**) — assign or clear one PWM header's role. **The `role` key is REQUIRED**: a *missing* key is `400 validation_error`, which is distinct from `"role": null`, so a client that omits null fields cannot clear an assignment. Tokens are exact-case and must not be normalised client-side — an unrecognised token has to surface the daemon's `400` rather than be coerced into something weaker. The `200` body carries `effective_role` (the role the daemon actually resolved) alongside `role` (what was stored); they differ after a clear, and `effective_role` is the one to display. Assigning a `pump` role also releases any live identify hold on that header daemon-side, so an identify "stop" in progress ends when the call returns. Body `{"header_id": string, "role": "unknown"|"cpu_fan"|"pump"|"radiator_fan"|"chassis_fan"|"no_fan" | null}` (`"no_fan"` daemon ≥ 3.4.0, `control.header_role_no_fan`); `null` clears and the header falls back to its detected role. An unrecognised role token is `400 validation_error` — **never silently defaulted**, because a typo that became `"unknown"` would drop a pump's protection while the response said "updated". **OpenFan channels (`ROLE-f`, `control.openfan_header_roles`):** `header_id` may be an OpenFan channel id. Any channel below `NUM_CHANNELS` (10) is accepted whether or not a controller is adopted — do not validate against `devices.openfan.channels`, which reads `0` with none (the assignment can only add protection); the id is padded (`openfan:ch3` is stored and echoed as `openfan:ch03`); an OpenFan-prefixed id that does not parse to such a channel is `400`. Same token set; only `pump` changes behaviour. Assigning to a header the daemon has not discovered is also `400`; *clearing* is always permitted, even for a vanished id, so a stale assignment can never become unreachable. Persistence failure is `503 persistence_failed`. Persist-first: on a write failure nothing the daemon acts on changes.
   **Not advisory, unlike the preferred-sensor writes above.** A `"pump"` assignment is a safety input: it earns that header the 30 % hard floor and the DEC-167 stop-snap exemption, protects it from being stopped by identify, and keeps `/hwmon/{id}/verify` above the floor — since DEC-418 (daemon ≥ 2.56.0) also for a verify, characterisation or control-path discovery **already running** when the assignment lands, which stops and restores no lower than the floor. It is a **union term** — it can add a floor, never remove one, so assigning `"chassis_fan"` to a header whose label already says `PUMP` does not strip that header's floor. It takes effect **immediately** rather than at next start (a safety floor that waited for a reboot would be a trap), and persists in `runtime.toml` under `[hardware.header_roles]`.
 
   This is the endpoint that makes header roles usable at all on a large class of boards: where the Super-I/O publishes no `pwmN_label`/`fanN_label` files, every header reads `role: "unknown"` and the user's assignment is the only evidence a header drives a pump.

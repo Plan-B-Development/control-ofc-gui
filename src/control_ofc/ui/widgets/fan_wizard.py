@@ -73,6 +73,7 @@ from control_ofc.services.header_role_writes import (
 )
 from control_ofc.services.pump_protection import (
     header_is_pump_protected,
+    openfan_channel_is_pump_protected,
     pump_identify_warning,
 )
 from control_ofc.ui.components.a11y import name_value_control
@@ -232,6 +233,10 @@ class FanConfigWizard(QWizard):
         lie. When the capability is absent this is False and the wizard keeps its
         original "the fan will stop" wording, which is what that daemon does.
         """
+        openfan = self._state.openfan_role(fan_id)
+        if openfan is not None:
+            # `ROLE-f`: an OpenFan channel is a pump only by assignment.
+            return openfan_channel_is_pump_protected(openfan)
         header = next((h for h in self._state.hwmon_headers if h.id == fan_id), None)
         return header_is_pump_protected(header, self._state.capabilities)
 

@@ -95,6 +95,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # control.header_role_no_fan. The `no_fan` header role.
         # `/ofc:release` confirms the version.
         "header_role_no_fan": "3.4.0",
+        # DEC-475, control.openfan_header_roles. Roles on OpenFan channels.
+        # `/ofc:release` confirms the version.
+        "openfan_header_roles": "3.5.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -151,6 +154,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "cooling_failure_detection": "cooling_failure_detection",
         "pwm_verification_records": "pwm_verification_records",
         "header_role_no_fan": "header_role_no_fan",
+        "openfan_header_roles": "openfan_header_roles",
     }
 )
 
@@ -181,6 +185,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "cooling_failure_detection": "the coolant limit and pump stall protection",
         "pwm_verification_records": "remembering which fan headers passed verification",
         "header_role_no_fan": "marking a fan header as having no fan",
+        "openfan_header_roles": "roles on OpenFan channels",
     }
 )
 

@@ -14,7 +14,7 @@ headlessly and usable from services as well as widgets.
 
 from __future__ import annotations
 
-from ..api.models import Capabilities, HwmonHeader
+from ..api.models import Capabilities, HwmonHeader, OpenFanRole
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from .daemon_features import daemon_supports, requires_daemon
 
@@ -102,8 +102,9 @@ def header_is_pump_protected(
     Gated on ``control.header_roles``: a pre-2.28.0 daemon has no role model at
     all, so nothing is protected and any copy claiming otherwise would lie.
 
-    Only hwmon headers can be pumps — OpenFan channels have no header, and GPU
-    fans are never pumps.
+    hwmon headers only. An OpenFan channel is protected only by a ``pump``
+    assignment (`ROLE-f`), answered by :func:`openfan_channel_is_pump_protected`;
+    GPU fans are never pumps.
 
     **Since DEC-316 this reconstruction is the FALLBACK, not the primary answer.**
     A daemon >= 2.31.0 reports ``stop_permitted`` per header, computed from the
@@ -151,6 +152,22 @@ def header_is_pump_protected(
     if label_outranks_chip_mapping(lowered):
         return False
     return bool(header.is_aio) and header.pwm_index == 1
+
+
+def openfan_channel_is_pump_protected(role: OpenFanRole | None) -> bool:
+    """Whether the daemon protects this OpenFan channel as a pump (`ROLE-f`).
+
+    The daemon's ``stop_permitted`` decides. A channel this daemon reports no
+    role for — an older daemon, or no ``GET /fans/openfan/roles`` answer yet —
+    is unprotected, which is what such a daemon does: before DEC-475 no OpenFan
+    channel could be a pump. A reported ``pump`` with ``stop_permitted``
+    missing (a malformed entry) still reads protected, the safe direction.
+    """
+    if role is None:
+        return False
+    if role.stop_permitted is not None:
+        return not role.stop_permitted
+    return role.role == "pump"
 
 
 def header_effective_floor_pct(

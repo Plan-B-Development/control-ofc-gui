@@ -335,6 +335,12 @@ class ControlCapability:
     #: header with nothing plugged in). Gate the picker's "No fan" choice on
     #: this — an older daemon rejects the token with a 400.
     header_role_no_fan: bool = False
+    #: `ROLE-f` (DEC-475): ``POST /config/header-role`` accepts an OpenFan
+    #: channel id and ``GET /fans/openfan/roles`` reports each channel's role.
+    #: A channel assigned ``pump`` is the daemon's only pump evidence for an
+    #: OpenFan channel. Gate the OpenFan role picker on this — an older daemon
+    #: rejects the id with a 400 and 404s the route.
+    openfan_header_roles: bool = False
     #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
     #: coalesce and rewrites a duty that moved, giving up after three
     #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then
@@ -1948,6 +1954,29 @@ class PreferredSensorResult:
 
 
 @dataclass
+class OpenFanRole:
+    """One channel of ``GET /fans/openfan/roles`` (`ROLE-f`, DEC-475).
+
+    ``role`` is the DISPLAY role (the user's assignment, else ``"unknown"``) and
+    an opaque token (273-i). ``stop_permitted`` is the daemon's pump-protection
+    union — the safety answer; read it, never ``role == "pump"`` (DEC-312).
+    ``None`` means "not reported", never "stoppable".
+    """
+
+    fan_id: str = ""
+    channel: int = 0
+    role: str = "unknown"
+    role_source: str = "none"
+    stop_permitted: bool | None = None
+    effective_min_pwm_pct: int | None = None
+
+    @property
+    def id(self) -> str:
+        """The role write's key, as ``HwmonHeader.id`` is for a header."""
+        return self.fan_id
+
+
+@dataclass
 class HeaderRoleResult:
     """Response from POST /config/header-role (DEC-311/312).
 
@@ -2840,6 +2869,15 @@ def parse_inventory_readiness(data: dict) -> InventoryReadiness:
             if isinstance(i, dict)
         ],
     )
+
+
+def parse_openfan_roles(data: dict) -> list[OpenFanRole]:
+    """Parse ``GET /fans/openfan/roles``; a malformed entry is skipped."""
+    return [
+        OpenFanRole(**_filter_fields(OpenFanRole, c))
+        for c in data.get("channels", [])
+        if isinstance(c, dict)
+    ]
 
 
 def parse_header_role(data: dict) -> HeaderRoleResult:

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..api.models import Capabilities, HeaderRoleResult, HwmonHeader
+from ..api.models import Capabilities, HeaderRoleResult, HwmonHeader, OpenFanRole
 from ..knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from .daemon_features import daemon_supports, unsupported_feature_message
 from .header_inspector_view import role_label, role_source_label
@@ -101,7 +101,7 @@ def role_choices(capabilities: Capabilities | None) -> tuple[RoleChoice, ...]:
     return tuple(c for c in ROLE_CHOICES if c.token != ROLE_NO_FAN)
 
 
-def current_choice(header: HwmonHeader) -> str | None:
+def current_choice(header: HwmonHeader | OpenFanRole) -> str | None:
     """The picker's pre-selection: the user's own assignment, else "Not set".
 
     A role the daemon inferred is *not* pre-selected as that role, because the
@@ -124,7 +124,7 @@ class RolePlan:
     removes_user_pump: bool
 
 
-def plan_role_change(header: HwmonHeader, new_role: str | None) -> RolePlan:
+def plan_role_change(header: HwmonHeader | OpenFanRole, new_role: str | None) -> RolePlan:
     user_assigned = header.role_source == "user_assigned"
     # A clear changes something only if there is an assignment to drop; a set
     # is a no-op only when it restates the user's own assignment.

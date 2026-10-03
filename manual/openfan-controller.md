@@ -76,6 +76,8 @@ OpenFan channels are first-class fans in Control-OFC. On the [Controls](controls
 
 How roles, curves, and profiles fit together is covered in [Profiles and Curves](profiles-and-curves.md).
 
+If a pump is plugged into an OpenFan channel, set that channel's role to **Pump** under *OpenFan Channels* on the Hardware page (control-ofc-daemon 3.5.0 or newer). Until you do, the daemon has no way to know it is a pump: a curve can stop it, and fan identification stops it. With the role set it is held at or above the pump safety floor and never stopped. See [Diagnostics § OpenFan channels](diagnostics.md).
+
 To find the lowest speed a particular fan will reliably run at, use **Calibrate OpenFan Channel…** on the Hardware page (control-ofc-daemon 3.1.0 or newer): it measures where the fan stops and where it starts again, and tells you the minimum to use. See [Hardware Troubleshooting § Calibrate OpenFan Channel](hardware-troubleshooting.md#calibrate-openfan-channel).
 
 ## Troubleshooting

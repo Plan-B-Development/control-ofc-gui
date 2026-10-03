@@ -229,7 +229,7 @@ It walks the channel down from 100 % in 10 % steps to 30 %, then in 2 % steps un
 
 ### Before it starts: the pump question
 
-The walk takes the fan to 0 %. The daemon has no way to tell whether an OpenFan channel powers a pump, so it will not start until you tick **"… does not power a pump"** for the channel you picked. The tick is cleared whenever you pick a different channel and after every run, so a confirmation for one fan never carries over to another. **Do not calibrate a channel that powers a pump.**
+The walk takes the fan to 0 %. A channel you have set to **Pump** (Hardware page ▸ *OpenFan Channels*, daemon 3.5.0 or newer) is listed as *pump, not calibrated* and cannot be started; the daemon refuses it too, and a run under way stops if you set its channel to Pump. For any other channel the daemon has no way to tell whether it powers a pump, so it will not start until you tick **"… does not power a pump"** for the channel you picked. The tick is cleared whenever you pick a different channel and after every run, so a confirmation for one fan never carries over to another. **Do not calibrate a channel that powers a pump.**
 
 ### What it tells you
 
