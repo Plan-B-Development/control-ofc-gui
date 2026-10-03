@@ -651,10 +651,18 @@ class RuntimeConfigDegraded:
     #: The underlying I/O or TOML error, verbatim. Daemon prose, **not** a stable
     #: token — render it, never branch on it.
     detail: str = ""
-    #: ``startup`` or ``reload``. These cost different things: only the boot load
-    #: seeds every runtime-mutable key, so a ``reload`` failure leaves header
-    #: roles as startup established them and is materially narrower.
+    #: ``startup``, ``reload`` or (daemon >= 2.51.0) ``update``. These cost
+    #: different things: only the boot load seeds every runtime-mutable key, so a
+    #: ``reload`` failure leaves header roles as startup established them and is
+    #: materially narrower; ``update`` is a setter that kept a copy and replaced
+    #: the file (`TS-r`).
     phase: str = ""
+    #: Where a setter kept the unreadable original (``runtime.toml.invalid-<ts>``)
+    #: before replacing ``path`` (daemon >= 3.6.0, `TS-at`). Empty when nothing was
+    #: kept, or from an older daemon. Once set, ``path`` holds a file the daemon
+    #: wrote and this is the file to repair — including on a ``startup`` record,
+    #: whose lost header roles are then only in this copy.
+    kept_as: str = ""
 
 
 # Every value the daemon's `thermal_state` field can take (DEC-132/165), in

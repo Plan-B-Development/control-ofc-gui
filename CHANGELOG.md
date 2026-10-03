@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The settings-file banner names the right file after a failed start.** When control-ofc-daemon could not
+  read its settings at startup and a setting was saved afterwards, the daemon had already replaced the file
+  with one holding no fan header roles, yet the banner still said to repair "the file" and restart — which
+  loaded the new file cleanly and left your pump roles lost in the kept copy. With control-ofc-daemon 3.6.0
+  the banner names that copy and says to stop the daemon, repair it and put it back before starting it.
+
 ## [3.5.0] — 2026-10-03
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. **Set role…** on an OpenFan

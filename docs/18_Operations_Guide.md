@@ -202,7 +202,10 @@ and reports `runtime_config_degraded` on `GET /status`; the Dashboard shows a ba
 (see the manual's Dashboard page). If a setting is then saved, the daemon keeps the
 unreadable file as `runtime.toml.invalid-<unix-time>` and writes a new one carrying the
 header roles and cooling devices it is running with; anything else must be copied back
-from the kept copy, followed by a restart. The daemon's `docs/USER_GUIDE.md`
+from the kept copy, followed by a restart. If that happened after a failed *startup*, the
+new file has no roles either, and `runtime_config_degraded.kept_as` names the copy that
+holds them: stop the daemon, repair the copy, move it back over `runtime.toml`, then start
+it. The daemon's `docs/USER_GUIDE.md`
 § When `runtime.toml` cannot be read has the per-phase detail.
 
 If a runtime value is shadowing a `daemon.toml` edit you made, the daemon says so

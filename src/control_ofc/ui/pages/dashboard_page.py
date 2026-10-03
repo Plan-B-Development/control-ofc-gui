@@ -908,7 +908,14 @@ class DashboardPage(QWidget):
         # but keying on the whole identity also clears the banner when a repaired
         # daemon reconnects, and re-raises it if the degradation changes.
         degraded = status.runtime_config_degraded
-        rc_key = (degraded.reason, degraded.path, degraded.phase) if degraded is not None else None
+        # `kept_as` is in the key: on a `startup` record it appears mid-life, when
+        # the first setter after a failed boot keeps the file aside (`TS-at`), and
+        # it changes which file the remedy names.
+        rc_key = (
+            (degraded.reason, degraded.path, degraded.phase, degraded.kept_as)
+            if degraded is not None
+            else None
+        )
         if rc_key != self._last_runtime_config_key:
             self._last_runtime_config_key = rc_key
             rc_message = runtime_config_degraded_message(degraded)
@@ -935,10 +942,12 @@ class DashboardPage(QWidget):
                 # parse error, so it is logged rather than pushed into a banner —
                 # the same split the API-skew guard above uses.
                 logging.getLogger(__name__).warning(
-                    "Daemon runtime config degraded: reason=%s phase=%s path=%s detail=%s",
+                    "Daemon runtime config degraded: reason=%s phase=%s path=%s "
+                    "kept_as=%s detail=%s",
                     degraded.reason,
                     degraded.phase,
                     degraded.path,
+                    degraded.kept_as,
                     degraded.detail,
                 )
 

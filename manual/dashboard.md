@@ -61,7 +61,11 @@ Below it, five banners appear only when they apply:
   kept the unreadable one beside it as `runtime.toml.invalid-` plus a timestamp, and the
   new file carries the header roles and cooling devices it was running with, so no pump
   role was lost. Every other setting that was only in the old file is gone from it — copy
-  what you need back from the kept copy, then restart `control-ofc-daemon`. The daemon's
+  what you need back from the kept copy, then restart `control-ofc-daemon`. If the
+  failure was at *startup* and a setting was saved afterwards, the banner names the kept
+  copy instead: the file the daemon now uses is a new one with no roles, so restarting
+  alone would not bring them back — stop `control-ofc-daemon`, repair the named copy and
+  move it back in place of `runtime.toml`, then start it. The daemon's
   verbatim error goes to the GUI log rather than into the banner, since a TOML parse
   error can run to several lines. Daemons older than v2.35.0 (built as v2.34.0, which was never released) do not report this, and
   show no banner

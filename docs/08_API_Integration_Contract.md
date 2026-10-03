@@ -912,7 +912,7 @@ sensor list). Older daemons omit the array — the GUI defaults it to empty.
 `runtime_config_degraded` (daemon ≥ 2.35.0 — merged as 2.34.0, which was never published; additive — `api_version` unchanged, **omitted when the
 config loaded cleanly**) is set when the daemon's own `runtime.toml` could not be read or parsed and
 it fell back to defaults (`AUD3-m`, DEC-321). Shape:
-`{reason, path, detail, phase}`.
+`{reason, path, detail, phase, kept_as?}`.
 
 | Field | Meaning |
 | --- | --- |
@@ -920,6 +920,7 @@ it fell back to defaults (`AUD3-m`, DEC-321). Shape:
 | `path` | The file that failed to load |
 | `detail` | The underlying I/O or TOML error, verbatim — daemon prose, not a stable token |
 | `phase` | `startup`, `reload` or (daemon ≥ 2.51.0) `update`. **These cost different things** — see below |
+| `kept_as` | (daemon ≥ 3.6.0, `TS-at`; **omitted** until a copy is kept) Where a setter kept the unreadable original (`runtime.toml.invalid-<unix-ts>`) before replacing `path`. Set on an `update` record and carried onto a standing `startup` record — see below |
 
 **[SAFETY] Why this is on the wire at all.** The daemon's `RuntimeConfig::load_from` degrades
 *silently* to defaults so that a corrupt file can never stop it booting — deliberate, and unchanged.
@@ -949,6 +950,16 @@ from the engine's floor union on the next tick. A setter that finds **no** file 
 running daemon's maps (a quarantine whose write failed leaves none) but publishes nothing, since a
 missing file is first-write, not damage.
 
+**`kept_as` (daemon ≥ 3.6.0, `TS-at`)** names the kept copy. An `update` record carries its own.
+A **`startup` record gains one** when a setter quarantines the file after the failed boot: the boot
+held no roles, so the replacement holds none, and the `startup` record stands (most-severe wins,
+below) — but its `path` now names a healthy file the daemon wrote, and the roles the boot could not
+read are only in the copy. Restarting on `path` would load cleanly and drop the record with the
+roles still lost. The **first** copy is kept on the standing record: it holds the file that failed
+at boot; a later quarantine can only have kept a file the daemon wrote since. A `reload` record
+never carries one. On a `startup` record with `kept_as`, the file to repair is `kept_as`, put back
+over `path` with the daemon stopped.
+
 Two properties a client must not get wrong:
 
 - **A missing `runtime.toml` is NOT a degradation** and is never reported. That is first boot, and
@@ -977,7 +988,7 @@ Older daemons omit the key entirely, which reads the same as "fine" — the safe
 it is exactly the (absent) warning such a daemon shows today.
 
 **The GUI renders this from v2.58.0** (`WIRE-a`, formerly `AUD3-z`): a persistent Dashboard
-banner plus a keyed `AppState` warning, raised on a poll-diff of `{reason, path, phase}` and
+banner plus a keyed `AppState` warning, re-rendered on a poll-diff of `{reason, path, phase, kept_as}` and
 cleared when a repaired daemon reconnects. The wording is phase-differentiated, and note the
 one thing a client must NOT do — **`phase: "reload"` is not evidence that header roles
 survived.** On daemons before 2.36.0 the record was latest-wins, so a *failed* reload overwrote an
@@ -988,7 +999,10 @@ and the safe reading costs nothing. **`update` is the exception, and may say the
 (GUI ≥ 2.79.1): only daemons that keep the more severe record emit it, so an `update` record also
 proves the boot load was clean. The GUI says a copy of the unreadable file was kept and the file
 replaced, that the roles and cooling devices were kept, and that other settings only in the old
-file must be copied back from the copy. An
+file must be copied back from the copy, naming it when `kept_as` is present. A `startup`
+record with `kept_as` (GUI ≥ 3.5.1) keeps the loss wording but no longer says "repair the file and
+restart": it names the copy and says to stop the daemon, repair the copy, move it back over `path`
+and start it. An
 unrecognised `phase` still gets the hedged wording. `detail` is logged rather than shown, being
 verbatim daemon prose that can run to several lines.
 

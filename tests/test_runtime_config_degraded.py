@@ -28,6 +28,15 @@ RELOAD = RuntimeConfigDegraded(
 UPDATE = RuntimeConfigDegraded(
     reason="malformed", path="/etc/control-ofc/runtime.toml", detail="expected `=`", phase="update"
 )
+KEPT = "/var/lib/control-ofc/runtime.toml.invalid-1790000000"
+# `TS-at`: a setter after the failed boot kept the file aside and replaced it.
+STARTUP_KEPT = RuntimeConfigDegraded(
+    reason="malformed",
+    path="/etc/control-ofc/runtime.toml",
+    detail="expected `=`",
+    phase="startup",
+    kept_as=KEPT,
+)
 UNKNOWN_PHASE = RuntimeConfigDegraded(
     reason="malformed", path="/etc/control-ofc/runtime.toml", phase="something_new"
 )
@@ -62,6 +71,16 @@ def test_all_four_fields_are_parsed():
     assert d is not None
     assert (d.reason, d.path, d.phase) == ("malformed", "/etc/control-ofc/runtime.toml", "startup")
     assert d.detail == "expected `=`, found `:` at line 4"
+
+
+def test_kept_as_is_parsed_and_absent_means_empty():
+    """`TS-at` (daemon >= 3.6.0). Omitted until a copy is kept, and by older
+    daemons — both parse to the empty string the message treats as "no copy"."""
+    raw = {"reason": "malformed", "path": "/x.toml", "phase": "startup"}
+    d = parse_status({"runtime_config_degraded": raw}).runtime_config_degraded
+    assert d is not None and d.kept_as == ""
+    d = parse_status({"runtime_config_degraded": {**raw, "kept_as": KEPT}}).runtime_config_degraded
+    assert d is not None and d.kept_as == KEPT
 
 
 def test_unknown_field_is_dropped_not_fatal():
@@ -148,6 +167,36 @@ def test_update_says_the_file_was_moved_and_roles_were_kept():
     assert "NOT in effect" not in update
     assert "built-in defaults" not in update
     assert "restart control-ofc-daemon" in update
+
+
+def test_startup_with_a_kept_copy_sends_the_user_to_the_copy():
+    """**`TS-at`.** After a failed boot a setter replaced the file with one holding
+    no roles; the `startup` record stands with `path` naming that healthy
+    replacement. "Repair the file and restart" then pointed at the wrong file, and
+    a restart cleared the banner with the roles still only in the copy.
+
+    The remedy must name the copy and must no longer tell the user to repair
+    `path` and restart; the loss itself is still asserted outright."""
+    plain = runtime_config_degraded_message(STARTUP)
+    msg = runtime_config_degraded_message(STARTUP_KEPT)
+    assert plain is not None and msg is not None
+    assert KEPT not in plain, "precondition: the plain startup message has no copy to name"
+    assert KEPT in msg
+    assert "Repair the file and restart" in plain
+    assert "Repair the file and restart" not in msg
+    assert f"move it back over {STARTUP_KEPT.path}" in msg
+    assert "NOT in effect" in msg and "30%" in msg
+    assert "unaffected" not in msg
+
+
+def test_update_names_its_kept_copy_when_the_daemon_reports_it():
+    with_copy = runtime_config_degraded_message(
+        RuntimeConfigDegraded(reason="malformed", path="/x.toml", phase="update", kept_as=KEPT)
+    )
+    without = runtime_config_degraded_message(UPDATE)
+    assert with_copy is not None and without is not None
+    assert KEPT in with_copy
+    assert ".invalid- and a timestamp" in without and KEPT not in without
 
 
 def test_unknown_phase_warns_without_asserting_the_loss():
@@ -267,3 +316,19 @@ def test_a_changed_degradation_re_raises_the_banner(qtbot, app_state):
     app_state.set_status(DaemonStatus(runtime_config_degraded=RELOAD))
     assert banner._message_label.text() != first
     assert not banner.isHidden()
+
+
+def test_a_kept_copy_appearing_mid_life_updates_the_banner(qtbot, app_state):
+    """`TS-at`, at the call site. The `startup` record is raised at connect and
+    gains `kept_as` later, when the first setter keeps the file aside — same
+    reason, path and phase. A poll-diff key without `kept_as` never re-renders,
+    leaving the stale "repair the file and restart" on screen."""
+    page = DashboardPage(state=app_state)
+    qtbot.addWidget(page)
+    banner = _banner(page)
+
+    app_state.set_status(DaemonStatus(runtime_config_degraded=STARTUP))
+    assert banner._message_label.text() == runtime_config_degraded_message(STARTUP)
+    app_state.set_status(DaemonStatus(runtime_config_degraded=STARTUP_KEPT))
+    assert banner._message_label.text() == runtime_config_degraded_message(STARTUP_KEPT)
+    assert KEPT in banner._message_label.text()

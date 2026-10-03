@@ -64,6 +64,12 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     without asserting the loss, because over-warning erodes the banner and
     under-warning hides a real one.
 
+    ``kept_as`` (daemon ≥ 3.6.0, `TS-at`) names the copy a setter kept. On a
+    ``startup`` record it changes the remedy: a setter since the failed boot
+    replaced the file with one holding no roles, so "repair the file and restart"
+    would send the user to a healthy file, and a restart would then clear the
+    banner with the roles still only in the copy. The copy is the file to repair.
+
     ``detail`` is deliberately absent from the message. It is verbatim daemon
     prose and can be a multi-line TOML parse error; the page logs it instead, the
     same split the API-skew guard uses.
@@ -75,6 +81,7 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
     cause = f" ({reason})" if reason else ""
     where = f" — {degraded.path}" if degraded.path.strip() else ""
     remedy = "Repair the file and restart control-ofc-daemon."
+    kept = degraded.kept_as.strip()
 
     if degraded.phase == "reload":
         # **Deliberately does NOT say "header roles are unaffected".** On daemons
@@ -95,14 +102,30 @@ def runtime_config_degraded_message(degraded: RuntimeConfigDegraded | None) -> s
             f"pump floor. {remedy}"
         )
     if degraded.phase == "update":
+        kept_where = f"as {kept}" if kept else "beside it (named with .invalid- and a timestamp)"
         return (
             f"A setting was saved while the daemon's settings file could not be "
             f"read{cause}{where}. control-ofc-daemon kept a copy of the unreadable "
-            f"file beside it (named with .invalid- and a timestamp) and replaced it with "
-            f"a new one. The fan header roles and cooling devices it was running with "
-            f"were kept, and with them any 30% pump floor a role gives — but every other "
-            f"setting that was only in the old file is not in the new one. Copy what you "
-            f"need back from the kept copy, then restart control-ofc-daemon."
+            f"file {kept_where} and replaced it with a new one. The fan header roles "
+            f"and cooling devices it was running with were kept, and with them any 30% "
+            f"pump floor a role gives — but every other setting that was only in the old "
+            f"file is not in the new one. Copy what you need back from the kept copy, "
+            f"then restart control-ofc-daemon."
+        )
+    if degraded.phase == "startup" and kept:
+        # The file at `path` is now the daemon's own replacement; restarting on it
+        # would load cleanly and clear this with the roles still lost. Stop first,
+        # so no setter rewrites the file between the repair and the restart.
+        target = degraded.path.strip() or "the settings file"
+        return (
+            f"Daemon settings failed to load{cause}{where}. control-ofc-daemon is "
+            f"running on built-in defaults, so any fan header roles you assigned by "
+            f"hand are NOT in effect — those headers lose their 30% pump floor and "
+            f"can be stopped by fan identify. A setting saved since then replaced that "
+            f"file with a new one, so your old settings, roles included, are now only "
+            f"in the copy it kept: {kept}. Restarting alone would not bring them back, "
+            f"and saving settings will not clear this. Stop control-ofc-daemon, repair "
+            f"{kept} and move it back over {target}, then start it."
         )
     if degraded.phase == "startup":
         return (
