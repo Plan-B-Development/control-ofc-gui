@@ -373,6 +373,11 @@ class FanControlCard(Card):
         # DEC-459: the chip says what; the tooltip says which fan and against
         # what limit. Escaped — it carries user aliases.
         self._state_chip.setToolTip(_safe_tooltip(vm.state_detail) if vm.state_detail else "")
+        # `ALERT-b`: the same detail for a screen reader, which otherwise
+        # announced "Driver alarm" and nothing about which fan or why. (The chip
+        # takes no keyboard focus, so this does not reach a sighted keyboard user.)
+        # Cleared with it, so a recovered card describes nothing stale.
+        self._state_chip.setAccessibleDescription(vm.state_detail)
 
         # The band shows one of its two widgets; the stack hides the other, so
         # the tile's height is identical either way.

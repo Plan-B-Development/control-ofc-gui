@@ -22,8 +22,28 @@
   report's **What to test** page is open now updates its Role column and the tests it offers, keeping your
   ticks; set while you are on a later step, it refreshes when you go **Back**. It used to stay stale until
   **New report**.
+- **A diagnostic that fails unexpectedly no longer leaves its button dead** (DEC-472, `PTA-q`, `ROLE-g`). If a
+  daemon reply cannot be read, **Test GPU Fan Control**, **Restore GPU Fan to Automatic**, the readiness and
+  Super-I/O probe actions, and the characterisation, control-path, OpenFan calibration and validation dialogs
+  now report *… ended with an unexpected error (details in the application log)* instead of staying disabled
+  or waiting until restart. Hardware rescan's failure now reads the same way, with the exception text in the
+  log rather than on screen. Closing the app mid-call no longer logs a traceback.
+- **System State's verify errors have their own colour** (`PTA-r`). After a passing test, a later *Verify error*
+  was still shown green; an error is now red and a timeout or refusal neutral, on both the PWM and GPU tests.
+- **Verify All names a header it could not put back** (`PTA-s`). A header the daemon could not restore after its
+  test is marked *not restored*, the summary says it may still be at the test duty and to re-activate your
+  profile if it stays there, and the summary chip is at least a warning. It used to read as a clean pass.
+- **The driver-alarm detail is readable without a mouse, and fits the screen** (`ALERT-b`, `ALERT-c`). A screen
+  reader now hears which fan alarmed and its low-speed limit, and the tooltip is a few short lines instead of
+  one line about 130 characters wide.
 
 ### Changed
+
+- **System State's GPU Fan Control row says *hwmon_pwm (verify only)* for a pre-RDNA3 card** (DEC-472,
+  `GPU-d`), as the Overview already does. It stays green: verify and reset work there; no profile drives it.
+- **Demo mode shows the board's second fan chip** (`VOLT-e`). The demo X870E AORUS MASTER gains the IT87952E's
+  three headers and fans (*Bottom Intake 1/2*, *Side Exhaust*), so System State's chip list now names both
+  chips whose voltage rails it shows, and its header counts match the headers listed.
 
 - **Configure AIO asks before removing the old pump's protection only once the new pump is protected**
   (DEC-471, `ROLE-c`), as the Fan Wizard already did — and does not ask at all if naming the new pump fails,

@@ -323,6 +323,7 @@ control_ofc/
       theme_page.py            # Theme page — theme editor + presets + typography + app-wide apply (DEC-215)
       diagnostics_readiness.py # PWM-reclaim severity helpers (Diagnostics page retired — DEC-216); now feed System State
       diagnostics_workers.py   # background QThread workers (verify / rescan / GPU reset) — now feed System State + Hardware;
+                               #   every slot ends in the shared `_backstop` (DEC-472);
                                #   _PwmReportWorker makes the report's calls and keeps each body verbatim
       pwm_report_controller.py # Drives one PWM Test Report run (DEC-408): runner + worker thread +
                                #   1 s tick + trace + checkpoints. Owned by the Hardware page so a

@@ -56,6 +56,10 @@ _DEMO_FANS: list[dict] = [
     {"id": "openfan:ch07", "source": "openfan", "label": "Radiator Push 2"},
     {"id": "hwmon:it8696:pci0:pwm1:CHA_FAN1", "source": "hwmon", "label": "CPU Fan"},
     {"id": "hwmon:it8696:pci0:pwm3:CHA_FAN3", "source": "hwmon", "label": "CPU OPT / Pump"},
+    # `VOLT-e`: the board's second chip, whose rails the Voltages panel shows.
+    {"id": "hwmon:it87952:pci0:pwm1:SYS_FAN5", "source": "hwmon", "label": "Bottom Intake 1"},
+    {"id": "hwmon:it87952:pci0:pwm2:SYS_FAN6", "source": "hwmon", "label": "Bottom Intake 2"},
+    {"id": "hwmon:it87952:pci0:pwm3:SYS_FAN4", "source": "hwmon", "label": "Side Exhaust"},
     {"id": "amd_gpu:0000:2d:00.0", "source": "amd_gpu", "label": "RX 7900 XTX Fan"},
     # Intel discrete GPU (DEC-121) — read-only fan; demonstrates the
     # "(read-only)" treatment and firmware-managed messaging.
@@ -177,6 +181,25 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "min_pwm_percent": 0,
         "max_pwm_percent": 100,
     },
+    # `VOLT-e`: the IT87952E's three headers, in the board's channel order
+    # (`knowledge/hwmon_label_resolver.py`: pwm1 SYS_FAN5_PUMP, pwm2
+    # SYS_FAN6_PUMP, pwm3 SYS_FAN4). The demo drops the `_PUMP` suffix on
+    # purpose: those labels make a header pump-protected, and the demo's one
+    # pump is the Kraken below — three running pumps is no real build.
+    *(
+        {
+            "id": f"hwmon:it87952:pci0:pwm{index}:{label}",
+            "label": label,
+            "chip_name": "it87952",
+            "pwm_index": index,
+            "supports_enable": True,
+            "rpm_available": True,
+            "is_writable": True,
+            "min_pwm_percent": 0,
+            "max_pwm_percent": 100,
+        }
+        for index, label in ((1, "SYS_FAN5"), (2, "SYS_FAN6"), (3, "SYS_FAN4"))
+    ),
     # NZXT Kraken pump — liquid-cooler header (DEC-156): is_aio + writable.
     {
         "id": "hwmon:z53:usb-3-2:pwm1:Pump",
@@ -210,6 +233,56 @@ _DEMO_ZONES: dict[str, str] = {
     "hwmon:it8696:pci0:pwm1:CHA_FAN1": "CPU",
     "hwmon:it8696:pci0:pwm3:CHA_FAN3": "CPU",
 }
+
+
+# `VOLT-e`: what the daemon reports about each demo chip beyond its headers.
+# `chips_detected` and both header counts are DERIVED from
+# `_DEMO_HWMON_HEADERS`, as the daemon derives them from the same list it serves
+# on `GET /hwmon/headers` (`hw_diagnostics.rs::chips_detected`) — a hand-written
+# count is what let the chip list name one chip of two. Driver fields follow the
+# daemon's `chip_db`: the it87952 is a mainline it87 chip and the it8696 is not;
+# the daemon's table has no entry for the Kraken's chip, so it says "unknown"
+# beside the bound `nzxt-kraken3`. `device_id` is descriptive here, unlike the
+# platform device name a daemon reports (`VOLT-f`).
+_DEMO_CHIP_INFO: dict[str, dict] = {
+    "it8696": {
+        "device_id": "ITE IT8696E",
+        "expected_driver": "it87",
+        "bound_driver": "it87",
+        "in_mainline_kernel": False,
+    },
+    "it87952": {
+        "device_id": "ITE IT87952E",
+        "expected_driver": "it87",
+        "bound_driver": "it87",
+        "in_mainline_kernel": True,
+    },
+    "z53": {
+        "device_id": "NZXT Kraken Z53",
+        "expected_driver": "unknown",
+        "bound_driver": "nzxt-kraken3",
+        "in_mainline_kernel": False,
+    },
+}
+
+
+def _demo_hwmon_diagnostics() -> HwmonDiagnostics:
+    """`/diagnostics/hardware`'s ``hwmon`` block, derived from the demo headers."""
+    counts: dict[str, int] = {}
+    for header in _DEMO_HWMON_HEADERS:
+        counts[header["chip_name"]] = counts.get(header["chip_name"], 0) + 1
+    return HwmonDiagnostics(
+        chips_detected=[
+            HwmonChipInfo(chip_name=chip, header_count=count, **_DEMO_CHIP_INFO[chip])
+            for chip, count in counts.items()
+        ],
+        total_headers=sum(counts.values()),
+        writable_headers=sum(1 for h in _DEMO_HWMON_HEADERS if h["is_writable"]),
+        enable_revert_counts={
+            "hwmon:it8696:pci0:pwm1:CHA_FAN1": 0,
+            "hwmon:it8696:pci0:pwm3:CHA_FAN3": 0,
+        },
+    )
 
 
 # `VOLT-c` / `VOLT-b`: the demo board's voltage channels, as a current daemon
@@ -437,30 +510,14 @@ class DemoService:
         cache (`VOLT-c`), so System State and the Voltages panel render in demo.
 
         Models a realistic Gigabyte X870E AORUS MASTER reading: IT8696E primary
-        chip via the out-of-tree it87 driver, k10temp and amdgpu mainline,
+        chip via the out-of-tree it87 driver, the IT87952E secondary (mainline),
+        an NZXT Kraken, k10temp and amdgpu mainline,
         no ACPI conflicts, healthy thermal safety, and a discrete RDNA3 GPU
         with PMFW fan curves available.
         """
         return HardwareDiagnosticsResult(
             api_version=1,
-            hwmon=HwmonDiagnostics(
-                chips_detected=[
-                    HwmonChipInfo(
-                        chip_name="it8696",
-                        device_id="ITE IT8696E",
-                        expected_driver="it87",
-                        bound_driver="it87",
-                        in_mainline_kernel=False,
-                        header_count=5,
-                    ),
-                ],
-                total_headers=5,
-                writable_headers=2,
-                enable_revert_counts={
-                    "hwmon:it8696:pci0:pwm1:CHA_FAN1": 0,
-                    "hwmon:it8696:pci0:pwm3:CHA_FAN3": 0,
-                },
-            ),
+            hwmon=_demo_hwmon_diagnostics(),
             gpu=GpuDiagnosticsInfo(
                 pci_bdf="0000:2d:00.0",
                 pci_device_id=0x744C,

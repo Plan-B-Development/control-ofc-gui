@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -23,8 +24,19 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
+def unexpected_error_message(subject: str) -> str:
+    """What a call that failed outside the daemon-error family says (`PTA-p`).
+
+    A bare lower-case clause: every consumer but two prefixes its own label
+    ("Verify error: …", "Session error: …"), and the exception text goes to the
+    log rather than to the user.
+    """
+    return f"{subject} ended with an unexpected error (details in the application log)"
+
+
 #: What a verify that failed outside the daemon-error family says (`PTA-p`).
-UNEXPECTED_VERIFY_ERROR = "the test ended with an unexpected error (details in the application log)"
+UNEXPECTED_VERIFY_ERROR = unexpected_error_message("the test")
 
 
 def _is_soft_safety_refusal(err: object) -> bool:
@@ -53,15 +65,53 @@ class _SocketWorker(QObject):
         super().__init__()
         self._socket_path = socket_path
         self._client: DaemonClient | None = None
+        #: Set by :meth:`shutdown` on the UI thread and read by :meth:`_backstop`
+        #: on this worker's thread. A stale read costs one log level, nothing more.
+        self._shut_down = False
+
+    def _backstop(
+        self, exc: Exception, subject: str, emit: Callable[[str, str], None] | None
+    ) -> None:
+        """The last ``except`` of every slot here (`PTA-p`, `PTA-q`, `ROLE-g`).
+
+        An exception escaping a slot is printed and swallowed by Qt, so neither
+        result signal fires — and every consumer clears its in-flight state only
+        in those slots, leaving a button disabled or a dialog waiting until
+        restart. Reachable through a body the parser cannot read, and through
+        httpx's ``RuntimeError`` when :meth:`shutdown` closes the client while a
+        call is in flight. That second case is teardown, which closes the client
+        first on purpose (`.claude/rules/qt-gui.md`), and nobody is listening any
+        more, so it is logged quietly and reported to no one.
+        """
+        if self._shut_down:
+            log.debug("%s: %s ended after shutdown: %r", type(self).__name__, subject, exc)
+            return
+        log.error("%s: %s failed unexpectedly", type(self).__name__, subject, exc_info=exc)
+        if emit is not None:
+            emit("error", unexpected_error_message(subject))
+
+    def _refuse_after_shutdown(self) -> None:
+        """Raise once :meth:`shutdown` has run, so nothing builds a new client.
+
+        `shutdown` clears ``_client``, so without this the next call — a queued
+        slot, or the next read of a loop such as `_PwmReportWorker._snapshot`
+        that the backstop now lets continue — would open a fresh client and talk
+        to the daemon during teardown. The ``RuntimeError`` lands in the slot's
+        backstop, which is quiet after shutdown.
+        """
+        if self._shut_down:
+            raise RuntimeError(f"{type(self).__name__} was shut down")
 
     def _ensure_client(self) -> DaemonClient:
         from control_ofc.api.client import DaemonClient as _DaemonClient
 
+        self._refuse_after_shutdown()
         if self._client is None:
             self._client = _DaemonClient(socket_path=self._socket_path)
         return self._client
 
     def shutdown(self) -> None:
+        self._shut_down = True
         if self._client is not None:
             with contextlib.suppress(Exception):
                 self._client.close()
@@ -118,16 +168,12 @@ class _VerifyWorker(_SocketWorker):
             self._client = None
             self.verify_error.emit("unavailable", "Connection lost during verify", header_id)
         except Exception as e:
-            # Backstop, as DEC-266 is for rescan (`PTA-p`). An exception escaping
-            # a slot is printed and swallowed, so neither signal would fire — and
-            # the Hardware page's in-flight count and System State's active
-            # header clear only in those two slots, leaving the report's Start
-            # refused until restart. Reachable through a malformed or foreign
-            # response the parser cannot read. Both pages prefix the "error"
-            # category themselves, so the message is a bare clause, and the
-            # exception text goes to the log rather than to the user.
-            log.exception("Verify worker failed unexpectedly: %s", e)
-            self.verify_error.emit("error", UNEXPECTED_VERIFY_ERROR, header_id)
+            # `PTA-p`: the Hardware page's in-flight count and System State's
+            # active header clear only in the two result slots, so silence here
+            # left the report's Start refused until restart.
+            self._backstop(
+                e, "the test", lambda cat, msg: self.verify_error.emit(cat, msg, header_id)
+            )
 
 
 class _GpuVerifyWorker(_SocketWorker):
@@ -178,6 +224,10 @@ class _GpuVerifyWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.verify_error.emit("unavailable", "Connection lost during GPU verify")
+        except Exception as e:
+            # `PTA-q`: System State re-enables *Test GPU Fan Control* only in the
+            # two result slots, so silence left it disabled until restart.
+            self._backstop(e, "the test", self.verify_error.emit)
 
     @Slot(str)
     def do_reset(self, gpu_id: str) -> None:
@@ -209,6 +259,8 @@ class _GpuVerifyWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.reset_error.emit("unavailable", "Connection lost during GPU restore")
+        except Exception as e:
+            self._backstop(e, "the restore", self.reset_error.emit)
 
 
 class _HwDiagWorker(_SocketWorker):
@@ -249,6 +301,8 @@ class _HwDiagWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during diagnostics fetch")
+        except Exception as e:
+            self._backstop(e, "the diagnostics fetch", self.fetch_error.emit)
 
     @Slot()
     def do_rescan(self) -> None:
@@ -299,8 +353,7 @@ class _HwDiagWorker(_SocketWorker):
             # stayed dead for the rest of the session with the chip stuck on
             # "Rescanning hardware…". Fixing that on the OpenFan leg alone left
             # the same wedge reachable through this one.
-            log.exception("Hwmon rescan worker failed unexpectedly")
-            self.rescan_error.emit("error", f"Hardware rescan failed: {e}")
+            self._backstop(e, "the hardware rescan", self.rescan_error.emit)
 
     def _try_openfan_rescan(self, client) -> str:
         """Best-effort OpenFan adoption alongside the hwmon rescan (DEC-265).
@@ -416,6 +469,8 @@ class _HardwareReadinessWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.fetch_error.emit("unavailable", "Connection lost during hardware readiness fetch")
+        except Exception as e:
+            self._backstop(e, "the hardware readiness fetch", self.fetch_error.emit)
 
     @Slot()
     def do_probe(self) -> None:
@@ -447,6 +502,13 @@ class _HardwareReadinessWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.probe_error.emit("unavailable", "Connection lost during Super-I/O port probe")
+        except Exception as e:
+            # The page shows a probe message verbatim, unprefixed — so a sentence.
+            self._backstop(
+                e,
+                "the Super-I/O port probe",
+                lambda cat, msg: self.probe_error.emit(cat, msg[:1].upper() + msg[1:]),
+            )
 
 
 def _fetch_preflight(worker, header_id: str, diagnostic: str) -> None:
@@ -494,6 +556,13 @@ def _fetch_preflight(worker, header_id: str, diagnostic: str) -> None:
                 worker._client.close()
         worker._client = None
         worker.preflight_error.emit("unavailable", "Connection lost fetching safety checks.")
+    except Exception as e:
+        # Both dialogs show this as their blocked line, unprefixed — so a sentence.
+        worker._backstop(
+            e,
+            "the safety preflight",
+            lambda cat, msg: worker.preflight_error.emit(cat, msg[:1].upper() + msg[1:]),
+        )
 
 
 class _CharacterizationWorker(_SocketWorker):
@@ -542,6 +611,8 @@ class _CharacterizationWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.run_error.emit("unavailable", f"Connection lost during {what}")
+        except Exception as e:
+            self._backstop(e, f"the {what}", self.run_error.emit)
 
     @Slot(str, str)
     def do_preflight(self, header_id: str, diagnostic: str) -> None:
@@ -626,6 +697,10 @@ class _ControlPathWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.run_error.emit("unavailable", f"Connection lost during {what}")
+        except Exception as e:
+            # `ROLE-g`: the case seen live is `_refresh_control_paths`' one-shot
+            # status GET still in flight when teardown closed the client.
+            self._backstop(e, f"the {what}", self.run_error.emit)
 
     @Slot(str, str)
     def do_preflight(self, header_id: str, diagnostic: str) -> None:
@@ -708,6 +783,8 @@ class _OpenFanCalibrationWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.run_error.emit("unavailable", f"Connection lost during {what}")
+        except Exception as e:
+            self._backstop(e, f"the {what}", self.run_error.emit)
 
     @Slot(int)
     def do_start(self, channel: int) -> None:
@@ -774,6 +851,8 @@ class _ValidationWorker(_SocketWorker):
                     self._client.close()
             self._client = None
             self.session_error.emit("unavailable", f"Connection lost during {label.lower()}.")
+        except Exception as e:
+            self._backstop(e, label.lower(), self.session_error.emit)
 
     @Slot(str, str, list, list, dict, bool)
     def do_start(
@@ -875,6 +954,7 @@ class _PwmReportWorker(_SocketWorker):
     def _ensure_client(self) -> DaemonClient:
         from control_ofc.api.client import DaemonClient as _DaemonClient
 
+        self._refuse_after_shutdown()
         if self._client is None:
             self._client = _DaemonClient(
                 socket_path=self._socket_path, response_observer=self._observe
@@ -886,7 +966,21 @@ class _PwmReportWorker(_SocketWorker):
 
     @Slot(int, str, object)
     def do_call(self, req_id: int, kind: str, payload: object) -> None:
-        self.call_done.emit(req_id, self._execute(kind, payload))
+        try:
+            outcome = self._execute(kind, payload)
+        except Exception as e:
+            # The runner waits on `call_done` for every request, so it must fire.
+            from control_ofc.services.pwm_report.runner import CallOutcome
+
+            self._backstop(
+                e,
+                "the call",
+                lambda cat, msg: self.call_done.emit(
+                    req_id, CallOutcome(ok=False, category=cat, error_message=msg)
+                ),
+            )
+            return
+        self.call_done.emit(req_id, outcome)
 
     # ── dispatch ─────────────────────────────────────────────────────────────
 
@@ -970,6 +1064,10 @@ class _PwmReportWorker(_SocketWorker):
             # The typed parser choked on a 2xx body. The raw body is what the
             # report keeps anyway, so hand it on rather than losing the answer.
             log.warning("PWM report: could not parse a daemon reply (%s); keeping it raw", e)
+        except Exception as e:
+            # Anything else ends the same way as a parse failure: whatever the
+            # daemon sent is kept raw, and no body at all is "no answer".
+            self._backstop(e, "the call", None)
         if self._last_body is None:
             return CallOutcome(ok=False, category="unavailable", error_message="no answer")
         status, body = self._last_body

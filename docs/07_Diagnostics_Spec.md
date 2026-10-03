@@ -639,7 +639,15 @@ combo arrow, the chip knowledge base).
   fan mode (`pwm_enable`, labelled from `services/fan_mode` with the raw value beside it),
   the duty read back, and RPM. A value the daemon did not report is `—`; a verify stopped
   for a mid-run pump shows its after-column as *not measured*. Any other message in the
-  result line hides the table.
+  result line hides the table, and **sets its own colour (DEC-472, `PTA-r`)**: a hard error
+  is critical, a timeout, lost daemon or safety refusal is neutral, and none inherits the
+  green of the passing result before it. The GPU result label follows the same rule.
+  **A sweep names a failed restore (DEC-472, `PTA-s`).** A header the daemon could not put
+  back after its test is marked `— not restored` on its line, the summary ends with one
+  sentence saying how many headers may still be at the test duty and to re-activate the
+  profile if they stay there, and the chip rises to at least a warning — the rule a single
+  result has followed since `TS-bk`. It changes no recorded evidence: a failed restore says
+  nothing about whether PWM control works.
 - **Characterise PWM Response** (DEC-313, `SystemState_Btn_characterize`) — the deeper PWM/RPM
   sweep, a sibling of the quick verify, never a replacement. It is gated on
   `control.pwm_characterization` and hidden entirely without it. It opens
@@ -680,6 +688,17 @@ combo arrow, the chip knowledge base).
   daemon-reported no-op shows a warning chip, and an error shows a critical chip — every
   outcome lands in the event log. There is **no** session flag and **no** close-time
   auto-reset: the GUI never writes GPU PWM (DEC-165), so there is nothing to undo on close.
+
+**A worker that fails unexpectedly still answers (DEC-472).** Every slot in
+`ui/pages/diagnostics_workers.py` ends in one shared backstop (`_SocketWorker._backstop`): an
+exception outside the daemon-error family — a body the parser cannot read, or httpx's
+closed-client `RuntimeError` — ends the call on its error signal with "… ended with an
+unexpected error (details in the application log)", so no button stays disabled and no dialog
+waits until restart (`PTA-p`, `PTA-q`, `ROLE-g`). Once the worker has been shut down the
+backstop logs at debug and reports nothing — teardown closes the client first on purpose, and
+nobody is listening — and the worker opens no new client. Each page's `_teardown_worker` also drops its own requests to the worker
+before closing the client, so nothing new is queued against it; the close-before-join order is
+unchanged.
 
 **One gating shape per button (DEC-377, DEC-415).** *Test PWM Control*, *Verify All Writable*
 and *Characterise* share the daemon's one diagnostic slot, so a verify or sweep started here

@@ -2375,7 +2375,12 @@ class HardwarePage(QWidget):
         # interrupt it so quit()/wait() can join (the slot absorbs the resulting
         # connection error). Audit F-1's close-after-join reorder hangs a blocking
         # join; kept close-first deliberately (mirrors system_state_page).
+        #
+        # `ROLE-g`: this page's requests to the worker go first, so no new call
+        # is queued against a client about to close. A call already in flight
+        # is the worker's backstop to absorb.
         if worker is not None:
+            QObject.disconnect(self, None, worker, None)
             QObject.disconnect(worker, None, None, None)
             worker.shutdown()
         if thread is not None:

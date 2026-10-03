@@ -313,6 +313,31 @@ class TestDriverAlarm:
         card.update_vm(_alarm_cards(_hwmon_reading(False, alarm=False, rpm=400))[0])
         assert card._state_chip.toolTip() == "", "a cleared alarm leaves no stale tooltip"
 
+    def test_the_chip_describes_the_alarm_to_a_screen_reader(self, qtbot):
+        """`ALERT-b`: the detail was reachable only by hovering the chip."""
+        from control_ofc.ui.widgets.fan_control_card import FanControlCard
+
+        [vm] = _alarm_cards(_hwmon_reading(False, alarm=True, rpm=400))
+        assert vm.state_detail, "precondition: an alarm card carries a detail"
+        card = FanControlCard(vm)
+        qtbot.addWidget(card)
+        assert card._state_chip.accessibleDescription() == vm.state_detail
+        card.update_vm(_alarm_cards(_hwmon_reading(False, alarm=False, rpm=400))[0])
+        assert card._state_chip.accessibleDescription() == "", "cleared with the alarm"
+
+    @pytest.mark.parametrize("with_limit", [True, False])
+    def test_each_detail_line_is_one_short_fact(self, with_limit):
+        """`ALERT-c`: ``safe_tooltip`` never wraps, so the lines must be short
+        where they are built. The name line carries a user alias, whose length
+        the GUI does not choose, so it is checked for its wording instead."""
+        headers = (HEADER,) if with_limit else (HwmonHeader(id=HEADER.id, pwm_index=2),)
+        [card] = _alarm_cards(_hwmon_reading(False, alarm=True, rpm=400), headers=headers)
+        name_line, *facts = card.state_detail.splitlines()
+        assert name_line == "Rear fan: the fan chip reports an alarm."
+        assert len(facts) == 4
+        assert max(len(line) for line in facts) <= 60, facts
+        assert (f"{HEADER.rpm_min_threshold} RPM" in card.state_detail) is with_limit
+
 
 # ── DC-cz (Q5-A): a thermal state is an alert ────────────────────────────────
 

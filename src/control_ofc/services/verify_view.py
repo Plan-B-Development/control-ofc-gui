@@ -230,22 +230,49 @@ def verify_sweep_outcome(results: Sequence[str]) -> str | None:
     return None
 
 
-def verify_sweep_chip_class(results: Sequence[str]) -> str:
+def verify_sweep_chip_class(results: Sequence[str], *, restore_failed: bool = False) -> str:
     """The chip class for a sweep summary, from the same table as the record.
 
     Derived from `_OUTCOMES` rather than from a second list of "critical" and
     "warning" tokens, so the chip the user sees and the evidence the page
     persists can no longer disagree. The all-inconclusive case is neutral, not
     green: nothing failed, but nothing was demonstrated either.
+
+    ``restore_failed`` — any header in the sweep was not put back — raises the
+    chip to at least a warning, the rule a single result follows (`PTA-s`,
+    `TS-bk`). It says nothing about the hardware, so the evidence is untouched.
     """
     outcomes = [outcome_for(r) for r in results]
     if any(o.chip_class == "CriticalChip" for o in outcomes):
         return "CriticalChip"
-    if any(o.chip_class == "WarningChip" for o in outcomes):
+    if restore_failed or any(o.chip_class == "WarningChip" for o in outcomes):
         return "WarningChip"
     if any(o.evidence == PWM_EVIDENCE_EFFECTIVE for o in outcomes):
         return "SuccessChip"
     return "CardMeta"
+
+
+#: Appended to a sweep line whose header the daemon could not put back (`PTA-s`).
+SWEEP_NOT_RESTORED = "not restored"
+
+
+def sweep_restore_failed_note(count: int) -> str:
+    """The sentence closing a sweep summary in which ``count`` restores failed.
+
+    The single-result sentence (:func:`restore_failed_line`) names the three
+    causes and the duties; a sweep line has no room for either, so this keeps
+    the one fact the user can act on and what to do about it. Empty for zero.
+    """
+    if count <= 0:
+        return ""
+    subject = (
+        "1 header could not be put back after its test"
+        if count == 1
+        else f"{count} headers could not be put back after their tests"
+    )
+    return (
+        f"{subject} and may still be at the test duty. If it stays there, re-activate your profile."
+    )
 
 
 @dataclass(frozen=True)

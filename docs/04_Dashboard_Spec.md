@@ -91,7 +91,8 @@ Each card shows:
 - a **read-only state chip** — Auto / Override active / Driver alarm / Low RPM / Stale /
   Stall / Offline (worst member wins, in the reverse of that order; **Driver alarm**, DEC-459,
   is the driver's `fan_alarm` bit, a state and never an alert, with a tooltip naming each
-  alarmed fan and its `rpm_min_threshold`), and **Read-only** in place of Auto on a read-only fan's card, since nothing
+  alarmed fan and its `rpm_min_threshold` in short lines, one fact each, and the same text as
+  the chip's accessible description — DEC-472, `ALERT-b`/`ALERT-c`), and **Read-only** in place of Auto on a read-only fan's card, since nothing
   drives it (text always paired with colour, WCAG 1.4.1) — alongside how many fans the
   control covers, so the blast radius of anything done to it is explicit
 - **RPM / SPEED / TEMP** — means across reporting members; `—` where unknown, never a

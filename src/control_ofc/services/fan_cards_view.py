@@ -213,31 +213,33 @@ def _derive_state(fan: FanReading, *, overridden: bool, floor: float, stalled: b
 def _driver_alarm_detail(
     fans: list[FanReading], headers: list[HwmonHeader], name: Callable[[str], str]
 ) -> str:
-    """The DRIVER_ALARM tooltip: one line per alarmed fan, with its low limit.
+    """The DRIVER_ALARM detail: a few short lines per alarmed fan, with its low limit.
 
     The limit is ``fanN_min`` (``rpm_min_threshold``), which the BIOS sets. What
     raises the alarm is chip-dependent (kernel hwmon sysfs-interface), so the
     wording says what usually raises it and never claims more.
+
+    `ALERT-c`: one fact per line, broken here rather than in ``safe_tooltip``,
+    whose ``white-space: pre`` exists so an elided name's tooltip stays one line
+    — so a 130-character sentence ran across the screen. The same text is the
+    chip's accessible description (`ALERT-b`), which reads the lines in order.
     """
     limits = {h.id: h.rpm_min_threshold for h in headers}
     lines = []
     for fan in fans:
         if fan.fan_alarm is not True:
             continue
+        lines.append(f"{name(fan.id)}: the fan chip reports an alarm.")
         limit = limits.get(fan.id)
         if limit:
-            lines.append(
-                f"{name(fan.id)}: the fan chip reports an alarm. Its low-speed limit, "
-                f"set by the firmware, is {limit} RPM, and a fan below it usually "
-                f"raises one."
-            )
+            lines.append(f"  Low-speed limit (set by the firmware): {limit} RPM.")
+            lines.append("  A fan below this limit usually raises the alarm.")
         else:
-            lines.append(
-                f"{name(fan.id)}: the fan chip reports an alarm. What raises it depends "
-                f"on the chip; the Hardware page shows this header's readings."
-            )
+            lines.append("  What raises it depends on the chip.")
+            lines.append("  The Hardware page shows this header's readings.")
     if lines:
-        lines.append("This is the hardware's own flag; the daemon does not act on it.")
+        lines.append("This is the hardware's own flag.")
+        lines.append("The daemon does not act on it.")
     return "\n".join(lines)
 
 

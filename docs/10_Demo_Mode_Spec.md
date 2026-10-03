@@ -38,8 +38,11 @@ When demo mode is active:
 ## Demo data model
 Provide a believable synthetic environment. As shipped, demo mode includes:
 - OpenFan present, with 8 named channels in use
-- three writable hwmon headers: two on an ITE chip (CPU Fan, CPU OPT / Pump) and an NZXT Kraken
-  pump (`is_aio`, DEC-156)
+- six writable hwmon headers: two on the IT8696E (CPU Fan, CPU OPT / Pump), three on the
+  IT87952E (`SYS_FAN5`, `SYS_FAN6`, `SYS_FAN4` — the board's channel order, without its
+  `_PUMP` suffixes so the demo has one pump), and an NZXT Kraken pump (`is_aio`, DEC-156).
+  `/diagnostics/hardware`'s chip list and header counts are derived from these headers, as the
+  daemon derives them (DEC-472, `VOLT-e`)
 - an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
 - CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, and the Kraken's coolant
   sensor (classified as Liquid)
@@ -51,7 +54,8 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
 - Rear Exhaust, Top Exhaust 1 / Top Exhaust 2 (OpenFan)
 - GPU Adjacent Intake (OpenFan)
 - Radiator Push 1 / Radiator Push 2 (OpenFan)
-- CPU Fan, CPU OPT / Pump (hwmon, ITE)
+- CPU Fan, CPU OPT / Pump (hwmon, IT8696E)
+- Bottom Intake 1 / Bottom Intake 2, Side Exhaust (hwmon, IT87952E)
 - Pump (hwmon, NZXT Kraken)
 - RX 7900 XTX Fan (AMD GPU)
 - Arc B580 Fan (Intel GPU, read-only)

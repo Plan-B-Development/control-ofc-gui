@@ -47,9 +47,11 @@ from control_ofc.services.system_state_view import (
     daemon_version_at_least,
 )
 from control_ofc.services.verify_view import (
+    SWEEP_NOT_RESTORED,
     build_gpu_verify_result_view,
     build_verify_result_view,
     outcome_for,
+    sweep_restore_failed_note,
     verify_sweep_chip_class,
     verify_sweep_outcome,
 )
@@ -196,6 +198,10 @@ class SystemStatePage(QWidget):
         self._pwm_report_active = False
         self._verify_all_queue: list[str] = []
         self._verify_all_results: list[tuple[str, str]] = []
+        #: Headers in this sweep the daemon could not put back (`PTA-s`). Kept
+        #: beside the results, not in them: `_record_verify_outcome` reads the
+        #: tokens as evidence, and a failed restore is none either way.
+        self._verify_all_restore_failed: set[str] = set()
         self._verify_all_total = 0
         #: The header the SWEEP is waiting on, distinct from
         #: `_verify_active_header`, which is whatever was last requested by any
@@ -1091,7 +1097,12 @@ class SystemStatePage(QWidget):
         # do_verify slot absorbs the resulting connection error). Audit F-1
         # proposed close-after-join to match ControlsPage, but that hangs the join
         # for a blocking call — proven by test_v1_2_diagnostics' in-flight test.
+        #
+        # `ROLE-g`: this page's requests to the worker go first, so no new call
+        # is queued against a client about to close. A call already in flight
+        # is the worker's backstop to absorb.
         if worker is not None:
+            QObject.disconnect(self, None, worker, None)
             QObject.disconnect(worker, None, None, None)
             worker.shutdown()
         if thread is not None:
@@ -1206,12 +1217,12 @@ class SystemStatePage(QWidget):
         self._verify_evidence.set_evidence(None)
         header_id = self._verify_combo.currentData()
         if not header_id:
-            self._verify_result_label.setText("No writable header selected")
-            self._verify_result_label.setVisible(True)
+            self._show_verify_message(self._verify_result_label, "No writable header selected")
             return
         if not self._client:
-            self._verify_result_label.setText("Cannot verify: no daemon connection")
-            self._verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_result_label, "Cannot verify: no daemon connection"
+            )
             return
         self._verify_btn.setEnabled(False)
         self._verify_btn.setText("Testing...")
@@ -1219,8 +1230,9 @@ class SystemStatePage(QWidget):
         if not self._ensure_verify_worker():
             self._verify_btn.setText("Test PWM Control")
             self._sync_verify_button_enabled()
-            self._verify_result_label.setText("Verify unavailable: no socket path")
-            self._verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_result_label, "Verify unavailable: no socket path"
+            )
             return
         self._verify_active_header = header_id
         self._sync_verify_all_enabled()  # `ACK-ab`: after the header is recorded
@@ -1261,6 +1273,8 @@ class SystemStatePage(QWidget):
         if self._verify_all_total > 0 and header_id == self._verify_all_pending:
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, result.result))
+            if result.restore_failed:
+                self._verify_all_restore_failed.add(header_id)
             self._step_pwm_verify_all()
 
     @Slot(str, str, str)
@@ -1273,10 +1287,13 @@ class SystemStatePage(QWidget):
         recorded against whatever the sweep happened to be testing.
         """
         if category == "unavailable":
-            self._verify_result_label.setText(message or "Daemon unavailable during verify")
+            self._show_verify_message(
+                self._verify_result_label, message or "Daemon unavailable during verify"
+            )
         else:
-            self._verify_result_label.setText(f"Verify error: {message}")
-        self._verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_result_label, f"Verify error: {message}", "CriticalChip"
+            )
         self._verify_evidence.set_evidence(None)
         self._verify_active_header = None  # before the gate reads it — see `_on_verify_ok`
         self._verify_btn.setText("Test PWM Control")
@@ -1285,6 +1302,21 @@ class SystemStatePage(QWidget):
             self._verify_all_pending = None
             self._verify_all_results.append((header_id, f"error:{category}"))
             self._step_pwm_verify_all()
+
+    @staticmethod
+    def _show_verify_message(label: QLabel, text: str, chip_class: str = "") -> None:
+        """Show a message that is not a verify result on a verify result label.
+
+        `PTA-r`: the class is set on every message, so a message with none
+        resets it rather than inheriting the colour of the result before it —
+        a "Verify error" after a passing test was painted green. The Hardware
+        page's `_show_diag_message` has followed the same rule since W-DIAGG
+        Run A. ``"unavailable"`` (a timeout, a daemon gone, a safety refusal)
+        stays neutral; only a hard ``"error"`` is critical, as a sweep paints it.
+        """
+        set_chip_class(label, chip_class, skip_if_unchanged=True)
+        label.setText(text)
+        label.setVisible(True)
 
     def _show_verify_result(self, result: HwmonVerifyResult) -> None:
         # Wording and assembly live in `services/verify_view` since AIO-MB
@@ -1323,6 +1355,7 @@ class SystemStatePage(QWidget):
             return
         self._verify_all_queue = list(writable)
         self._verify_all_results = []
+        self._verify_all_restore_failed = set()
         self._verify_all_pending = None
         self._verify_all_total = len(writable)
         # The predicates, not bare `setEnabled(False)`: with the total set, all
@@ -1363,11 +1396,21 @@ class SystemStatePage(QWidget):
         # of this vocabulary lived here before DEC-358 and one of them disagreed.
         results = [result for _, result in self._verify_all_results]
         n_done = len(self._verify_all_results)
+        not_restored = self._verify_all_restore_failed
         lines = [f"Verify all complete ({n_done}/{self._verify_all_total} tested):"]
         for header_id, result_str in self._verify_all_results:
-            lines.append(f"  • {header_id}: {outcome_for(result_str).short}")
+            line = f"  • {header_id}: {outcome_for(result_str).short}"
+            if header_id in not_restored:
+                line += f" — {SWEEP_NOT_RESTORED}"
+            lines.append(line)
+        note = sweep_restore_failed_note(len(not_restored))
+        if note:
+            lines.extend(("", note))
         self._verify_all_progress_label.setText("\n".join(lines))
-        set_chip_class(self._verify_all_progress_label, verify_sweep_chip_class(results))
+        set_chip_class(
+            self._verify_all_progress_label,
+            verify_sweep_chip_class(results, restore_failed=bool(not_restored)),
+        )
 
     # ── GPU verify + restore (ported) ────────────────────────────────
 
@@ -1402,19 +1445,22 @@ class SystemStatePage(QWidget):
         self._gpu_verify_evidence.set_evidence(None)
         bdf = self._gpu_verify_bdf
         if not bdf:
-            self._gpu_verify_result_label.setText("No GPU with a writable fan-control path.")
-            self._gpu_verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._gpu_verify_result_label, "No GPU with a writable fan-control path."
+            )
             return
         if not self._client:
-            self._gpu_verify_result_label.setText("Cannot verify: no daemon connection")
-            self._gpu_verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._gpu_verify_result_label, "Cannot verify: no daemon connection"
+            )
             return
         self._gpu_verify_btn.setEnabled(False)
         self._gpu_verify_btn.setText("Testing...")
         self._gpu_verify_result_label.setVisible(False)
         if not self._ensure_gpu_verify_worker():
-            self._gpu_verify_result_label.setText("GPU verify unavailable: no daemon socket path")
-            self._gpu_verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._gpu_verify_result_label, "GPU verify unavailable: no daemon socket path"
+            )
             self._gpu_verify_btn.setEnabled(True)
             self._gpu_verify_btn.setText("Test GPU Fan Control")
             return
@@ -1434,11 +1480,13 @@ class SystemStatePage(QWidget):
             self._gpu_verify_btn.setVisible(False)
             self._gpu_verify_result_label.setVisible(False)
         elif category == "unavailable":
-            self._gpu_verify_result_label.setText(message or "Daemon unavailable during GPU verify")
-            self._gpu_verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._gpu_verify_result_label, message or "Daemon unavailable during GPU verify"
+            )
         else:
-            self._gpu_verify_result_label.setText(f"GPU verify error: {message}")
-            self._gpu_verify_result_label.setVisible(True)
+            self._show_verify_message(
+                self._gpu_verify_result_label, f"GPU verify error: {message}", "CriticalChip"
+            )
         self._gpu_verify_btn.setEnabled(True)
         self._gpu_verify_btn.setText("Test GPU Fan Control")
 

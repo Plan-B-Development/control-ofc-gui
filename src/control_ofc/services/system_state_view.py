@@ -1052,6 +1052,18 @@ class _GpuRowSilencer:
         )
 
 
+def _fan_method_value(method: str) -> str:
+    """The GPU Fan Control row's value: the wire method, qualified where needed.
+
+    `GPU-d`: a legacy card's ``hwmon_pwm`` is driven by verify and reset only —
+    no daemon engine ever writes it (DEC-445) — and the Overview says so
+    ("verify only (legacy pwm1)"). The row keeps its ``ok`` state, because
+    verify and reset do work there, which is what this row has always meant.
+    The intel/nvidia rows below qualify their method the same way.
+    """
+    return f"{method} (verify only)" if method == "hwmon_pwm" else method
+
+
 def _fan_method_state(method: str) -> str:
     if method in ("pmfw_curve", "hwmon_pwm"):
         return "ok"
@@ -1165,7 +1177,7 @@ def build_safety_gpu_vm(
         rows.append(
             silencer.constraint(
                 "Fan Control",
-                gpu.fan_control_method,
+                _fan_method_value(gpu.fan_control_method),
                 _fan_method_state(gpu.fan_control_method),
                 key=_GPU_ROW_KEY_FAN_CONTROL,
             )
