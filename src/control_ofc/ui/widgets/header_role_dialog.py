@@ -28,6 +28,7 @@ from control_ofc.api.models import HwmonHeader
 from control_ofc.services.header_inspector_view import role_label, role_source_label
 from control_ofc.services.header_role_view import (
     ROLE_CHOICES,
+    RoleChoice,
     current_choice,
     plan_role_change,
 )
@@ -47,6 +48,7 @@ class HeaderRoleDialog(ModalDialog):
         display_name: str,
         *,
         label_caveat: str = "",
+        choices: tuple[RoleChoice, ...] = ROLE_CHOICES,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(f"Set role — {display_name}", parent)
@@ -83,7 +85,7 @@ class HeaderRoleDialog(ModalDialog):
         self._group = QButtonGroup(self)
         self._radios: dict[str | None, QRadioButton] = {}
         selected = current_choice(header)
-        for choice in ROLE_CHOICES:
+        for choice in choices:
             slug = _token_slug(choice.token)
             radio = QRadioButton(choice.label, self)
             radio.setObjectName(f"HeaderRole_Radio_{slug}")

@@ -34,6 +34,7 @@ from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import ContentSizedCard
 from control_ofc.ui.components.labels import ElidedLabel
+from control_ofc.ui.qt_util import repolish
 from control_ofc.ui.widgets.collapsible_section import CollapsibleSection
 
 
@@ -70,6 +71,10 @@ class PwmHeaderCard(ContentSizedCard):
         #: Non-empty = blocked, and the text is the reason shown on each button.
         self._blocked_reason = ""
         self._view: HeaderInspectorView | None = None
+        # A "No fan" header is dimmed through the theme's `.Card[muted="true"]`
+        # rule, so a theme change re-tints it.
+        self._muted = False
+        self.setProperty("muted", "false")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -205,6 +210,24 @@ class PwmHeaderCard(ContentSizedCard):
         self._role_outcome_lbl.setText(text)
         self._role_outcome_lbl.setVisible(bool(text))
 
+    def is_muted(self) -> bool:
+        return self._muted
+
+    def _set_muted(self, muted: bool) -> None:
+        """Dim the card for a "No fan" header; repolish only on a change.
+
+        The rule matches descendants (`.Card[muted="true"] QLabel`), and Qt
+        re-evaluates a descendant selector only for a widget it re-polishes, so
+        every child label is re-polished along with the card.
+        """
+        if muted == self._muted:
+            return
+        self._muted = muted
+        self.setProperty("muted", "true" if muted else "false")
+        repolish(self)
+        for child in self.findChildren(QLabel):
+            repolish(child)
+
     def set_diagnostics_blocked(self, reason: str) -> None:
         """Stand the three tests down while a PWM Test Report runs (S4-9 (4)).
 
@@ -259,6 +282,7 @@ class PwmHeaderCard(ContentSizedCard):
         self._role_btn.setAccessibleName(f"Set the role of {view.title}")
         self._caveat_lbl.setText(view.label_caveat)
         self._caveat_lbl.setVisible(bool(view.label_caveat))
+        self._set_muted(view.no_fan)
 
         self._live_state = _fill_grid(
             self._live_grid,

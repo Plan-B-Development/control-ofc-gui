@@ -354,6 +354,8 @@ def _probe_availability(channel: Channel) -> Availability:
         )
     if channel.role == "cpu_fan":
         return Availability(False, "Not offered on a CPU fan header, by design.")
+    if channel.role == "no_fan":
+        return Availability(False, "Not offered: this header is set to No fan.")
     if channel.role not in PROBE_ROLES:
         return Availability(
             False,

@@ -76,6 +76,7 @@ from control_ofc.services.header_role_view import (
     nct6687_label_note,
     nct6687_label_prompt,
     outcome_message,
+    role_choices,
     role_editable,
 )
 from control_ofc.services.header_role_writes import apply_role_writes
@@ -2150,6 +2151,7 @@ class HardwarePage(QWidget):
             header,
             name,
             label_caveat=nct6687_label_note(header, self._board_vendor()),
+            choices=role_choices(caps),
             parent=parent,
         )
         if not dialog.exec():

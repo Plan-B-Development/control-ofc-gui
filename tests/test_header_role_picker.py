@@ -32,6 +32,7 @@ from control_ofc.services.header_role_view import (
     nct6687_label_unverified,
     outcome_message,
     plan_role_change,
+    role_choices,
     role_editable,
 )
 from control_ofc.services.pwm_report.catalog import TEST_PROBE, availability
@@ -88,7 +89,7 @@ def _user_pump() -> HwmonHeader:
 class TestChoices:
     def test_offers_every_assignable_role_and_a_clear_never_an_explicit_unknown(self):
         tokens = [c.token for c in ROLE_CHOICES]
-        assert tokens == ["pump", "chassis_fan", "radiator_fan", "cpu_fan", None]
+        assert tokens == ["pump", "chassis_fan", "radiator_fan", "cpu_fan", "no_fan", None]
         assert "unknown" not in tokens
 
     def test_cpu_fan_says_it_adds_no_floor(self):
@@ -96,6 +97,14 @@ class TestChoices:
         copy implying protection would lie about hardware safety."""
         cpu = next(c for c in ROLE_CHOICES if c.token == "cpu_fan")
         assert "adds no floor" in cpu.effect
+
+    def test_no_fan_is_offered_only_by_a_daemon_that_accepts_it(self):
+        """An older daemon 400s the token, so the choice is not offered there."""
+        with_flag = [c.token for c in role_choices(_caps(header_role_no_fan=True))]
+        without = [c.token for c in role_choices(_caps())]
+        assert "no_fan" in with_flag
+        assert "no_fan" not in without
+        assert [t for t in with_flag if t != "no_fan"] == without
 
     def test_preselection_is_the_users_own_assignment_only(self):
         assert current_choice(_user_pump()) == "pump"
@@ -243,6 +252,18 @@ class TestDialog:
         assert len({r.objectName() for r in radios}) == len(radios)
         assert all(r.accessibleName() for r in radios)
 
+    def test_the_offered_choices_decide_the_radios(self, qtbot):
+        older = HeaderRoleDialog(_hdr(), "pwm2", choices=role_choices(_caps()))
+        qtbot.addWidget(older)
+        assert older.findChild(QRadioButton, "HeaderRole_Radio_no_fan") is None
+        newer = HeaderRoleDialog(
+            _hdr(), "pwm2", choices=role_choices(_caps(header_role_no_fan=True))
+        )
+        qtbot.addWidget(newer)
+        newer.findChild(QRadioButton, "HeaderRole_Radio_no_fan").click()
+        assert newer.chosen_role() == "no_fan"
+        assert newer.findChild(QPushButton, "HeaderRole_Btn_apply").isEnabled()
+
 
 # ── the card ─────────────────────────────────────────────────────────────────
 
@@ -252,6 +273,80 @@ def _card(qtbot, header, caps=None, vendor=""):
     card = PwmHeaderCard(view)
     qtbot.addWidget(card)
     return card
+
+
+def _no_fan(hid: str = UNLABELLED, **kw) -> HwmonHeader:
+    return _hdr(hid, role="no_fan", role_source="user_assigned", **kw)
+
+
+class TestNoFanView:
+    def test_an_empty_header_does_not_alarm(self):
+        from control_ofc.api.models import FanReading
+
+        alarm = FanReading(id=UNLABELLED, source="hwmon", rpm=0, fan_alarm=True)
+        view = build_header_inspector_view(_no_fan(), reading=alarm, capabilities=_caps())
+        assert view.no_fan is True
+        assert view.role_label == "No fan"
+        status = next(r for r in view.live_rows if r.label == "Status")
+        assert (status.value, status.state) == ("No fan", "neutral")
+        # Opposite branch: the same alarm on an ordinary header escalates.
+        plain = build_header_inspector_view(_hdr(), reading=alarm, capabilities=_caps())
+        assert plain.no_fan is False
+        assert next(r for r in plain.live_rows if r.label == "Status").state == "critical"
+
+    def test_a_protected_pump_set_to_no_fan_still_alarms(self):
+        """The daemon still protects a header its label names a pump (DEC-312), so
+        the user's display role must not hide that pump's alarm."""
+        from control_ofc.api.models import FanReading
+
+        header = _no_fan(LABEL_PUMP, stop_permitted=False, effective_min_pwm_pct=30)
+        alarm = FanReading(id=LABEL_PUMP, source="hwmon", rpm=0, fan_alarm=True)
+        view = build_header_inspector_view(header, reading=alarm, capabilities=_caps())
+        assert view.no_fan is False
+        assert view.pump_protected is True
+        assert next(r for r in view.live_rows if r.label == "Status").state == "critical"
+
+
+@pytest.fixture()
+def restore_app_theme(qtbot):
+    """Save/restore everything ``apply_theme`` mutates (mirrors the fixture in
+    test_theme_typography_r30.py)."""
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    from control_ofc.ui import theme as theme_mod
+
+    app = QApplication.instance()
+    saved = (QPalette(app.palette()), app.styleSheet(), app.font(), theme_mod._active_theme)
+    try:
+        yield app
+    finally:
+        app.setPalette(saved[0])
+        app.setStyleSheet(saved[1])
+        app.setFont(saved[2])
+        theme_mod._active_theme = saved[3]
+
+
+class TestNoFanCard:
+    def test_the_card_shows_no_fan_and_dims_until_the_role_changes(self, qtbot, restore_app_theme):
+        from PySide6.QtGui import QColor
+
+        from control_ofc.ui.theme import apply_theme, default_dark_theme
+
+        tokens = default_dark_theme()
+        apply_theme(tokens)
+        card = _card(qtbot, _no_fan())
+        slug = _slug(UNLABELLED)
+        pill = card.findChild(QLabel, f"HeaderCard_Pill_role_{slug}")
+        subtitle = card.findChild(QLabel, f"HeaderCard_Subtitle_{slug}")
+        muted = QColor(tokens.text_muted)
+        assert pill.accessibleName() == "Role: No fan"
+        assert card.is_muted() and card.property("muted") == "true"
+        assert subtitle.palette().color(subtitle.foregroundRole()) == muted
+
+        card.set_view(build_header_inspector_view(_hdr(role="chassis_fan"), capabilities=_caps()))
+        assert not card.is_muted() and card.property("muted") == "false"
+        assert subtitle.palette().color(subtitle.foregroundRole()) != muted
 
 
 class TestCard:
@@ -325,8 +420,11 @@ class _StubDialog:
     choice: str | None = None
     accept = True
 
-    def __init__(self, header, name, *, label_caveat="", parent=None):
+    last_choices: tuple = ()
+
+    def __init__(self, header, name, *, label_caveat="", choices=ROLE_CHOICES, parent=None):
         self.header = header
+        type(self).last_choices = tuple(c.token for c in choices)
 
     def exec(self):
         return self.accept
@@ -335,10 +433,10 @@ class _StubDialog:
         return type(self).choice
 
 
-def _page(qtbot, monkeypatch, headers, *, error=None, settings_service=None, vendor=""):
+def _page(qtbot, monkeypatch, headers, *, error=None, settings_service=None, vendor="", caps=None):
     state = AppState()
     state.set_connection(ConnectionState.CONNECTED)
-    state.set_capabilities(_caps())
+    state.set_capabilities(caps or _caps())
     state.board_info = BoardInfo(vendor=vendor)
     state.set_hwmon_headers(headers)
     client = _Client(state, error=error)
@@ -372,6 +470,27 @@ class TestHardwarePage:
         pill = page.findChild(QLabel, f"HeaderCard_Pill_role_{_slug(UNLABELLED)}")
         assert pill.accessibleName() == "Role: Chassis fan"
         assert "is now set to Chassis fan" in _outcome(page, UNLABELLED).text()
+
+    def test_choosing_no_fan_posts_it_and_the_card_shows_it(self, qtbot, monkeypatch):
+        page, state, client = _page(
+            qtbot, monkeypatch, [_hdr()], caps=_caps(header_role_no_fan=True)
+        )
+        _StubDialog.choice, _StubDialog.accept = "no_fan", True
+        _role_btn(page, UNLABELLED).click()
+        assert "no_fan" in _StubDialog.last_choices, "the page offered the daemon's choices"
+        assert client.calls == [(UNLABELLED, "no_fan")]
+        assert state.hwmon_headers[0].role == "no_fan"
+        pill = page.findChild(QLabel, f"HeaderCard_Pill_role_{_slug(UNLABELLED)}")
+        assert pill.accessibleName() == "Role: No fan"
+        assert page.findChild(PwmHeaderCard, f"HeaderCard_{_slug(UNLABELLED)}").is_muted()
+        assert "is now set to No fan" in _outcome(page, UNLABELLED).text()
+
+    def test_an_older_daemon_is_not_offered_no_fan(self, qtbot, monkeypatch):
+        page, _state, _client = _page(qtbot, monkeypatch, [_hdr()])
+        _StubDialog.choice, _StubDialog.accept = None, False
+        _role_btn(page, UNLABELLED).click()
+        assert _StubDialog.last_choices, "precondition: the dialog was built"
+        assert "no_fan" not in _StubDialog.last_choices
 
     def test_cancel_writes_nothing(self, qtbot, monkeypatch):
         page, _state, client = _page(qtbot, monkeypatch, [_hdr()])
@@ -572,6 +691,15 @@ def test_the_probe_reason_points_at_a_route_that_exists():
     reason = availability(_ch(role="unknown"), TEST_PROBE, cat_caps()).reason
     assert "Controls page" not in reason
     assert "Set…" in reason and "Hardware page" in reason
+
+
+def test_the_probe_is_not_offered_on_a_no_fan_header():
+    from tests.test_pwm_report_store_and_catalog import _caps as cat_caps
+    from tests.test_pwm_report_store_and_catalog import _ch
+
+    result = availability(_ch(role="no_fan"), TEST_PROBE, cat_caps())
+    assert not result.available
+    assert "No fan" in result.reason
 
 
 # ── Configure AIO asks the same question (the user's Q3 follow-up) ───────────

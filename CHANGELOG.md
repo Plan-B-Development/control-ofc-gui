@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Mark a fan header as empty.** **Set role… ▸ No fan** on a Hardware-page header card (needs
+  `control-ofc-daemon` 3.4.0 or newer) records that nothing is plugged into that header. The card shows
+  *No fan*, is dimmed, and its status reads *No fan* instead of warning about a missing RPM. It adds no
+  floor, and a header the daemon protects as a pump stays protected and keeps its warnings. The PWM Test
+  Report does not offer its stall/restart probe on such a header.
+
 ## [3.3.1] — 2026-10-03
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The corrected F81768D and

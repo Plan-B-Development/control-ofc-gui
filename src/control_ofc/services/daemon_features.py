@@ -92,6 +92,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # DEC-456, control.pwm_verification_records. Per-header PWM-control
         # verdicts on `/hwmon/headers`. `/ofc:release` confirms the version.
         "pwm_verification_records": "3.2.0",
+        # control.header_role_no_fan. The `no_fan` header role.
+        # `/ofc:release` confirms the version.
+        "header_role_no_fan": "3.4.0",
         # DEC-405. NO capability flag, and deliberately absent from
         # `DAEMON_FEATURE_CAPABILITY_FLAGS` below: DEC-405 corrected what
         # `settled_ms`, point `stability` and discovery's noise floor MEAN
@@ -147,6 +150,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "canonical_chip_names": "canonical_chip_names",
         "cooling_failure_detection": "cooling_failure_detection",
         "pwm_verification_records": "pwm_verification_records",
+        "header_role_no_fan": "header_role_no_fan",
     }
 )
 
@@ -176,6 +180,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
         "cooling_failure_detection": "the coolant limit and pump stall protection",
         "pwm_verification_records": "remembering which fan headers passed verification",
+        "header_role_no_fan": "marking a fan header as having no fan",
     }
 )
 

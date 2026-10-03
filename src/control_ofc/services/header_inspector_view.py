@@ -59,6 +59,7 @@ STATUS_UNKNOWN = "Unknown"
 STATUS_NEEDS_ATTENTION = "Needs attention"
 STATUS_POSSIBLE_OVERRIDE = "Possible device override"
 STATUS_CONTROL_RECLAIMED = "Control reclaimed"
+STATUS_NO_FAN = "No fan"
 
 # ── Control ownership, using the daemon's own rule (`validation/recorder.rs`) ─
 OWNER_DAEMON = "Control-OFC"
@@ -74,6 +75,7 @@ _ROLE_LABELS = {
     "cpu_fan": "CPU fan",
     "radiator_fan": "Radiator fan",
     "chassis_fan": "Chassis fan",
+    "no_fan": "No fan",
     "unknown": "Unclassified",
 }
 
@@ -187,6 +189,10 @@ class HeaderInspectorView:
     #: DEC-444 (`BRD-h`): the caveat on an nct6687d MSI label on another
     #: vendor's board, or "".
     label_caveat: str = ""
+    #: The user marked this header as having nothing plugged in (role
+    #: ``no_fan``) and the daemon does not protect it as a pump: the card is
+    #: dimmed and its status does not warn about a missing RPM.
+    no_fan: bool = False
 
 
 def control_ownership(reading: FanReading | None) -> str:
@@ -325,8 +331,14 @@ def build_header_inspector_view(
         live.append(InfoRow("PWM frequency", _fmt_freq(header.pwm_freq_hz)))
 
     # ── Status (§18): only genuine problems escalate ─────────────────────────
+    # A header the user says is empty has no fan to alarm about — unless the
+    # daemon protects it as a pump (label or active profile), when the user's
+    # role is display only and a pump alarm must still show (DEC-312).
+    no_fan = header.role == "no_fan" and not protected
     status, status_state = STATUS_NORMAL, "ok"
-    if not header.is_writable and not header.rpm_available:
+    if no_fan:
+        status, status_state = STATUS_NO_FAN, "neutral"
+    elif not header.is_writable and not header.rpm_available:
         status, status_state = STATUS_UNAVAILABLE, "neutral"
     elif reading is None:
         status, status_state = STATUS_UNKNOWN, "neutral"
@@ -494,6 +506,7 @@ def build_header_inspector_view(
         can_set_role=can_set_role,
         set_role_disabled_reason=set_role_reason,
         label_caveat=label_caveat,
+        no_fan=no_fan,
     )
 
 

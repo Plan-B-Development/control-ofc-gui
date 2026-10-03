@@ -1073,7 +1073,8 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
 ### Setting a header's role (DEC-444)
 **Set role…** on each header card opens `HeaderRoleDialog` (`ui/widgets/header_role_dialog.py`)
 over the Qt-free `services/header_role_view.py`: *Pump*, *Chassis fan*, *Radiator fan*,
-*CPU fan* or *Not set* (a `null` clear — never an explicit `unknown`), each with its effect,
+*CPU fan*, *No fan* (only where the daemon advertises `control.header_role_no_fan`) or
+*Not set* (a `null` clear — never an explicit `unknown`), each with its effect,
 Apply enabled only when the choice changes the stored assignment. The PWM Test Report's scope
 page offers the same picker as **Set…** in its Role column. Both route through
 `HardwarePage.change_header_role`, which writes through `services/header_role_writes.py`'s

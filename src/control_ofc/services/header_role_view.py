@@ -36,6 +36,7 @@ ROLE_PUMP = "pump"
 ROLE_CHASSIS = "chassis_fan"
 ROLE_RADIATOR = "radiator_fan"
 ROLE_CPU = "cpu_fan"
+ROLE_NO_FAN = "no_fan"
 
 
 @dataclass(frozen=True)
@@ -48,7 +49,7 @@ class RoleChoice:
 
 
 #: Picker order: the protective role first, then the two that unlock the stall
-#: probe, then the display-only one, then the clear. Never an explicit
+#: probe, then the display-only ones, then the clear. Never an explicit
 #: ``unknown`` — the user chose (Q3) that removing means falling back to what the
 #: hardware reports, and an explicit ``unknown`` would instead *override* a
 #: label-derived role for display.
@@ -78,12 +79,26 @@ ROLE_CHOICES: tuple[RoleChoice, ...] = (
         "The stall/restart probe is not offered on a CPU fan.",
     ),
     RoleChoice(
+        ROLE_NO_FAN,
+        "No fan",
+        "Nothing is plugged into this header. Its card is dimmed and does not "
+        "warn about a missing RPM reading. Adds no floor and removes no pump "
+        "protection the hardware label gives it.",
+    ),
+    RoleChoice(
         None,
         "Not set",
         "Removes your assignment. The header goes back to the role its hardware "
         "label or chip gives it, or to Unclassified if it has none.",
     ),
 )
+
+
+def role_choices(capabilities: Capabilities | None) -> tuple[RoleChoice, ...]:
+    """The picker's choices for this daemon: "No fan" only where it is accepted."""
+    if daemon_supports("header_role_no_fan", capabilities) is True:
+        return ROLE_CHOICES
+    return tuple(c for c in ROLE_CHOICES if c.token != ROLE_NO_FAN)
 
 
 def current_choice(header: HwmonHeader) -> str | None:

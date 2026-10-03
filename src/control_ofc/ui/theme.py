@@ -833,6 +833,15 @@ def build_stylesheet(t: ThemeTokens) -> str:
         background-color: {t.surface_3};
     }}
 
+    /* A PWM header the user set to "No fan": nothing is plugged in, so the card
+       steps back. Attribute selector, so it outranks plain .Card. */
+    .Card[muted="true"] {{
+        border-style: dashed;
+    }}
+    .Card[muted="true"] QLabel {{
+        color: {t.text_muted};
+    }}
+
     /* Dashboard fan tile (DEC-238). A small status tile, not a page-level card:
        it drops .Card's 12px padding to zero and owns its inset in the layout
        instead, so the curve band can run full-bleed to the inner border while

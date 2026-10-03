@@ -331,6 +331,10 @@ class ControlCapability:
     #: absent for every header not yet verified, so its absence alone cannot
     #: tell "not yet verified" from an older daemon that keeps no record.
     pwm_verification_records: bool = False
+    #: Daemon >= 3.4.0: ``POST /config/header-role`` accepts ``"no_fan"`` (a
+    #: header with nothing plugged in). Gate the picker's "No fan" choice on
+    #: this — an older daemon rejects the token with a 400.
+    header_role_no_fan: bool = False
     #: DEC-406 (daemon >= 2.53.0): the engine reads back an hwmon write it would
     #: coalesce and rewrites a duty that moved, giving up after three
     #: corrections that do not hold. Every hwmon ``/fans``/``/poll`` entry then
@@ -1109,7 +1113,8 @@ class HwmonHeader:
     #
     # Treat as an OPAQUE TOKEN: render an unrecognised value rather than
     # dropping the header (the 273-i rule). Known values are "unknown",
-    # "cpu_fan", "pump", "radiator_fan", "chassis_fan"; a pre-2.28.0 daemon
+    # "cpu_fan", "pump", "radiator_fan", "chassis_fan", "no_fan" (daemon
+    # >= 3.4.0, user-assigned only); a pre-2.28.0 daemon
     # omits the field entirely, hence the "unknown" default.
     role: str = "unknown"
     # How `role` was established: "none" | "label" | "chip_mapping" |
