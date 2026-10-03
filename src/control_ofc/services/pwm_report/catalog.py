@@ -242,6 +242,17 @@ def build_channels(
     return _disambiguate_names(out, by_header)
 
 
+def scope_key(channels: Iterable[Channel]) -> tuple[Channel, ...]:
+    """What the scope page shows or decides from, without the live RPM (`ROLE-e`).
+
+    Two scopes with the same key render the same rows and offer the same tests,
+    so a header change that leaves it equal needs no rebuild. The RPM is left
+    out because it moves on every poll and is not what a header change changes;
+    a rebuild that keyed on it would take focus off the page every time.
+    """
+    return tuple(replace(ch, rpm=None) for ch in channels)
+
+
 def _disambiguate_names(
     channels: list[Channel], by_header: Mapping[str, HwmonHeader]
 ) -> list[Channel]:

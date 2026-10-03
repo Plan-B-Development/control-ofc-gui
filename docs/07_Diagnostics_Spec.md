@@ -1056,12 +1056,32 @@ over the Qt-free `services/header_role_view.py`: *Pump*, *Chassis fan*, *Radiato
 *CPU fan* or *Not set* (a `null` clear — never an explicit `unknown`), each with its effect,
 Apply enabled only when the choice changes the stored assignment. The PWM Test Report's scope
 page offers the same picker as **Set…** in its Role column. Both route through
-`HardwarePage.change_header_role` — one write path: plan (no-op / removes a user pump) →
-`confirm_remove_pump_protection` when a pump the user assigned is being removed (the same
-confirmation the Fan Wizard and Configure AIO ask) → `POST /config/header-role` → re-read
-`/hwmon/headers` into AppState → a message built from the daemon's `effective_role` and the
-re-read header's protection (the union can keep a label- or profile-derived pump protected
-whatever the user chose). Synchronous on the UI thread, like the Controls page's role writes.
+`HardwarePage.change_header_role`, which writes through `services/header_role_writes.py`'s
+`apply_role_writes` — the one role-write path, shared with Configure AIO and the Fan Wizard
+(DEC-471, `ROLE-c`): plan each write (no-op → skipped, never sent; removes a user pump) →
+every assign, stopping at the first failure → every clear that lowers nothing (failures
+tolerated) → `confirm_remove_pump_protection`, only when a pump the user assigned is being
+removed and every assign landed → those removals → one re-read of `/hwmon/headers` into
+AppState after any attempted write → a message built from the daemon's `effective_role` and
+the re-read header's protection (the union can keep a label- or profile-derived pump
+protected whatever the user chose). Synchronous on the UI thread.
+
+- **Where the outcome shows (`ROLE-d`):** on the card that asked, in a line under its role
+  (`HeaderCard_Label_roleOutcome_*`), one at a time — the next role change on any card
+  replaces it, and the 1 Hz re-render does not wipe it. It is cleared once that header's
+  `role`/`role_source` moves on (a change from the report, Configure AIO, the Fan Wizard or
+  another client), so it never contradicts the pill. The Diagnostics result line is used
+  only when that card has gone. Reaching that line scrolled the page to it, and with eight or
+  more headers the asking card left the screen (measured, DEC-471). The report's **Set…**
+  keeps its own line on the scope page.
+- **The report's scope page follows the headers (`ROLE-e`):** on `headers_updated` it is
+  rebuilt with the user's ticks kept, only when `catalog.scope_key` (every channel field but
+  the live RPM) changed — the headers are re-read every ~300 s, and an unconditional rebuild
+  would take focus off the page. Shown → now; Setup or Review → on **Back** to it; anywhere
+  else → never (a run's page never rebuilds it; a new report builds a fresh one). A rebuild
+  hides the page's last role message, since the rows it described may have changed. Not while
+  its own **Set…** is in its dialog — that would delete the button whose click is running;
+  it follows up when the dialog returns, after a cancel too.
 
 - **Enablement:** capability `control.header_roles` and a writable header. A running PWM Test
   Report does **not** disable it (the daemon re-checks roles at every step).

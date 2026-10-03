@@ -357,6 +357,11 @@ def _role_btn(page, header_id):
     return page.findChild(QPushButton, f"HeaderCard_Btn_role_{_slug(header_id)}")
 
 
+def _outcome(page, header_id) -> QLabel:
+    """`ROLE-d`: the card's own outcome line."""
+    return page.findChild(QLabel, f"HeaderCard_Label_roleOutcome_{_slug(header_id)}")
+
+
 class TestHardwarePage:
     def test_choosing_chassis_fan_posts_once_and_rereads_the_headers(self, qtbot, monkeypatch):
         page, state, client = _page(qtbot, monkeypatch, [_hdr()])
@@ -366,7 +371,7 @@ class TestHardwarePage:
         assert state.hwmon_headers[0].role == "chassis_fan", "AppState got the re-read"
         pill = page.findChild(QLabel, f"HeaderCard_Pill_role_{_slug(UNLABELLED)}")
         assert pill.accessibleName() == "Role: Chassis fan"
-        assert "is now set to Chassis fan" in page._diag_result.text()
+        assert "is now set to Chassis fan" in _outcome(page, UNLABELLED).text()
 
     def test_cancel_writes_nothing(self, qtbot, monkeypatch):
         page, _state, client = _page(qtbot, monkeypatch, [_hdr()])
@@ -380,7 +385,7 @@ class TestHardwarePage:
         monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
         _role_btn(page, USER_PUMP).click()
         assert client.calls == []
-        assert "kept its pump role" in page._diag_result.text()
+        assert "kept its pump role" in _outcome(page, USER_PUMP).text()
 
     def test_accepting_it_sends_the_null_clear(self, qtbot, monkeypatch):
         page, _state, client = _page(qtbot, monkeypatch, [_user_pump()])
@@ -401,7 +406,7 @@ class TestHardwarePage:
         _StubDialog.choice, _StubDialog.accept = "radiator_fan", True
         _role_btn(page, UNLABELLED).click()
         assert client.calls == [(UNLABELLED, "radiator_fan")]
-        assert "Nothing was changed" in page._diag_result.text()
+        assert "Nothing was changed" in _outcome(page, UNLABELLED).text()
         assert state.hwmon_headers[0].role == "unknown"
 
     def test_a_timeout_with_a_failed_reread_does_not_claim_the_card_is_current(
@@ -418,9 +423,81 @@ class TestHardwarePage:
         _StubDialog.choice, _StubDialog.accept = "chassis_fan", True
         _role_btn(page, UNLABELLED).click()
         assert client.calls == [(UNLABELLED, "chassis_fan")], "precondition: the write was tried"
-        text = page._diag_result.text()
+        text = _outcome(page, UNLABELLED).text()
         assert "could not be re-read" in text
         assert "now shows what the daemon reports" not in text
+
+    def test_the_outcome_shows_on_the_card_that_asked_one_at_a_time(self, qtbot, monkeypatch):
+        """`ROLE-d`: beside the pill it changed, not in the Diagnostics line, and
+        the next change on another card replaces it."""
+        other = "hwmon:it8696:it87.2624:pwm3:pwm3"
+        page, _state, _client = _page(qtbot, monkeypatch, [_hdr(), _hdr(other)])
+        _StubDialog.choice, _StubDialog.accept = "chassis_fan", True
+        _role_btn(page, UNLABELLED).click()
+        first = _outcome(page, UNLABELLED)
+        assert first.isVisibleTo(first.parentWidget()) and "Chassis fan" in first.text()
+        assert page._diag_result.text() == "", "the Diagnostics line is not used"
+
+        _StubDialog.choice = "radiator_fan"
+        _role_btn(page, other).click()
+        assert "Radiator fan" in _outcome(page, other).text()
+        assert first.text() == "" and not first.isVisibleTo(first.parentWidget())
+
+    def test_the_poll_does_not_wipe_the_outcome(self, qtbot, monkeypatch):
+        page, state, _client = _page(qtbot, monkeypatch, [_hdr()])
+        _StubDialog.choice, _StubDialog.accept = "chassis_fan", True
+        _role_btn(page, UNLABELLED).click()
+        assert _outcome(page, UNLABELLED).text(), "precondition: a message was shown"
+        state.set_hwmon_headers(list(state.hwmon_headers))  # re-renders every card
+        assert "Chassis fan" in _outcome(page, UNLABELLED).text()
+
+    def test_a_role_change_made_elsewhere_clears_the_cards_outcome(self, qtbot, monkeypatch):
+        """The review's P2: a role set from the report, Configure AIO, the wizard
+        or another client arrives only as new headers, and the card's past-tense
+        message would contradict its own pill."""
+        page, state, _client = _page(qtbot, monkeypatch, [_hdr()])
+        _StubDialog.choice, _StubDialog.accept = "chassis_fan", True
+        _role_btn(page, UNLABELLED).click()
+        label = _outcome(page, UNLABELLED)
+        assert "Chassis fan" in label.text(), "precondition: a message was shown"
+        state.set_hwmon_headers([_hdr(role="radiator_fan", role_source="user_assigned")])
+        assert label.text() == "" and not label.isVisibleTo(label.parentWidget())
+
+    def test_a_card_that_has_gone_falls_back_to_the_diagnostics_line(self, qtbot, monkeypatch):
+        page, _state, _client = _page(qtbot, monkeypatch, [_hdr()])
+        page._show_role_outcome("hwmon:gone:x:pwm9:pwm9", "That header is no longer reported.")
+        assert page._diag_result.text() == "That header is no longer reported."
+
+    def test_a_role_change_does_not_scroll_the_card_away(self, qtbot, monkeypatch):
+        """`ROLE-d`, measured: reaching the Diagnostics line scrolled the page to
+        it, and with eight or more headers the card that asked left the screen."""
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QApplication
+
+        headers = [_hdr(f"hwmon:it8696:it87.2624:pwm{i}:pwm{i}") for i in range(1, 17)]
+        page, _state, _client = _page(qtbot, monkeypatch, headers)
+        page.resize(1280, 800)
+        page.show()
+        QApplication.processEvents()
+        first = headers[0].id
+        page._scroll.ensureWidgetVisible(_role_btn(page, first))
+        QApplication.processEvents()
+        viewport = page._scroll.viewport()
+
+        def on_screen(widget) -> bool:
+            rect = widget.rect().translated(widget.mapTo(viewport, QPoint(0, 0)))
+            return viewport.rect().intersects(rect)
+
+        assert not on_screen(page._diag_result.parentWidget()), (
+            "precondition: the Diagnostics card is off-screen, so a scroll to it would move"
+        )
+        bar = page._scroll.verticalScrollBar()
+        before = bar.value()
+        _StubDialog.choice, _StubDialog.accept = "chassis_fan", True
+        _role_btn(page, first).click()
+        QApplication.processEvents()
+        assert bar.value() == before
+        assert on_screen(_role_btn(page, first)) and on_screen(_outcome(page, first))
 
     def test_the_report_opened_here_can_set_a_role(
         self, qtbot, monkeypatch, tmp_path, settings_service
@@ -503,14 +580,14 @@ def test_the_probe_reason_points_at_a_route_that_exists():
 class TestConfigureAioConfirmsTheClear:
     NEW = "hwmon:it8696:it87.2624:pwm4:pwm4"
 
-    def _run(self, qtbot, monkeypatch, app_state, profile_service, answer):
+    def _run(self, qtbot, monkeypatch, app_state, profile_service, answer, *, error=None):
         from control_ofc.services.profile_service import AIO_PUMP_STRATEGY_AUTOMATIC
         from control_ofc.ui.pages.controls_page import ControlsPage
         from control_ofc.ui.widgets import aio_config_dialog as dlg_mod
 
         app_state.set_capabilities(_caps())
         app_state.set_hwmon_headers([_user_pump(), _hdr(self.NEW)])
-        client = _Client(app_state)
+        client = _Client(app_state, error=error)
         page = ControlsPage(state=app_state, profile_service=profile_service, client=client)
         qtbot.addWidget(page)
         result = {
@@ -526,8 +603,14 @@ class TestConfigureAioConfirmsTheClear:
         monkeypatch.setattr(dlg_mod.AioConfigDialog, "exec", lambda self: 1)
         monkeypatch.setattr(dlg_mod.AioConfigDialog, "get_result", lambda self: result)
         asked = []
-        monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: asked.append(a[1]) or answer)
+        # Each question records the writes already sent when it was asked.
+        monkeypatch.setattr(
+            QMessageBox,
+            "question",
+            lambda *a, **k: asked.append((a[1], list(client.calls))) or answer,
+        )
         page._on_configure_aio()
+        assert page._state is app_state  # binds the page (DASH-h)
         return client, asked
 
     def test_declining_keeps_the_old_pump_and_still_assigns_the_new(
@@ -536,7 +619,9 @@ class TestConfigureAioConfirmsTheClear:
         client, asked = self._run(
             qtbot, monkeypatch, app_state, profile_service, QMessageBox.StandardButton.No
         )
-        assert asked == ["Remove pump protection from a header?"]
+        assert asked == [("Remove pump protection from a header?", [(self.NEW, "pump")])], (
+            "asked once, after the new pump's assign landed (`ROLE-c`)"
+        )
         assert client.calls == [(self.NEW, "pump")]
 
     def test_accepting_clears_after_the_assign(
@@ -546,3 +631,18 @@ class TestConfigureAioConfirmsTheClear:
             qtbot, monkeypatch, app_state, profile_service, QMessageBox.StandardButton.Yes
         )
         assert client.calls == [(self.NEW, "pump"), (USER_PUMP, None)]
+
+    def test_a_failed_assign_never_asks_and_clears_nothing(
+        self, qtbot, monkeypatch, app_state, profile_service
+    ):
+        err = DaemonError(code="persistence_failed", message="read-only fs", status=503)
+        client, asked = self._run(
+            qtbot,
+            monkeypatch,
+            app_state,
+            profile_service,
+            QMessageBox.StandardButton.Yes,
+            error=err,
+        )
+        assert client.calls == [(self.NEW, "pump")], "precondition: the assign was tried"
+        assert asked == []

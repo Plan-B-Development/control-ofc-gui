@@ -66,6 +66,11 @@ from control_ofc.services.cooling_device_view import (
     merge_cooling_device_payload,
 )
 from control_ofc.services.daemon_features import daemon_supports
+from control_ofc.services.header_role_writes import (
+    KIND_CLEAR,
+    KIND_REMOVE_PUMP,
+    apply_role_writes,
+)
 from control_ofc.services.pump_protection import (
     header_is_pump_protected,
     pump_identify_warning,
@@ -803,85 +808,77 @@ class CoolingDevicePage(QWizardPage):
             self._status.setText("Nothing selected — choose a pump or a radiator fan first.")
             return
 
-        header_ids = {h.id for h in self._wizard._state.hwmon_headers}
-        assigns: list[tuple[str, str | None]] = []
-        if pump_id:
-            assigns.append((pump_id, "pump"))
-        # A pump the user named and has now ticked as a radiator: turning it into
-        # a radiator fan REMOVES its pump protection, so that write waits for the
-        # confirmation below rather than landing silently here (DEC-444's review).
-        downgrades = {r for r in radiators if r in stale}
+        state = self._wizard._state
+        header_ids = {h.id for h in state.hwmon_headers}
         # OpenFan radiator members have no header and therefore no role to set;
-        # they still belong to the device topology below.
-        assigns += [
-            (r, "radiator_fan")
-            for r in radiators
-            if r in header_ids and r != pump_id and r not in downgrades
-        ]
+        # they still belong to the device topology below. A pump the user named
+        # and has now ticked as a radiator is a downgrade: the shared service
+        # sorts that write with the pump removals, so it waits for the
+        # confirmation rather than landing with the assigns (DEC-444's review).
+        requested: list[tuple[str, str | None]] = []
+        if pump_id:
+            requested.append((pump_id, "pump"))
+        requested += [(r, "radiator_fan") for r in radiators if r in header_ids and r != pump_id]
+        requested += [(h, None) for h in stale_radiators]
+        requested += [(h, None) for h in stale if h not in radiators]
 
-        # ASSIGN BEFORE CLEAR, and the order is the safety property, not an
-        # artefact of iteration (DEC-312's review found this). No clear is ever
-        # reached unless every assign succeeded, so a failure here can only ever
-        # leave MORE protection in place than intended, never less.
-        #
-        # It does not follow that nothing changed: the assigns are separate
-        # requests, so a failure at index N means the first N already landed.
-        # Saying "nothing was changed" there would be false, and it is a role
-        # write — exactly the kind of claim that must not be approximated.
-        for done, (header_id, role) in enumerate(assigns):
-            try:
-                client.set_header_role(header_id, role)
-            except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
-                log.error("Wizard: could not set role %s on %s: %s", role, header_id, e)
-                landed = (
-                    "No roles were changed."
-                    if done == 0
-                    else f"{done} earlier role assignment(s) had already been saved "
-                    "and are still in effect."
-                )
-                self._status.setText(
-                    f"The daemon rejected the {role} assignment: {e}\n"
-                    f"{landed} The cooler's layout was not saved."
-                )
-                # Re-read so the page shows what actually landed rather than
-                # what was requested.
-                self._refresh_state()
-                self._populate()
-                return
+        # ASSIGN BEFORE CLEAR is the shared service's order, and the order is the
+        # safety property (DEC-312, `ROLE-c`): no clear or pump removal is reached
+        # unless every assign landed, so a failure leaves MORE protection in place
+        # than intended, never less. A radiator clear lowers no floor, so it
+        # neither asks nor stops on a failure; a pump removal asks first.
+        outcome = apply_role_writes(
+            client,
+            state.hwmon_headers,
+            requested,
+            confirm=self._confirm_clear,
+            publish_headers=state.set_hwmon_headers,
+        )
+        display = state.fan_display_name
+        if outcome.failed_assign is not None:
+            # The assigns are separate requests, so a failure at index N means the
+            # first N already landed. Saying "nothing was changed" there would be
+            # false, and it is a role write — exactly the kind of claim that must
+            # not be approximated.
+            done = len(outcome.landed)
+            landed = (
+                "No roles were changed."
+                if done == 0
+                else f"{done} earlier role assignment(s) had already been saved "
+                "and are still in effect."
+            )
+            self._status.setText(
+                f"The daemon rejected the {outcome.failed_assign.write.role} assignment: "
+                f"{outcome.failed_assign.error}\n{landed} The cooler's layout was not saved."
+            )
+            # The service re-read the headers, so the page shows what actually
+            # landed rather than what was requested.
+            self._refresh_state(headers=False)
+            self._populate()
+            return
 
-        # Every clear comes after every assign (above). A radiator clear lowers
-        # no floor, so it neither asks nor stops on a failure.
-        display = self._wizard._state.fan_display_name
         notes: list[str] = []
-        radiator_failed = []
-        for header_id in stale_radiators:
-            try:
-                client.set_header_role(header_id, None)
-            except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
-                log.warning("Wizard: could not clear radiator role on %s: %s", header_id, e)
-                radiator_failed.append(display(header_id) or header_id)
+        radiator_failed = [
+            display(f.write.header_id) or f.write.header_id
+            for f in outcome.failed
+            if f.write.kind == KIND_CLEAR
+        ]
         if radiator_failed:
             notes.append(
                 f"Could not remove the radiator fan role from {', '.join(radiator_failed)}."
             )
-
         # Every stale pump is still a pump until its own write lands.
-        still_pumps = set(stale)
-        if stale and self._confirm_clear(stale):
-            for header_id in stale:
-                # A ticked former pump becomes the radiator fan it was ticked as;
-                # any other stale pump is cleared back to the hardware's role.
-                role = "radiator_fan" if header_id in downgrades else None
-                try:
-                    client.set_header_role(header_id, role)
-                    still_pumps.discard(header_id)
-                except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
-                    # Tolerated: a stale pump role over-protects, never under.
-                    log.warning("Wizard: could not change role on %s: %s", header_id, e)
-            if still_pumps:
-                failed = ", ".join(display(h) or h for h in stale if h in still_pumps)
-                notes.append(f"Could not change the role of {failed}; it is still a pump.")
-        elif stale:
+        still_pumps = set(stale) - outcome.landed_ids()
+        pump_failed = [
+            display(f.write.header_id) or f.write.header_id
+            for f in outcome.failed
+            if f.write.kind == KIND_REMOVE_PUMP
+        ]
+        if pump_failed:
+            notes.append(
+                f"Could not change the role of {', '.join(pump_failed)}; it is still a pump."
+            )
+        if outcome.declined:
             notes.append("The previous pump header kept its role.")
 
         # A header that is still a pump is not also a radiator member, and one
@@ -890,7 +887,9 @@ class CoolingDevicePage(QWizardPage):
         # that is still in force.
         radiators = [r for r in radiators if r not in still_pumps]
         self._upsert_cooling_device(pump_id, radiators, still_pumps=still_pumps)
-        self._refresh_state()
+        # The service re-read the headers only if it sent something; every
+        # write a no-op still repopulates from fresh headers, as it always has.
+        self._refresh_state(headers=not outcome.attempted)
         self._populate()
         self._status.setText(" ".join(["Saved.", *notes]))
 
@@ -948,18 +947,20 @@ class CoolingDevicePage(QWizardPage):
         except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
             log.warning("Wizard: could not save cooling-device topology: %s", e)
 
-    def _refresh_state(self) -> None:
-        """Re-read headers and the device inventory so this page — and the
-        Detected Fans table after it — reflect the write immediately. Both
-        otherwise refresh on the ~300 s capability interval."""
+    def _refresh_state(self, *, headers: bool) -> None:
+        """Re-read the device inventory — and the headers when ``headers`` —
+        so this page and the Detected Fans table after it reflect the write
+        immediately; both otherwise refresh on the ~300 s capability interval.
+        ``apply_role_writes`` already re-read the headers after any role write."""
         client = self._wizard._client
         state = self._wizard._state
         if client is None:
             return
-        try:
-            state.set_hwmon_headers(client.hwmon_headers())
-        except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
-            log.warning("Wizard: header re-fetch after nomination failed: %s", e)
+        if headers:
+            try:
+                state.set_hwmon_headers(client.hwmon_headers())
+            except (DaemonError, DaemonUnavailable, OSError, ConnectionError) as e:
+                log.warning("Wizard: header re-fetch after nomination failed: %s", e)
         caps = getattr(state, "capabilities", None)
         control = getattr(caps, "control", None) if caps else None
         if not getattr(control, "cooling_devices", False):

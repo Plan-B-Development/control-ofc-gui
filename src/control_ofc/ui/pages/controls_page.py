@@ -63,6 +63,7 @@ from control_ofc.services.cooling_device_view import (
     cooling_member_index,
 )
 from control_ofc.services.daemon_features import daemon_supports
+from control_ofc.services.header_role_writes import apply_role_writes
 from control_ofc.services.profile_service import (
     ControlMode,
     CurveConfig,
@@ -1293,62 +1294,55 @@ class ControlsPage(QWidget):
         caps = getattr(self._state, "capabilities", None) if self._state else None
         return daemon_supports("pump_protection", caps) is True
 
-    def _confirm_pump_clears(self, assignments):
+    def _confirm_pump_clears(self, header_ids: list[str]) -> bool:
         """Ask before Configure AIO removes a pump the user named (DEC-444).
 
-        Every clear ``AioConfigDialog._role_assignments`` emits is a pump role the
-        user assigned — the only role write that can lower a floor — so it asks
-        the same question as the Fan Wizard and the header-role picker. Declining
-        keeps the old pump's role and the rest of the setup continues.
+        The shared role-write service calls this only for a pump role the user
+        assigned — the only role write that can lower a floor — and only once
+        the new pump's assignment has landed (`ROLE-c`). Declining keeps the old
+        pump's role and the rest of the setup continues.
         """
-        clears = [hid for hid, role in assignments if role is None]
-        if not clears:
-            return assignments
-        names = [self._state.fan_display_name(hid) or hid for hid in clears]
-        if confirm_remove_pump_protection(self, names):
-            return assignments
-        return [(hid, role) for hid, role in assignments if role is not None]
+        names = [self._state.fan_display_name(hid) or hid for hid in header_ids]
+        return confirm_remove_pump_protection(self, names)
 
     def _apply_header_roles(self, assignments) -> bool:
-        """POST each header-role change, refreshing headers on success (DEC-312).
+        """Write the header roles Configure AIO chose, through the shared
+        ``apply_role_writes`` (DEC-312, `ROLE-c`), which re-reads the headers.
 
         Returns False when an *assignment* failed — the daemon then does not know
         the header drives a pump, so it would neither floor it at 30% nor refuse to
         stop it for fan identification, and creating a profile that claims
-        otherwise would be a lie about hardware safety. A failed *clear* is logged
-        and tolerated: a stale assignment only ever adds a floor.
+        otherwise would be a lie about hardware safety. A failed *clear* is
+        tolerated: a stale assignment only ever adds a floor.
 
         Headers are re-fetched immediately rather than waiting for the periodic
         refresh, which runs every 300 s — long enough that the role the user just
-        set would otherwise be invisible to the rest of this function.
+        set would otherwise be invisible to the rest of the flow. If that re-read
+        fails, detection falls back to the pre-assignment headers, which is why
+        the pump member is rebuilt from the id the user picked.
         """
         if not assignments or self._client is None:
             return True
-        for header_id, role in assignments:
-            try:
-                self._client.set_header_role(header_id, role)
-            except (DaemonError, OSError, ConnectionError) as e:
-                if role is None:
-                    self._log.warning("Could not clear header role for %s: %s", header_id, e)
-                    continue
-                self._log.error("Could not set header role %s for %s: %s", role, header_id, e)
-                QMessageBox.warning(
-                    self,
-                    "Could not set the pump role",
-                    f"The daemon rejected the pump assignment for {header_id}:\n\n{e}\n\n"
-                    "No controls were created. Without this the daemon cannot know "
-                    "the header drives a pump, so it would not hold it above 30% or "
-                    "protect it from being stopped during fan identification.",
-                )
-                return False
-        try:
-            self._state.set_hwmon_headers(self._client.hwmon_headers())
-        except (DaemonError, OSError, ConnectionError) as e:
-            # The write succeeded; only our view of it is stale. Detection below
-            # falls back to the pre-assignment headers, which is why the pump
-            # member is rebuilt from the id the user picked rather than inferred.
-            self._log.warning("Header re-fetch after a role assignment failed: %s", e)
-        return True
+        outcome = apply_role_writes(
+            self._client,
+            self._state.hwmon_headers,
+            assignments,
+            confirm=self._confirm_pump_clears,
+            publish_headers=self._state.set_hwmon_headers,
+        )
+        failure = outcome.failed_assign
+        if failure is None:
+            return True
+        QMessageBox.warning(
+            self,
+            "Could not set the pump role",
+            f"The daemon rejected the pump assignment for {failure.write.header_id}:\n\n"
+            f"{failure.error}\n\n"
+            "No controls were created. Without this the daemon cannot know "
+            "the header drives a pump, so it would not hold it above 30% or "
+            "protect it from being stopped during fan identification.",
+        )
+        return False
 
     def _on_configure_aio(self) -> None:
         """DEC-157/312: one-click liquid-cooler setup — name the pump header, pick
@@ -1404,7 +1398,7 @@ class ControlsPage(QWidget):
         if not dlg.exec():
             return
         res = dlg.get_result()
-        if not self._apply_header_roles(self._confirm_pump_clears(res["role_assignments"])):
+        if not self._apply_header_roles(res["role_assignments"]):
             return
         # Rebuild the pump member from the refreshed header, so a role just
         # assigned is reflected in `member_label` — that label is the DEC-095/162

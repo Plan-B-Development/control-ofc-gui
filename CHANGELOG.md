@@ -14,6 +14,21 @@
 - **A delete the daemon refuses is reported, and the profile stays named as running** (`WUI-c`). If stopping the
   active profile fails and the daemon then refuses to delete it, a banner says *Could not delete '<profile>':
   the daemon is still running it* with the reason; the status banner no longer claims no profile is running.
+- **A header's role change is reported on its own card** (DEC-471, `ROLE-d`). After **Set role…** on the
+  Hardware page, the outcome appears under that card's role instead of in the Hardware Diagnostics result
+  line, and the page no longer jumps down to that line — with eight or more headers, the card you were
+  using used to scroll off the screen.
+- **An open PWM Test Report follows a role set elsewhere** (`ROLE-e`). A role set on a Hardware card while the
+  report's **What to test** page is open now updates its Role column and the tests it offers, keeping your
+  ticks; set while you are on a later step, it refreshes when you go **Back**. It used to stay stale until
+  **New report**.
+
+### Changed
+
+- **Configure AIO asks before removing the old pump's protection only once the new pump is protected**
+  (DEC-471, `ROLE-c`), as the Fan Wizard already did — and does not ask at all if naming the new pump fails,
+  because nothing is removed then. Configure AIO, the Fan Wizard and **Set role…** now share one way of
+  writing roles, and none of them sends a role change that would change nothing.
 
 ## [3.3.0] — 2026-10-01
 

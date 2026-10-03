@@ -117,6 +117,16 @@ class PwmHeaderCard(ContentSizedCard):
         self._caveat_lbl.setVisible(False)
         root.addWidget(self._caveat_lbl)
 
+        # `ROLE-d`: what the last "Set role…" on this card did, beside the pill
+        # it changed. Owned by the page (one message at a time), never by the
+        # view-model, so the 1 Hz `set_view` does not wipe it.
+        self._role_outcome_lbl = QLabel("", self)
+        self._role_outcome_lbl.setObjectName(f"HeaderCard_Label_roleOutcome_{slug}")
+        self._role_outcome_lbl.setProperty("class", "CardMeta")
+        self._role_outcome_lbl.setWordWrap(True)
+        self._role_outcome_lbl.setVisible(False)
+        root.addWidget(self._role_outcome_lbl)
+
         # ── Live values ──────────────────────────────────────────────────────
         self._live_grid = QGridLayout()
         self._live_grid.setContentsMargins(0, 4, 0, 4)
@@ -189,6 +199,11 @@ class PwmHeaderCard(ContentSizedCard):
 
     def header_id(self) -> str:
         return self._header_id
+
+    def set_role_outcome(self, text: str) -> None:
+        """Show what a role change on this card did; ``""`` hides the line."""
+        self._role_outcome_lbl.setText(text)
+        self._role_outcome_lbl.setVisible(bool(text))
 
     def set_diagnostics_blocked(self, reason: str) -> None:
         """Stand the three tests down while a PWM Test Report runs (S4-9 (4)).

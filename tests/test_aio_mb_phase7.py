@@ -560,6 +560,32 @@ class TestRoleClearIsConfirmed:
         page._pump_combo.setCurrentIndex(index)
         return wiz, page
 
+    def test_an_apply_that_sends_nothing_still_rereads_the_headers(self, qtbot, wizard_state):
+        """The review's P3: every write a no-op is skipped by the shared service,
+        which then re-reads nothing — the page must not repopulate from headers
+        up to ~300 s old."""
+        client = _WizardClient()
+        wizard_state.hwmon_headers = [
+            _header(PUMP_ID, role="pump", role_source="user_assigned"),
+            _header(RAD_HWMON_ID),
+        ]
+        client.headers_to_return = list(wizard_state.hwmon_headers)
+        fetches = []
+        real = client.hwmon_headers
+        client.hwmon_headers = lambda: fetches.append(1) or real()
+        wiz = FanConfigWizard(wizard_state, client=client)
+        qtbot.addWidget(wiz)
+        wiz.setStartId(PAGE_COOLING)
+        wiz.restart()
+        page = wiz._cooling_page
+        page._pump_combo.setCurrentIndex(page._pump_combo.findData(PUMP_ID))
+        for i in range(page._radiator_list.count()):
+            page._radiator_list.item(i).setCheckState(Qt.CheckState.Unchecked)
+        page._apply_btn.click()
+        assert client.role_calls == [], "precondition: the pump write was a no-op"
+        assert fetches == [1]
+        assert page._status.text().startswith("Saved.")
+
     def test_a_declined_clear_sends_no_clear(self, qtbot, wizard_state, monkeypatch):
         client = _WizardClient()
         _wiz, page = self._wizard(qtbot, wizard_state, client)

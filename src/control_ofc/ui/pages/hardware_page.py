@@ -76,9 +76,9 @@ from control_ofc.services.header_role_view import (
     nct6687_label_note,
     nct6687_label_prompt,
     outcome_message,
-    plan_role_change,
     role_editable,
 )
+from control_ofc.services.header_role_writes import apply_role_writes
 from control_ofc.services.openfan_calibration_view import build_channel_options
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.pump_protection import header_is_pump_protected
@@ -311,6 +311,10 @@ class HardwarePage(QWidget):
         # open "Details" disclosure on every tick).
         self._device_cards: dict[str, CoolingDeviceCard] = {}
         self._header_cards: dict[str, PwmHeaderCard] = {}
+        #: `ROLE-d`: the card showing the last role change's outcome, if any,
+        #: and that header's (role, role_source) when it was shown.
+        self._role_outcome_header = ""
+        self._role_outcome_role: tuple[str, str] | None = None
 
         self._build_ui()
 
@@ -326,6 +330,7 @@ class HardwarePage(QWidget):
             self._state.fans_updated.connect(self._refresh_cooling_section)
             self._state.headers_updated.connect(self._refresh_cooling_section)
             self._state.headers_updated.connect(self._on_headers_for_readiness)
+            self._state.headers_updated.connect(self._expire_role_outcome)
             self._state.capabilities_updated.connect(self._refresh_cooling_section)
             self._state.cooling_devices_updated.connect(self._refresh_cooling_section)
             # §6.3's "Last validated" row is daemon-persisted, so it must be
@@ -2074,7 +2079,50 @@ class HardwarePage(QWidget):
     def _on_role_change_requested(self, header_id: str) -> None:
         message = self.change_header_role(header_id, self)
         if message:
-            self._show_diag_message(message)
+            self._show_role_outcome(header_id, message)
+
+    def _show_role_outcome(self, header_id: str, text: str) -> None:
+        """Show a role change's outcome on the card that asked (`ROLE-d`).
+
+        Not the Diagnostics result line: reaching that scrolls the page away
+        from the card, and with eight or more headers the card leaves the
+        screen. One message at a time — the previous card's is cleared. A card
+        that has gone since (the header vanished) falls back to that line.
+        """
+        previous = self._header_cards.get(self._role_outcome_header)
+        if previous is not None and self._role_outcome_header != header_id:
+            previous.set_role_outcome("")
+        card = self._header_cards.get(header_id)
+        if card is None:
+            self._role_outcome_header = ""
+            self._show_diag_message(text)
+            return
+        self._role_outcome_header = header_id
+        self._role_outcome_role = self._header_role(header_id)
+        card.set_role_outcome(text)
+
+    def _header_role(self, header_id: str) -> tuple[str, str] | None:
+        header = next(
+            (h for h in (self._state.hwmon_headers if self._state else []) if h.id == header_id),
+            None,
+        )
+        return (header.role, header.role_source) if header is not None else None
+
+    def _expire_role_outcome(self, *_args) -> None:
+        """Clear the card's outcome once its header's role moves on (`ROLE-d`).
+
+        A role set from the report, Configure AIO, the Fan Wizard or another
+        client reaches here only as new headers; the card's past-tense message
+        would then contradict its own pill.
+        """
+        header_id = self._role_outcome_header
+        if not header_id or self._header_role(header_id) == self._role_outcome_role:
+            return
+        card = self._header_cards.get(header_id)
+        if card is not None:
+            card.set_role_outcome("")
+        self._role_outcome_header = ""
+        self._role_outcome_role = None
 
     def change_header_role(self, header_id: str, parent: QWidget | None) -> str | None:
         """Pick, confirm and write one header's role; return what happened.
@@ -2082,7 +2130,8 @@ class HardwarePage(QWidget):
         The ONE write path for the Hardware card and the PWM Test Report's scope
         page. ``None`` means the user cancelled or nothing would change, so the
         caller shows nothing. Synchronous on the UI thread, like the Controls
-        page's role writes (the user's Q9): one small POST and one GET.
+        page's role writes (the user's Q9): one small POST and one GET, through
+        the shared ``apply_role_writes`` (`ROLE-c`).
         """
         state = self._state
         header = next(
@@ -2105,35 +2154,25 @@ class HardwarePage(QWidget):
         )
         if not dialog.exec():
             return None
-        plan = plan_role_change(header, dialog.chosen_role())
-        if plan.noop:
-            return None
-        if plan.removes_user_pump and not confirm_remove_pump_protection(parent, [name]):
+        role = dialog.chosen_role()
+        outcome = apply_role_writes(
+            self._client,
+            [header],
+            [(header_id, role)],
+            confirm=lambda _ids: confirm_remove_pump_protection(parent, [name]),
+            # Emits `headers_updated`, which re-renders this page's cards.
+            publish_headers=state.set_hwmon_headers,
+        )
+        if outcome.declined:
             return f"{name} kept its pump role."
-        try:
-            result = self._client.set_header_role(header_id, plan.new_role)
-        except Exception as exc:
-            log.warning("Failed to set role %s on %s: %s", plan.new_role, header_id, exc)
-            reread = self._reread_headers() is not None
-            return failure_message(name, plan.new_role, exc, reread=reread)
-        refreshed = self._reread_headers()
-        header_after = next((h for h in refreshed or [] if h.id == header_id), None)
+        failure = outcome.failed_assign or next(iter(outcome.failed), None)
+        if failure is not None:
+            return failure_message(name, role, failure.error, reread=outcome.headers is not None)
+        result = outcome.result_for(header_id)
+        if result is None:
+            return None  # a no-op: nothing was sent
+        header_after = next((h for h in outcome.headers or [] if h.id == header_id), None)
         return outcome_message(name, result, header_after, caps)
-
-    def _reread_headers(self):
-        """Push the daemon's headers into AppState (they otherwise refresh on the
-        ~300 s capability interval), so every page shows the new role. Returns
-        the headers, or ``None`` if the read failed."""
-        if self._client is None or self._state is None:
-            return None
-        try:
-            headers = self._client.hwmon_headers()
-        except Exception as exc:
-            log.warning("Header re-fetch after a role change failed: %s", exc)
-            return None
-        # Emits `headers_updated`, which re-renders this page's cards.
-        self._state.set_hwmon_headers(headers)
-        return headers
 
     def _confirmed_label_prompts(self) -> frozenset[str]:
         svc = self._settings_service

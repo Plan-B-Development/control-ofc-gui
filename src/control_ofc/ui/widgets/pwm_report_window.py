@@ -181,6 +181,13 @@ class PwmReportWindow(ModalDialog):
         #: POST, header re-read). `None` hides nothing but disables "Set…".
         self._set_header_role = set_header_role
         self._channels: list[cat.Channel] = []
+        #: `ROLE-e`: the key of the scope page as built, whether a header change
+        #: arrived while Setup or Review was showing, and whether this window's
+        #: own "Set…" is in its dialog (a rebuild then would delete the button
+        #: whose click is still running, so the follow-up waits for it).
+        self._scope_key: tuple = ()
+        self._scope_stale = False
+        self._setting_role = False
         self._checks: dict[tuple[str, str], QCheckBox] = {}
         self._probe_consents: dict[str, QCheckBox] = {}
         self._setup_widgets: dict[str, tuple[QComboBox, QComboBox, QComboBox, QLineEdit]] = {}
@@ -257,6 +264,7 @@ class PwmReportWindow(ModalDialog):
             state.connection_changed.connect(self._refresh_refusals)
             state.mode_changed.connect(self._refresh_refusals)
             state.fans_updated.connect(self._refresh_live)
+            state.headers_updated.connect(self._on_headers_updated)
 
         if controller.is_running():
             self._show_page(PAGE_RUN)
@@ -329,14 +337,9 @@ class PwmReportWindow(ModalDialog):
         caps = state.capabilities if state is not None else None
         headers = {h.id: h for h in (state.hwmon_headers if state is not None else [])}
         role_holders: list[QWidget] = []
-        name_of = state.fan_display_name if state is not None else (lambda cid: cid)
-        self._channels = cat.build_channels(
-            state.hwmon_headers if state is not None else [],
-            state.fans if state is not None else [],
-            caps,
-            name_of=name_of,
-            profile_member_ids=self._profile_member_ids(),
-        )
+        self._channels = self._current_channels()
+        self._scope_key = cat.scope_key(self._channels)
+        self._scope_stale = False
         defaults = cat.default_selection(self._channels, caps)
         if keep is None:
             # A fresh scope page (a new report): the last role change's message
@@ -436,13 +439,58 @@ class PwmReportWindow(ModalDialog):
         a header that just became a chassis or radiator fan offers its probe."""
         if self._set_header_role is None:
             return
-        message = self._set_header_role(channel_id, self)
+        self._setting_role = True
+        try:
+            message = self._set_header_role(channel_id, self)
+        finally:
+            self._setting_role = False
+        # Also after a cancel: a poll may have changed the headers meanwhile.
+        self._follow_headers()
         if not message:
+            return
+        self._scope_role_msg.setText(message)
+        self._scope_role_msg.setVisible(True)
+
+    def _current_channels(self) -> list[cat.Channel]:
+        state = self._state
+        return cat.build_channels(
+            state.hwmon_headers if state is not None else [],
+            state.fans if state is not None else [],
+            state.capabilities if state is not None else None,
+            name_of=state.fan_display_name if state is not None else (lambda cid: cid),
+            profile_member_ids=self._profile_member_ids(),
+        )
+
+    def _on_headers_updated(self, *_args) -> None:
+        """`ROLE-e`: follow a header change made elsewhere — a role set on a
+        Hardware card, a re-read after a profile change.
+
+        On the scope page it rebuilds now; on Setup or Review it waits until the
+        user goes Back to the scope page. Nowhere else: a run's page never
+        rebuilds the scope, and a new report builds a fresh one.
+        """
+        if self._setting_role:
+            return
+        page = self.current_page()
+        if page == PAGE_SCOPE:
+            self._follow_headers()
+        elif page in (PAGE_SETUP, PAGE_REVIEW):
+            self._scope_stale = True
+
+    def _follow_headers(self) -> None:
+        """Rebuild the scope page, keeping the user's ticks, only when what it
+        shows or decides from has changed (``catalog.scope_key``) — the headers
+        are re-read every ~300 s, and a rebuild takes keyboard focus off it.
+
+        A rebuild also hides this page's last role message: the rows it described
+        may have changed since. ``_on_set_role`` shows its own message after."""
+        self._scope_stale = False
+        if cat.scope_key(self._current_channels()) == self._scope_key:
             return
         keep = {key: box.isChecked() for key, box in self._checks.items() if box.isEnabled()}
         self._populate_scope(keep)
-        self._scope_role_msg.setText(message)
-        self._scope_role_msg.setVisible(True)
+        self._scope_role_msg.clear()
+        self._scope_role_msg.setVisible(False)
 
     def selection(self) -> dict[str, set[str]]:
         out: dict[str, set[str]] = {}
@@ -1055,6 +1103,8 @@ class PwmReportWindow(ModalDialog):
         if index == PAGE_SETUP:
             self._save_setup()
             self._show_page(PAGE_SCOPE)
+            if self._scope_stale:
+                self._follow_headers()
         elif index == PAGE_REVIEW:
             self._show_page(PAGE_SETUP)
 

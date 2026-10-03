@@ -200,6 +200,11 @@ control_ofc/
                                #   their effect, no-op / removes-a-user-pump planning,
                                #   the outcome message from the daemon's answer, and
                                #   the nct6687d MSI-label caveat and prompt (`BRD-h`).
+    header_role_writes.py      # The ONE role-write path — DEC-471 (`ROLE-c`). Configure
+                               #   AIO, the Fan Wizard and the picker call
+                               #   apply_role_writes: assigns → clears → confirm →
+                               #   pump removals (DEC-312's order), no-ops skipped,
+                               #   one header re-read. Qt-free; confirm is a callback.
     verify_view.py             # PWM verify result wording — DEC-318. Extracted from
                                #   system_state_page so Hardware and System State
                                #   render ONE object rather than two copies.

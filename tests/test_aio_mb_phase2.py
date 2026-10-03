@@ -845,10 +845,23 @@ class TestApplyHeaderRoles:
 
         assert page._apply_header_roles([("h5", "pump")]) is False
         assert warned.get("shown") is True
-        assert client.header_fetches == 0
+        # `ROLE-c`: re-read after any attempted write, failed ones included — a
+        # timeout proves nothing either way, so the re-read shows the truth.
+        assert client.header_fetches == 1
 
-    def test_a_failed_clear_is_tolerated(self, qtbot, app_state, profile_service):
-        """A stale assignment only ever adds a floor, so it is not worth aborting."""
+    def test_a_failed_clear_is_tolerated(self, qtbot, app_state, profile_service, monkeypatch):
+        """A stale assignment only ever adds a floor, so it is not worth aborting.
+
+        The old pump is one the user assigned and the removal is confirmed — the
+        conftest answers No to every question, which would decline the clear
+        before it was ever sent, and the test would then prove nothing."""
+        import control_ofc.ui.pages.controls_page as cp
+
+        monkeypatch.setattr(
+            cp.QMessageBox, "question", lambda *a, **k: cp.QMessageBox.StandardButton.Yes
+        )
+        old = _mb_header(3, role="pump", role_source="user_assigned")
+        app_state.set_hwmon_headers([old, _mb_header(5)])
         client = _RoleClient(fail_on=None)
 
         def _fail_clear(header_id, role):
@@ -861,7 +874,11 @@ class TestApplyHeaderRoles:
 
         client.set_header_role = _fail_clear
         page = self._page(qtbot, app_state, profile_service, client)
-        assert page._apply_header_roles([("old", None), ("h5", "pump")]) is True
+        new_id = _mb_header(5).id
+        assert page._apply_header_roles([(old.id, None), (new_id, "pump")]) is True
+        assert client.role_calls == [(new_id, "pump"), (old.id, None)], (
+            "precondition: the clear was sent (after the assign) and failed"
+        )
         assert client.header_fetches == 1
 
 

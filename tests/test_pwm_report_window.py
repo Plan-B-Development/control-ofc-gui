@@ -426,6 +426,139 @@ def test_a_new_report_does_not_inherit_the_last_role_message(
     controller.shutdown()
 
 
+# ── `ROLE-e`: the scope page follows a header change made elsewhere ─────────
+
+
+def _sys_headers(sys_role: str, source: str):
+    return parse_hwmon_headers(
+        {"headers": [header(CPU, role="cpu_fan"), header(SYS, role=sys_role, role_source=source)]}
+    )
+
+
+def _flush_deletes() -> None:
+    """A rebuild only `deleteLater`s the old cell widgets, and `findChild`
+    would still find them first."""
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def _role_text(window, cid: str) -> str:
+    slug = "".join(c if c.isalnum() else "_" for c in cid)
+    return window.findChild(QLabel, f"PwmReport_Label_role_{slug}").text()
+
+
+@pytest.fixture()
+def scope_rig(qtbot, tmp_path, settings_service, monkeypatch):
+    """A report on its scope page, SYS unclassified, opened from the Hardware
+    page (a role route that writes nothing — the role changes come from
+    `state.set_hwmon_headers`, as a Hardware card's re-read delivers them)."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    state.set_hwmon_headers(_sys_headers("unknown", "none"))
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(
+        controller, state, settings_service, set_header_role=lambda _h, _p: None
+    )
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    assert window.current_page() == PAGE_SCOPE, "precondition: the scope page is shown"
+    assert not _box(window, "probe", SYS).isEnabled(), "precondition: no probe on unknown"
+    yield window, state
+    controller.shutdown()
+
+
+def test_a_role_set_elsewhere_rebuilds_the_open_scope_page_keeping_ticks(scope_rig):
+    window, state = scope_rig
+    _box(window, "verify", SYS).setChecked(False)  # the user's own choice
+    assert _box(window, "pairing", SYS).isChecked(), "precondition: a default tick"
+
+    state.set_hwmon_headers(_sys_headers("chassis_fan", "user_assigned"))
+    _flush_deletes()
+
+    assert _role_text(window, SYS).startswith("Chassis fan")
+    assert _box(window, "probe", SYS).isEnabled(), "a chassis fan is offered the probe"
+    assert not _box(window, "probe", SYS).isChecked(), "the probe is never pre-selected"
+    assert not _box(window, "verify", SYS).isChecked(), "an untick survives the rebuild"
+    assert _box(window, "pairing", SYS).isChecked(), "a tick survives the rebuild"
+
+
+def test_a_header_refresh_that_changes_nothing_shown_does_not_rebuild(scope_rig):
+    """The headers are re-read every ~300 s; rebuilding on each would take focus
+    off the page. A new RPM is not a scope change either."""
+    window, state = scope_rig
+    before = _box(window, "verify", SYS)
+    state.set_fans(parse_fans({"fans": [fan(CPU, rpm=1500), fan(SYS, rpm=0)]}))
+    state.set_hwmon_headers(_sys_headers("unknown", "none"))  # fresh, equal objects
+    _flush_deletes()
+    assert _box(window, "verify", SYS) is before
+
+
+def test_a_change_while_on_setup_waits_until_back(scope_rig):
+    window, state = scope_rig
+    _btn(window, "PwmReport_Btn_next").click()
+    assert window.current_page() == PAGE_SETUP, "precondition"
+    state.set_hwmon_headers(_sys_headers("chassis_fan", "user_assigned"))
+    _flush_deletes()
+    assert _role_text(window, SYS).startswith("Unclassified"), "not rebuilt off-page"
+
+    _btn(window, "PwmReport_Btn_back").click()
+    _flush_deletes()
+    assert window.current_page() == PAGE_SCOPE
+    assert _role_text(window, SYS).startswith("Chassis fan")
+    assert _box(window, "probe", SYS).isEnabled()
+
+
+def test_a_rebuild_from_elsewhere_hides_the_pages_last_role_message(
+    qtbot, tmp_path, settings_service, monkeypatch
+):
+    """The review's P3: the rows the message described may have changed."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    state.set_hwmon_headers(_sys_headers("unknown", "none"))
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(
+        controller, state, settings_service, set_header_role=lambda _h, _p: "Done."
+    )
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    _role_btn(window, SYS).click()
+    msg = window.findChild(QLabel, "PwmReport_Label_scopeRoleMessage")
+    state.set_hwmon_headers(_sys_headers("unknown", "none"))  # an equal refresh
+    assert not msg.isHidden() and msg.text() == "Done.", "kept while nothing changed"
+
+    state.set_hwmon_headers(_sys_headers("chassis_fan", "user_assigned"))
+    assert msg.isHidden() and msg.text() == ""
+    controller.shutdown()
+
+
+def test_a_header_refresh_during_the_pages_own_role_dialog_waits_for_it(
+    qtbot, tmp_path, settings_service, monkeypatch
+):
+    """A rebuild while "Set…" is in its dialog would delete the button whose
+    click is still running; the follow-up waits until the route returns."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    state = _state()
+    state.set_hwmon_headers(_sys_headers("unknown", "none"))
+    seen: dict[str, bool] = {}
+    window: PwmReportWindow | None = None
+
+    def set_role(_header_id, _parent):
+        before = _box(window, "verify", SYS)
+        state.set_hwmon_headers(_sys_headers("chassis_fan", "user_assigned"))  # a poll lands
+        _flush_deletes()
+        seen["kept"] = _box(window, "verify", SYS) is before
+        return None  # then the user cancels
+
+    controller = PwmReportController(state, "/tmp/fake.sock", directory=tmp_path / "r")
+    window = PwmReportWindow(controller, state, settings_service, set_header_role=set_role)
+    qtbot.addWidget(window)
+    _btn(window, "PwmReport_Btn_new").click()
+    _role_btn(window, SYS).click()
+    _flush_deletes()
+    assert seen == {"kept": True}, "no rebuild while the dialog was open"
+    assert _role_text(window, SYS).startswith("Chassis fan"), "followed up after a cancel"
+    controller.shutdown()
+
+
 # ── The flow, by click ───────────────────────────────────────────────────────
 
 
