@@ -529,13 +529,13 @@ def test_external_activation_moves_id_based_ui(qtbot, app_state, profile_service
     assert combo.currentData() == "balanced"
 
 
-def test_external_activation_unknown_id_no_crash(
+def test_external_activation_unknown_id_clears_the_held_active_profile(
     qtbot, app_state, profile_service, settings_service
 ):
-    """DEC-194 (C1) edge case: an externally-activated id the GUI doesn't know
-    locally must not crash or desync — ProfileService.set_active is a no-op for an
-    unknown id and the dashboard combo (findData → -1) is left as-is. The AppState
-    mirror still records the daemon's id."""
+    """`WUI-d` (narrows DEC-194's old no-op): the daemon switching to a profile
+    the GUI does not hold clears the local active id instead of leaving a held
+    profile marked active. Nothing crashes, the dashboard combo leaves the held
+    profile, and AppState still mirrors the daemon's id."""
     from control_ofc.api.models import DaemonStatus
     from control_ofc.ui.main_window import MainWindow
 
@@ -548,15 +548,14 @@ def test_external_activation_unknown_id_no_crash(
     qtbot.addWidget(win)
 
     combo = win.dashboard_page._profile_combo
-    before_id = profile_service.active_id
-    before_idx = combo.currentIndex()
+    held = profile_service.active_id
+    assert held, "precondition: the GUI marks a held profile active"
+    assert combo.currentData() == held, "precondition: the combo shows it"
 
     app_state.set_status(
         DaemonStatus(active_profile_id="ghost_profile", active_profile_name="Ghost")
     )
 
-    # Unknown id rejected by set_active → local active_id + combo selection unmoved.
-    assert profile_service.active_id == before_id
-    assert combo.currentIndex() == before_idx
-    # AppState still mirrors the daemon-authoritative id (edge-triggered).
+    assert profile_service.active_id == ""
+    assert combo.currentIndex() == -1
     assert app_state.active_profile_id == "ghost_profile"

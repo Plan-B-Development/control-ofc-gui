@@ -1160,7 +1160,8 @@ is deliberately NOT changed to an always-serialised `""`:** `control-ofc-tray` r
 `GET /profile/active` remains the canonical query and the fallback, and the GUI consumes **both** its
 `profile_id` and its `profile_name` on each connect/reconnect — the id routes through
 `AppState.active_profile_id_changed` into `ProfileService.set_active`, which is what marks the profile
-active in the sidebar and decides which one the Controls page edits. A response with `active: false`
+active in the sidebar and decides which one the Controls page edits; an id the GUI does not hold clears
+that mark rather than leaving the previous profile marked (DEC-476). A response with `active: false`
 clears both, which is the only correction available against a daemon below 2.45.0. Against a daemon at
 or above it, external *deactivation* now also reconciles on the 1 Hz fast path rather than only on the
 periodic fallback.

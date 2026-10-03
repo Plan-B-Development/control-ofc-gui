@@ -1212,8 +1212,8 @@ class DashboardPage(QWidget):
     def _sync_profile_combo_to_active(self) -> None:
         """Point the combo at what the daemon runs, from BOTH sources (`WUI-a`).
 
-        The service's id is set only for a profile this GUI holds (DEC-194's
-        no-op for an unknown id); AppState's name is the daemon's word for
+        The service's id is set only for a profile this GUI holds (an unknown
+        id clears it, `WUI-d`); AppState's name is the daemon's word for
         whatever runs. So: the held profile by id; else the name, by text —
         unless AppState's daemon id names a profile the GUI does not hold, whose
         name may match a different, held one; else, with a name the combo cannot

@@ -407,9 +407,8 @@ class MainWindow(QWidget):
         # ProfileService so an external activation (CLI --profile, another client,
         # systemd) moves the id-based UI — the dashboard combo selection and the
         # Controls `*`-active marker — with no extra page wiring. set_active is
-        # edge-triggered and a silent no-op for an id the GUI doesn't know locally
-        # (dashboard findData → -1, combo left as-is), so an unknown id never
-        # crashes or desyncs.
+        # edge-triggered; an id the GUI doesn't hold clears the local id (`WUI-d`:
+        # the daemon wins), and AppState's name keeps naming what runs (`WUI-a`).
         self._state.active_profile_id_changed.connect(self._profile_service.set_active)
 
         # DEC-111: surface profile + mode transitions in the event log.

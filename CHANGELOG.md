@@ -13,6 +13,11 @@
   (ASRock AM5 Taichi: `nct6687` and `nct6775` each driving its own chip) System State raised a critical card
   telling you to blacklist one of the drivers — the one your fan control needs. control-ofc-daemon already
   checks that pair and clears it on these boards; the GUI now leaves the pair to the daemon.
+- **Saving no longer switches back to a profile the daemon has left.** When control-ofc-daemon switched from
+  a profile in this GUI to one the GUI does not hold (`control-ofc --profile` from a system folder, another
+  client), the GUI kept marking the old profile active, and saving it activated it again, replacing the one
+  the daemon was running. The GUI now drops its active mark when the daemon runs a profile it does not hold;
+  the sidebar's Stop and the Dashboard still name the running profile.
 
 ## [3.5.0] — 2026-10-03
 

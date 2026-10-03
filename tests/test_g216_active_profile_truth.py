@@ -2,7 +2,7 @@
 
 * `WUI-a` — the sidebar's Stop and the Dashboard's combo follow the daemon's
   running profile even when the GUI does not hold it (a ``--profile`` from a
-  system folder): DEC-194's ``set_active`` ignores an id the GUI does not know,
+  system folder): ``set_active`` records no id the GUI does not hold (`WUI-d`),
   so AppState's daemon-reported name is the only signal. Stop is enabled by
   either source and names the profile; the combo names it in its placeholder
   ("Running: <name> (not in this GUI)"); "No active profile" only with both empty.
@@ -67,7 +67,7 @@ def _two_profiles(window, profile_service):
 
 def _daemon_runs_unheld(app_state, profile_service):
     """What the poll does (`AppState.apply_status`): id first, then name. The id
-    reaches ``ProfileService.set_active`` and is ignored (DEC-194)."""
+    reaches ``ProfileService.set_active``, which records no id for it (`WUI-d`)."""
     app_state.set_active_profile_id(_UNHELD_ID)
     app_state.set_active_profile(_UNHELD_NAME)
     assert profile_service.active_id == "", "precondition: the GUI does not hold it"
@@ -344,3 +344,64 @@ class TestRefusedDelete:
         assert delete_refused_message("Bravo", None).startswith(
             "Could not delete 'Bravo': the daemon is still running it. "
         )
+
+
+# ── WUI-d: the daemon switches to a profile the GUI does not hold ───────
+
+
+class TestDaemonSwitchToUnheldProfile:
+    """The daemon wins (`U17`, narrowing DEC-194's old no-op): an unheld id
+    clears the local active id, so a Save on the previously-active held profile
+    is an ordinary save, not a DEC-188 re-apply that would replace what runs."""
+
+    @staticmethod
+    def _page(qtbot, app_state):
+        from control_ofc.api.models import ProfileActivateResult
+        from control_ofc.services.profile_service import Profile, ProfileService
+        from control_ofc.ui.pages.controls_page import ControlsPage
+
+        client = Mock()
+        client.create_profile.return_value = {"created": "p1"}
+        client.activate_profile.return_value = ProfileActivateResult(
+            activated=True, profile_id="p1", profile_name="P1"
+        )
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps._daemon_ids.add("p1")
+        app_state.active_profile_id_changed.connect(ps.set_active)  # main_window's wiring
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+        return page, ps, client
+
+    @staticmethod
+    def _daemon_runs(app_state, profile_id, name):
+        from control_ofc.api.models import DaemonStatus
+
+        app_state.set_status(
+            DaemonStatus(
+                active_profile_id=profile_id, active_profile_name=name, has_active_profile=True
+            )
+        )
+
+    def test_save_after_the_switch_does_not_reactivate_the_held_profile(self, qtbot, app_state):
+        page, ps, client = self._page(qtbot, app_state)
+        self._daemon_runs(app_state, "p1", "P1")
+        assert ps.active_id == "p1", "precondition: the held profile was active"
+
+        self._daemon_runs(app_state, _UNHELD_ID, _UNHELD_NAME)
+        assert ps.active_id == ""
+        page.select_profile("p1")
+        page._save_btn.click()
+
+        client.activate_profile.assert_not_called()
+        assert page._unsaved_label.text() == "Settings saved"
+
+    def test_save_while_the_daemon_runs_the_held_profile_still_reapplies(self, qtbot, app_state):
+        """The opposite branch: DEC-188's re-apply survives for the real case."""
+        page, _ps, client = self._page(qtbot, app_state)
+        self._daemon_runs(app_state, "p1", "P1")
+        page.select_profile("p1")
+        page._save_btn.click()
+
+        client.activate_profile.assert_called_once()
+        assert page._unsaved_label.text() == "Saved & reapplied to daemon"

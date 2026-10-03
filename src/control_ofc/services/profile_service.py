@@ -2240,17 +2240,20 @@ class ProfileService(QObject):
         ``_on_save_profile``'s DEC-188 re-apply test, which would then silently
         activate a profile the user never chose.
 
-        An id the GUI does not hold is still rejected (returns ``False``, state
-        untouched) — that is DEC-194's deliberate no-op for a daemon running a
-        profile this client has not loaded, and it must not be confused with the
-        clear.
+        An id the GUI does not hold is not recorded (returns ``False``) but still
+        clears the local id (`WUI-d`, narrowing DEC-194's old no-op): the daemon
+        runs something else, so leaving a held profile marked active named the
+        wrong one in the sidebar and the Dashboard, and a Save on it took the
+        DEC-188 branch and replaced the daemon's profile. The daemon wins;
+        AppState's name still says what runs (`WUI-a`).
         """
-        if profile_id and profile_id not in self._profiles:
-            return False
+        known = not profile_id or profile_id in self._profiles
+        if not known:
+            profile_id = ""
         if profile_id != self._active_id:
             self._active_id = profile_id
             self.active_changed.emit(profile_id)
-        return True
+        return known
 
     def activate(self, profile_id: str, *, client: DaemonClient | None) -> ProfileActivateOutcome:
         """Activate a profile end-to-end: persist it, confirm with the daemon,
