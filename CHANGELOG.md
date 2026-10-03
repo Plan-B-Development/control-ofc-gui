@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Fan headers show on the Hardware page when the app reopens on it.** If the app was closed on the
+  **Hardware** page — for example to update and restart the daemon — it reopened there with **Cooling
+  Hardware** empty apart from its header count, and **Re-scan** did not bring the header cards back. The
+  cards were created but never shown; they now appear however the page is reached.
+
 ## [3.4.0] — 2026-10-03
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. **Set role… ▸ No fan** needs

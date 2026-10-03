@@ -35,6 +35,9 @@ class FlowLayout(QLayout):
         """Insert a widget at a specific position in the layout."""
         from PySide6.QtWidgets import QWidgetItem
 
+        # As QBoxLayout::insertWidget does: reparent and schedule the show, or a
+        # widget inserted under an already-visible parent stays hidden.
+        self.addChildWidget(widget)
         item = QWidgetItem(widget)
         index = max(0, min(index, len(self._items)))
         self._items.insert(index, item)

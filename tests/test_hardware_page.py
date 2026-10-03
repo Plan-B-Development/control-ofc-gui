@@ -7,11 +7,14 @@ the probe/worker paths are monkeypatched. Mirrors `test_system_state_page.py`.
 from __future__ import annotations
 
 from PySide6.QtGui import QShowEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QWidget
 
 from control_ofc.api.models import (
+    Capabilities,
     ConnectionState,
+    ControlCapability,
     HardwareReadiness,
+    HwmonHeader,
     ReadinessItem,
     ReadinessRollup,
     SuperIoChip,
@@ -364,3 +367,53 @@ def test_superio_non_x86_and_empty_render(qtbot):
     )
     assert page.findChild(QWidget, "Hardware_Label_superioNote") is not None
     assert page.findChild(QWidget, "Hardware_Label_superioNotes") is not None
+
+
+# ── Header cards after the page is shown ─────────────────────────────────
+
+
+def _header(pwm_index: int, label: str) -> HwmonHeader:
+    return HwmonHeader(
+        id=f"hwmon:nct6799:isa-0a20:pwm{pwm_index}:{label}",
+        label=label,
+        chip_name="nct6799",
+        device_id="isa-0a20",
+        pwm_index=pwm_index,
+        supports_enable=True,
+        rpm_available=True,
+        is_writable=True,
+    )
+
+
+def _shown_page(qtbot):
+    page, s = _page(qtbot)
+    s.set_capabilities(Capabilities(control=ControlCapability(header_roles=True)))
+    page.resize(1200, 900)
+    page.show()
+    qtbot.waitExposed(page)
+    return page, s
+
+
+def test_header_cards_visible_when_headers_arrive_after_show(qtbot):
+    """The GUI restores the Hardware page on launch, so it is on screen before the
+    first poll publishes the headers. FlowLayout.insertWidget once skipped
+    addChildWidget, leaving every card created then hidden for good."""
+    page, s = _shown_page(qtbot)
+    assert page._header_cards == {}
+    s.set_hwmon_headers([_header(1, "CPU_FAN"), _header(2, "SYS_FAN1")])
+    QApplication.processEvents()
+    cards = list(page._header_cards.values())
+    assert len(cards) == 2
+    assert all(card.isVisibleTo(page) for card in cards)
+
+
+def test_header_cards_visible_when_headers_arrive_before_show(qtbot):
+    page, s = _page(qtbot)
+    s.set_capabilities(Capabilities(control=ControlCapability(header_roles=True)))
+    s.set_hwmon_headers([_header(1, "CPU_FAN"), _header(2, "SYS_FAN1")])
+    page.resize(1200, 900)
+    page.show()
+    qtbot.waitExposed(page)
+    cards = list(page._header_cards.values())
+    assert len(cards) == 2
+    assert all(card.isVisibleTo(page) for card in cards)
