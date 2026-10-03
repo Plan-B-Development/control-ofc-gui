@@ -165,8 +165,8 @@ class TestDashboardCopyText:
     def test_no_hardware_state_drops_user_directed_serial_advice(self, qtbot, app_state):
         # DEC-145 regression: the old copy told the *user* to verify their
         # own serial-group membership — irrelevant, since the GUI talks to a
-        # 0666 socket (DEC-049) and the daemon (root + SupplementaryGroups)
-        # owns serial access.
+        # 0666 socket (DEC-049) and the daemon (root, limited by the unit's
+        # DeviceAllow=) owns serial access.
         page = DashboardPage(state=app_state)
         qtbot.addWidget(page)
         text = _all_label_text(page)

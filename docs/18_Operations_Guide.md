@@ -329,7 +329,7 @@ When using `--profile <name>`, the daemon searches (highest priority first):
 The daemon reads from and writes to the motherboard PWM nodes (`/sys/class/hwmon/hwmonN/pwmN`, which are symlinks resolving to `/sys/devices/...`). Running as root (via systemd) provides the necessary permissions, **and** the packaged unit's sandbox must expose the device tree for writing — `ReadWritePaths=/sys/devices` (daemon ≥ v2.5.2; see "Motherboard/GPU fans discovered but not responding" under Troubleshooting, DEC-199).
 
 ### Serial device access
-The daemon runs as root, so no group membership gates its access to the serial device on any distribution — the unit's `SupplementaryGroups=uucp` does nothing for a root service, and Debian/Ubuntu need no `dialout` drop-in. What does limit it is the unit's `DeviceAllow=char-ttyACM rw` and `DeviceAllow=char-ttyUSB rw`: the service can open only `/dev/ttyACM*` and `/dev/ttyUSB*` nodes (a `/dev/serial/by-id/` link to one is fine). A controller on another kind of node needs a drop-in adding its device class, for example `DeviceAllow=char-ttyS rw`.
+The daemon runs as root, so no group membership gates its access to the serial device on any distribution, and Debian/Ubuntu need no `dialout` drop-in. What does limit it is the unit's `DeviceAllow=char-ttyACM rw` and `DeviceAllow=char-ttyUSB rw`: the service can open only `/dev/ttyACM*` and `/dev/ttyUSB*` nodes (a `/dev/serial/by-id/` link to one is fine). A controller on another kind of node needs a drop-in adding its device class, for example `DeviceAllow=char-ttyS rw`.
 
 ### Runtime directories
 - `/run/control-ofc/` — created by systemd (`RuntimeDirectory=control-ofc`)
