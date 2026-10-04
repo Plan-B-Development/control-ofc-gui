@@ -25,7 +25,11 @@ from ..api.models import (
     HwmonHeader,
     HwmonVerifyResult,
 )
-from ..ui.hwmon_guidance import dual_chip_verify_hint, verification_guidance
+from ..ui.hwmon_guidance import (
+    dual_chip_firmware_counts,
+    dual_chip_verify_hint,
+    verification_guidance,
+)
 from .verify_evidence import VerifyEvidence, gpu_verify_evidence, hwmon_verify_evidence
 
 # `VERDICT_PASS` / `VERDICT_WARN` / `VERDICT_FAIL` used to live here, as "the
@@ -362,17 +366,29 @@ def build_verify_result_view(
     chip_name = header.chip_name if header else ""
     board_vendor = ""
     expected_chips: list[str] = []
+    fanless_chips: list[str] = []
     detected: list[str] = []
+    firmware_fans: int | None = None
+    reachable: int | None = None
     if diagnostics is not None:
+        firmware_fans, reachable = dual_chip_firmware_counts(diagnostics)
         board_vendor = diagnostics.board.vendor
         expected_chips = list(diagnostics.expected_chips)
+        fanless_chips = list(diagnostics.expected_fanless_chips)
         detected = [c.chip_name for c in diagnostics.hwmon.chips_detected]
 
     guidance = verification_guidance(result.result, board_vendor, chip_name)
     if guidance:
         lines.extend(("", f"Next step: {guidance}"))
 
-    dual_hint = dual_chip_verify_hint(result.result, expected_chips, detected)
+    dual_hint = dual_chip_verify_hint(
+        result.result,
+        expected_chips,
+        detected,
+        fanless_chips,
+        firmware_fan_count=firmware_fans,
+        reachable_fan_count=reachable,
+    )
     if dual_hint:
         lines.extend(("", dual_hint))
 

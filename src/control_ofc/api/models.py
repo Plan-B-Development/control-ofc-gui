@@ -1811,6 +1811,12 @@ class HardwareDiagnosticsResult:
     # dual-chip remediation steps (driver update first; `mmio=on`
     # modprobe.d line on pre-2026-03 builds — DEC-144).
     expected_chips: list[str] = field(default_factory=list)
+    # `BRD-j` (daemon >= 3.7.0): the chips in `expected_chips` that carry no fan
+    # header on this board, from the same curated row. Empty for an unknown
+    # board, a chip that carries fans or is not known not to, and an older
+    # daemon — all of which keep the dual-chip alert's "missing PWM headers"
+    # wording. Never read as "fanless" by absence.
+    expected_fanless_chips: list[str] = field(default_factory=list)
     # `X87-d` (daemon >= 2.36.0): the board's own firmware-declared counts, where
     # the driver publishes them. `None` on every non-Gigabyte board, when `it87`
     # is not loaded, when the descriptor does not decode, and on older daemons.
@@ -2781,6 +2787,14 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
     # defensive measure against future shape drift.
     expected_chips_raw = data.get("expected_chips") or []
     expected_chips = [str(c) for c in expected_chips_raw if c]
+    # `BRD-j`: a list only — this one suppresses wording, so a malformed value
+    # falls back to "carries fans" rather than being iterated.
+    expected_fanless_raw = data.get("expected_fanless_chips")
+    expected_fanless_chips = (
+        [str(c) for c in expected_fanless_raw if c]
+        if isinstance(expected_fanless_raw, list)
+        else []
+    )
     kernel_detected_chips_raw = data.get("kernel_detected_chips") or []
     kernel_detected_chips = [str(c) for c in kernel_detected_chips_raw if c]
 
@@ -2849,6 +2863,7 @@ def parse_hardware_diagnostics(data: dict) -> HardwareDiagnosticsResult:
             data.get("kernel_release") if isinstance(data.get("kernel_release"), str) else None
         ),
         expected_chips=expected_chips,
+        expected_fanless_chips=expected_fanless_chips,
         board_firmware_counts=_parse_board_firmware_counts(data.get("board_firmware_counts")),
         kernel_detected_chips=kernel_detected_chips,
         module_collisions=module_collisions,

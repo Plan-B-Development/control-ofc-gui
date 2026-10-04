@@ -361,11 +361,11 @@ def test_the_dual_chip_warning_states_a_measurement_when_the_firmware_gave_one()
 
 
 def test_no_measurement_is_claimed_when_the_firmware_count_is_not_a_deficit():
-    """Equal or lower counts say nothing useful, so they say nothing.
+    """Equal or lower counts are not a deficit, so no deficit is claimed.
 
-    A missing chip that carries no fan headers is a real configuration, and
-    "declares 5 and 5 are reachable" printed beside a missing-chip warning reads
-    as a contradiction rather than as information.
+    A matching count cannot clear the fan headers either (`total_headers`
+    includes AIO and USB controllers); only the board table's fanless chips can
+    (`BRD-j`, `test_brd_j_fanless_secondary`).
     """
     from control_ofc.ui.hwmon_guidance import dual_chip_warning_html
 

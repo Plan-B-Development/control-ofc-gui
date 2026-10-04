@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **A missing chip that carries no fan header no longer reads "missing PWM headers".** On a B450 AORUS
+  PRO whose IT8792E did not enumerate, the System State card and its condition said fan headers were
+  missing, though that chip carries none. They now say the fan headers are unaffected and only its
+  temperatures and voltages are missing, and the verify result no longer suggests the missing chip
+  explains a fan's behaviour. Where the board's firmware declares more fan headers than were found,
+  the warning still says headers are missing. Needs control-ofc-daemon 3.7.0; with an older daemon the wording is unchanged (`BRD-j`).
+
 - **A second AMD GPU is judged by its own card.** On a machine with two AMD GPUs of different generations,
   every AMD GPU fan was judged by the daemon's primary card: a legacy or read-only card behind an RX
   7000/9000 read "PMFW curve" on the Overview and Dashboard, and the fan-member picker offered it as if a

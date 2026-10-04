@@ -1700,6 +1700,17 @@ and the GUI parser defaults to `[]`:
   objects and the PWM Test Report's `environment.chips` (DEC-473, `BRD-x`);
   `wire_fields.json` pins the struct in both repos. On an older daemon the suffixed names do not match and
   the warning is a false alarm, which the GUI's copy then says.
+- `expected_fanless_chips: list[str]` (daemon ≥ 3.7.0, `BRD-j`, additive, same
+  omit-when-empty rule) — the chips in `expected_chips` that carry **no fan
+  header** on this board, from the same curated row (today the B450 AORUS PRO's
+  IT8792E). A missing one costs temperatures and voltages, not fan headers; the
+  GUI then heads the warning "fan headers unaffected" instead of "missing PWM
+  headers" and drops the verify-result dual-chip hint. Empty means "carries fans,
+  or not known not to" — never "fanless" by absence — so an older daemon keeps
+  the old wording. Where `board_firmware_counts` is present and its `fan_count`
+  exceeds `hwmon.total_headers`, that measured deficit wins over the list. A
+  count that matches cannot clear the fan headers: `total_headers` sums every
+  PWM-capable chip, AIO and USB fan controllers included.
 - `kernel_detected_chips: list[str]` — best-effort kernel-level chip
   detection parsed from `/dev/kmsg` `it87:` lines. **In the shipped
   deployment this is always empty** (DEC-421): the packaged systemd unit sets

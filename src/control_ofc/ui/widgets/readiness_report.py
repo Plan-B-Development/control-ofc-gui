@@ -42,10 +42,13 @@ from control_ofc.ui.hwmon_guidance import (
     VendorQuirk,
     advisory_detail_html,
     detect_module_conflicts,
+    dual_chip_firmware_counts,
     dual_chip_warning_html,
     format_bound_driver_status,
     format_driver_status,
     lookup_vendor_quirks,
+    missing_chips_cost_fans,
+    missing_dual_chips,
     quirk_key,
     severity_display,
 )
@@ -116,6 +119,34 @@ def reclaims_are_historic(hw) -> bool:
     return all(h in ages and ages[h] >= RECLAIM_HISTORIC_AFTER_MS for h in hot)
 
 
+def dual_chip_warning_for(diag: HardwareDiagnosticsResult) -> str | None:
+    """The dual-chip warning for *diag* (DEC-101), or ``None`` — the one place
+    its inputs are gathered, for the readiness condition and its issue card."""
+    firmware_fans, reachable = dual_chip_firmware_counts(diag)
+    return dual_chip_warning_html(
+        diag.board.name,
+        list(diag.expected_chips),
+        [c.chip_name for c in diag.hwmon.chips_detected],
+        firmware_fan_count=firmware_fans,
+        reachable_fan_count=reachable,
+        fanless_chips=list(diag.expected_fanless_chips),
+    )
+
+
+def dual_chip_costs_fans(diag: HardwareDiagnosticsResult) -> bool:
+    """Whether the chips missing on *diag* cost fan headers (`BRD-j`), from the
+    same inputs as :func:`dual_chip_warning_for`."""
+    firmware_fans, reachable = dual_chip_firmware_counts(diag)
+    return missing_chips_cost_fans(
+        missing_dual_chips(
+            list(diag.expected_chips), [c.chip_name for c in diag.hwmon.chips_detected]
+        ),
+        list(diag.expected_fanless_chips),
+        firmware_fan_count=firmware_fans,
+        reachable_fan_count=reachable,
+    )
+
+
 def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
     """The observed readiness conditions, in display order (DEC-357).
 
@@ -137,7 +168,6 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
     BIOS *may* override fan control" advisory paint a healthy board red.
     """
     hw = diag.hwmon
-    board = diag.board
     problems: list[dict] = []
 
     collisions = getattr(diag, "module_collisions", []) or []
@@ -176,8 +206,10 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
             }
         )
 
-    detected = [c.chip_name for c in hw.chips_detected]
-    if dual_chip_warning_html(board.name, list(diag.expected_chips), detected):
+    if dual_chip_warning_for(diag):
+        # `BRD-j`: a missing chip that carries no fan header costs readings, not
+        # control, and the line says so before the ladder.
+        costs_fans = dual_chip_costs_fans(diag)
         problems.append(
             {
                 "key": "dual_chip",
@@ -200,6 +232,13 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
                 # driver loaded at all?" check, with the `sudo` that
                 # dmesg_restrict kernels need.
                 "fix": (
+                    ""
+                    if costs_fans
+                    else "Every fan header is unaffected: the missing chip carries "
+                    "none on this board, so only its temperatures and voltages are "
+                    "missing. To get them back: "
+                )
+                + (
                     "Work down this list, re-checking after each step: keep "
                     "sensors-detect and the nct6775/w83627ehf modules away from "
                     "the Super-I/O; reboot; if the chip is still missing, power "
@@ -211,6 +250,10 @@ def _base_conditions(diag: HardwareDiagnosticsResult) -> list[dict]:
                 ),
                 "doc_url": _MISSING_HEADERS_URL,
                 "doc_title": "Manual: recovering missing fan headers",
+                # Still `warn` when no fan is lost: a chip that did not
+                # enumerate is a condition with a fix, and every condition here
+                # counts toward ACTION REQUIRED — an `info` one would be counted
+                # under a label its own tier contradicts.
                 "severity": "warn",
             }
         )

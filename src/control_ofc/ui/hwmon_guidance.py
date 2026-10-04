@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from html import escape
+from typing import Any
 
 # Shown beneath every "To fix" block across the diagnostics UI (DEC-113).
 # Lives here (the lowest-level guidance module) so both the dual-chip warning
@@ -2764,6 +2765,61 @@ def _pretty_chip(chip: str) -> str:
     return _CHIP_PRETTY_NAMES.get(chip.lower(), chip.upper())
 
 
+def dual_chip_firmware_counts(diag: Any) -> tuple[int | None, int | None]:
+    """``(firmware_fan_count, reachable_fan_count)`` from a
+    ``HardwareDiagnosticsResult``, for every dual-chip consumer (``X87-d``).
+
+    The board's own firmware-declared header count where the daemon read one,
+    so a deficit reads as a measurement rather than an inference from a curated
+    DMI table; both ``None`` on a board that publishes no descriptor and on
+    daemons before 2.36.0. Against `total_headers`, not `writable_headers`: a
+    BIOS-owned read-only header is discovered, and counting it as missing would
+    report a phantom deficit. It is also the ONLY count this endpoint carries —
+    monitor-only tachometers live on `GET /inventory/hwmon` — which is why the
+    warning says "expose a controllable fan header" rather than "are reachable".
+    """
+    firmware = diag.board_firmware_counts
+    if firmware is None:
+        return None, None
+    return firmware.fan_count, diag.hwmon.total_headers
+
+
+def missing_dual_chips(expected_chips: list[str], detected_chip_names: list[str]) -> list[str]:
+    """The expected chips the kernel did not enumerate, in table order."""
+    detected_lower = {c.lower() for c in detected_chip_names}
+    return [c for c in expected_chips if c.lower() not in detected_lower]
+
+
+def missing_chips_cost_fans(
+    missing: list[str],
+    fanless_chips: list[str],
+    *,
+    firmware_fan_count: int | None = None,
+    reachable_fan_count: int | None = None,
+) -> bool:
+    """Do the *missing* chips cost this board fan headers? (``BRD-j``, ``U13``.)
+
+    The board's firmware count (``board_firmware_counts``, a measurement) decides
+    **in the loss direction only**: when it exceeds the controllable headers
+    found, fans are lost, whatever the board table says. It cannot clear them:
+    ``hwmon.total_headers`` sums every PWM-capable chip, an AIO or USB fan
+    controller included, so a count that matches proves nothing about the board's
+    own chips (and the driver accepts a zero count). Otherwise the daemon's
+    curated ``expected_fanless_chips`` decides: no fans are lost only when every
+    missing chip is listed as carrying none. An empty list — an unknown chip, or
+    a daemon before 3.7.0 — keeps the answer ``True``, the wording the alert
+    always had.
+    """
+    if (
+        firmware_fan_count is not None
+        and reachable_fan_count is not None
+        and firmware_fan_count > reachable_fan_count
+    ):
+        return True
+    fanless = {c.lower() for c in fanless_chips}
+    return not all(c.lower() in fanless for c in missing)
+
+
 def dual_chip_warning_html(
     board_name: str,
     expected_chips: list[str],
@@ -2771,6 +2827,7 @@ def dual_chip_warning_html(
     *,
     firmware_fan_count: int | None = None,
     reachable_fan_count: int | None = None,
+    fanless_chips: list[str] | None = None,
 ) -> str | None:
     """Return rich-text HTML for the dual-chip board warning, or None.
 
@@ -2839,36 +2896,55 @@ def dual_chip_warning_html(
     the difference "unreachable" would overstate the deficit by exactly those
     headers. Saying what was actually counted is true on every board and needs no
     second request.
+
+    **A chip that carries no fan header is not "missing PWM headers"** (``BRD-j``).
+    Where :func:`missing_chips_cost_fans` says the missing chips cost no fan
+    header — the daemon's ``expected_fanless_chips`` lists every one of them (the
+    B450 AORUS PRO's IT8792E) and the firmware count shows no deficit — the
+    heading says the fan headers are unaffected and names the loss as
+    temperatures and voltages. The recovery ladder stays: it brings those
+    readings back.
     """
     if not expected_chips:
         return None
 
-    detected_lower = {c.lower() for c in detected_chip_names}
-    missing = [c for c in expected_chips if c.lower() not in detected_lower]
+    missing = missing_dual_chips(expected_chips, detected_chip_names)
     if not missing:
         return None
 
     expected_count = len(expected_chips)
     detected_count = expected_count - len(missing)
+    costs_fans = missing_chips_cost_fans(
+        missing,
+        fanless_chips or [],
+        firmware_fan_count=firmware_fan_count,
+        reachable_fan_count=reachable_fan_count,
+    )
+    loss = "missing PWM headers" if costs_fans else "fan headers unaffected"
+    bare_title = (
+        "Missing PWM headers detected"
+        if costs_fans
+        else "Super-IO chip missing — fan headers unaffected"
+    )
 
     # Heading uses the board name verbatim when available so users
     # immediately recognise their machine.
     board_part = f"This board ({escape(board_name)})" if board_name.strip() else "This board"
     if expected_count == 1:
         heading = (
-            f"<b>ITE Super-IO chip not detected — missing PWM headers</b><br>"
+            f"<b>ITE Super-IO chip not detected — {loss}</b><br>"
             f"{board_part} is expected to expose 1 ITE Super-IO chip, but the kernel "
             f"enumerated none: "
         )
     elif board_name.strip():
         heading = (
-            f"<b>Dual-chip board detected — missing PWM headers</b><br>"
+            f"<b>Dual-chip board detected — {loss}</b><br>"
             f"{board_part} is expected to expose {expected_count} ITE "
             f"Super-IO chips, but the kernel only enumerated {detected_count}: "
         )
     else:
         heading = (
-            f"<b>Missing PWM headers detected</b><br>"
+            f"<b>{bare_title}</b><br>"
             f"{board_part} is expected to expose {expected_count} ITE Super-IO chips, "
             f"but the kernel only enumerated {detected_count}: "
         )
@@ -2890,6 +2966,14 @@ def dual_chip_warning_html(
             f"and <b>{reachable_fan_count}</b> expose a controllable fan header. The "
             f"first count comes from the board itself, not from a lookup table."
             f"<br><br>"
+        )
+    elif not costs_fans:
+        # `BRD-j`: say why the heading clears the fan headers — the board
+        # table, the only source that can (see `missing_chips_cost_fans`).
+        measured = (
+            "No fan header is lost: on this board the missing chip carries no fan "
+            "header. What is missing is the temperatures and voltages it reports. "
+            "The steps below bring them back.<br><br>"
         )
 
     # _pretty_chip echoes the raw (daemon-supplied) chip name for anything not in
@@ -2959,6 +3043,10 @@ def dual_chip_verify_hint(
     result: str,
     expected_chips: list[str],
     detected_chip_names: list[str],
+    fanless_chips: list[str] | None = None,
+    *,
+    firmware_fan_count: int | None = None,
+    reachable_fan_count: int | None = None,
 ) -> str | None:
     """Return a one-line follow-up note for the verify result panel
     when the verify outcome could plausibly be tied to the dual-chip
@@ -2981,14 +3069,22 @@ def dual_chip_verify_hint(
           dual-chip hint would be noise in all three cases
         - the board is not a dual-chip target
         - no chips are missing (all expected chips already detected)
+        - every missing chip carries no fan header (``BRD-j``): fixing its
+          enumeration adds no header, so it cannot explain this one
     """
     if result not in ("pwm_value_clamped", "no_rpm_effect"):
         return None
     if not is_known_dual_chip_board(expected_chips):
         return None
-    detected_lower = {c.lower() for c in detected_chip_names}
-    missing = [c for c in expected_chips if c.lower() not in detected_lower]
+    missing = missing_dual_chips(expected_chips, detected_chip_names)
     if not missing:
+        return None
+    if not missing_chips_cost_fans(
+        missing,
+        fanless_chips or [],
+        firmware_fan_count=firmware_fan_count,
+        reachable_fan_count=reachable_fan_count,
+    ):
         return None
     return (
         "If you also have fan headers missing from the list (your board has "
