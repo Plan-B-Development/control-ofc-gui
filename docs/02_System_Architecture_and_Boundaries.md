@@ -173,10 +173,12 @@ control_ofc/
     openfan_calibration_view.py # OpenFan calibration dialog VM: channel picker, restart-duty
                                #   advice, end keyed on completed_unix_ms — DEC-453.
     openfan_firmware_view.py   # OpenFAN firmware update VM — DEC-481: stages, outcomes, file
-                               #   findings, the start gate, and the DEC-482 alert that
-                               #   stands in for the OpenFAN fans' staleness warnings.
+                               #   findings, the start gate, who writes the file (DEC-483),
+                               #   and the DEC-482 alert that stands in for the OpenFAN fans'
+                               #   staleness warnings.
     uf2.py                     # Qt-free .uf2 checker + private prepared copy — DEC-481.
                                #   Reads at most 1 MiB + 1 of a regular file; never a device.
+                               #   Refuses the FW_01 binary by fingerprint (DEC-483).
     control_path_view.py       # PWM-to-tach control-path discovery VM — DEC-333
                                #   (AIO Phase 8 Batch 1). Renders what the daemon
                                #   measured; derives no relationship or confidence.

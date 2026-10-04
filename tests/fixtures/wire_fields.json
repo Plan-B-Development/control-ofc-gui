@@ -1584,13 +1584,15 @@
         "hw_info",
         "fw_info",
         "update_available",
-        "update_refusals"
+        "update_refusals",
+        "daemon_write"
       ],
       "must_be_read": [
         "present",
         "link",
         "update_available",
-        "update_refusals"
+        "update_refusals",
+        "daemon_write"
       ],
       "not_assertable": {
         "port": "Shared with another declared struct (UsbDevice), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The Controller section shows the serial device.",
@@ -1604,7 +1606,7 @@
       "unmodelled": {
         "api_version": "The envelope's version. Compatibility is the capability handshake (control.openfan_firmware_maintenance), never a matched version number."
       },
-      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it."
+      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. DEC-483 added daemon_write: whether the daemon may write the firmware itself."
     },
     {
       "daemon": "UsbDevice",
@@ -1656,6 +1658,54 @@
       "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. The start gate shows the daemon's message, or the token when there is none."
     },
     {
+      "daemon": "OpenFanDaemonWrite",
+      "gui": "OpenFanDaemonWrite",
+      "endpoints": [
+        "GET /fans/openfan/device .daemon_write"
+      ],
+      "fields": [
+        "available",
+        "reason",
+        "message"
+      ],
+      "must_be_read": [
+        "available"
+      ],
+      "not_assertable": {
+        "reason": "Shared with another declared struct (OpenFanUpdateRefusal, OpenFanFirmwareStagedResponse), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step names the missing drop-in on it.",
+        "message": "Shared with another declared struct (OpenFanUpdateRefusal, OpenFanFirmwareStagedResponse), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step shows it."
+      },
+      "note": "Enrolled by DEC-483 (the daemon writes the OpenFAN firmware itself): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. Absent from a daemon without control.openfan_firmware_write."
+    },
+    {
+      "daemon": "OpenFanFirmwareStagedResponse",
+      "gui": "OpenFanFirmwareStaged",
+      "endpoints": [
+        "PUT /fans/openfan/firmware"
+      ],
+      "fields": [
+        "api_version",
+        "sha256",
+        "size",
+        "release",
+        "verdict",
+        "reason",
+        "message"
+      ],
+      "not_assertable": {
+        "sha256": "Shared with another declared struct (FirmwareClaim), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The window asks the daemon to write only when it matches the file it prepared.",
+        "size": "Shared with another declared struct (FirmwareClaim), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step shows the size of the file itself.",
+        "release": "Shared with another declared struct (FirmwareWrite), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step names the release the daemon recognised.",
+        "verdict": "Shared with another declared struct (Evidence, PointStability, PreflightReport, SteadyState), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step and the start choose who writes the file on it.",
+        "reason": "Shared with another declared struct (OpenFanUpdateRefusal, OpenFanDaemonWrite), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step words a file the daemon will not write on it.",
+        "message": "Shared with another declared struct (OpenFanUpdateRefusal, OpenFanDaemonWrite), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The file step shows it."
+      },
+      "unmodelled": {
+        "api_version": "The envelope's version. Compatibility is the capability handshake (control.openfan_firmware_write), never a matched version number."
+      },
+      "note": "Enrolled by DEC-483 (the daemon writes the OpenFAN firmware itself): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. The answer to an upload; the daemon keeps the file only when verdict is daemon_write."
+    },
+    {
       "daemon": "MaintenanceRecord",
       "gui": "OpenFanMaintenanceRecord",
       "endpoints": [
@@ -1689,7 +1739,8 @@
         "firmware",
         "before",
         "after",
-        "evidence"
+        "evidence",
+        "firmware_write"
       ],
       "must_be_read": [
         "stage_deadline_unix_ms",
@@ -1709,7 +1760,8 @@
         "firmware",
         "before",
         "after",
-        "evidence"
+        "evidence",
+        "firmware_write"
       ],
       "not_assertable": {
         "run_id": "Shared with another declared struct (OpenFanMaintenanceSummary and the diagnostic runs), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The window follows one run by it.",
@@ -1725,7 +1777,39 @@
         "interface_number": "Not shown: the daemon reopens the interface it used by itself.",
         "tty": "The window names the USB port and the drive instead; the support bundle keeps the record whole."
       },
-      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. expected_usb_serial is read by the support bundle's redaction (openfan_firmware_view.bundle_record)."
+      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. expected_usb_serial is read by the support bundle's redaction (openfan_firmware_view.bundle_record). DEC-483 added firmware_write: the daemon's own write, null when the file is copied by hand."
+    },
+    {
+      "daemon": "FirmwareWrite",
+      "gui": "OpenFanFirmwareWrite",
+      "endpoints": [
+        "GET /fans/openfan/maintenance .firmware_write"
+      ],
+      "fields": [
+        "release",
+        "phase",
+        "done_bytes",
+        "total_bytes",
+        "flash_id",
+        "flash_changed",
+        "verified",
+        "fallback_reason",
+        "fallback_detail"
+      ],
+      "must_be_read": [
+        "done_bytes",
+        "total_bytes",
+        "flash_id",
+        "flash_changed",
+        "verified",
+        "fallback_reason",
+        "fallback_detail"
+      ],
+      "not_assertable": {
+        "release": "Shared with another declared struct (OpenFanFirmwareStagedResponse), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The write's progress names it.",
+        "phase": "Shared with another declared struct (RunStep, ProbePoint, OpenFanCalibrationRun, CalPoint), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The progress line and its bar are chosen on it."
+      },
+      "note": "Enrolled by DEC-483 (the daemon writes the OpenFAN firmware itself): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. The progress bar counts done_bytes of total_bytes; a fallback is explained from fallback_reason, flash_changed and fallback_detail."
     },
     {
       "daemon": "BoardSnapshot",

@@ -11,6 +11,7 @@ import cycles).
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -833,10 +834,20 @@ class _OpenFanFirmwareWorker(_SocketWorker):
     connection — and the request may have started a run all the same. A failed
     read after a ``202`` is ``run_error``: the run is the daemon's, and the next
     poll finds it.
+
+    DEC-483: ``do_stage`` hands the daemon the checked file's bytes and answers
+    ``staged`` with its verdict, or ``stage_failed`` naming the file by its
+    fingerprint (last, after the usual category and message) so the window can
+    drop an answer about an earlier one. A start
+    that asks the daemon to write hands it the bytes again first: the daemon
+    keeps one file, in memory, and a restart or another upload since would
+    otherwise refuse the start.
     """
 
     device_ready = Signal(object)  # OpenFanDevice
     device_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    staged = Signal(object)  # OpenFanFirmwareStaged
+    stage_failed = Signal(str, str, str)  # category, message, file sha256
     run_updated = Signal(object)  # OpenFanMaintenanceRecord | None
     run_error = Signal(str, str)  # category, message
     started = Signal(str)  # the run id the daemon's 202 named
@@ -881,19 +892,59 @@ class _OpenFanFirmwareWorker(_SocketWorker):
             self.device_error.emit,
         )
 
-    @Slot(str, dict)
-    def do_start(self, expected_usb_serial: str, firmware: dict) -> None:
+    @Slot(object)
+    def do_stage(self, data: bytes) -> None:
+        sha256 = hashlib.sha256(data).hexdigest()
+        self._guard(
+            lambda: self.staged.emit(self._ensure_client().stage_openfan_firmware(data)),
+            "file upload",
+            lambda category, message: self.stage_failed.emit(category, message, sha256),
+        )
+
+    @Slot(str, dict, object)
+    def do_start(self, expected_usb_serial: str, firmware: dict, write_data: object) -> None:
         # Sent only from the window's Start, which is unreachable until the file
-        # passed every check and the user ticked the confirmation.
+        # passed every check and the user ticked the confirmation. *write_data*
+        # is the file's bytes when the daemon is to write it, else None.
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+        from control_ofc.services.openfan_firmware_view import VERDICT_DAEMON_WRITE
 
         started = False
 
         def call() -> None:
             nonlocal started
             client = self._ensure_client()
+            daemon_write = isinstance(write_data, bytes)
+            if daemon_write:
+                # Nothing has started yet, whatever happens to this upload.
+                try:
+                    staged = client.stage_openfan_firmware(write_data)
+                except DaemonError as e:
+                    category = (
+                        "unavailable"
+                        if isinstance(e, (DaemonTimeout, DaemonUnavailable))
+                        else "error"
+                    )
+                    self.start_failed.emit(
+                        category, f"The daemon could not be given the file again: {e.message}"
+                    )
+                    return
+                self.staged.emit(staged)
+                if staged.verdict != VERDICT_DAEMON_WRITE or staged.sha256 != firmware.get(
+                    "sha256"
+                ):
+                    said = staged.message.rstrip(".")
+                    self.start_failed.emit(
+                        "error",
+                        "The daemon will not write this file itself now"
+                        + (f": {said}." if said else ".")
+                        + " Start again to copy it by hand.",
+                    )
+                    return
             try:
-                run_id = client.start_openfan_maintenance(expected_usb_serial, firmware)
+                run_id = client.start_openfan_maintenance(
+                    expected_usb_serial, firmware, daemon_write=daemon_write
+                )
             except DaemonError as e:
                 answered = not isinstance(e, (DaemonTimeout, DaemonUnavailable))
                 if answered and not 200 <= e.status < 300:

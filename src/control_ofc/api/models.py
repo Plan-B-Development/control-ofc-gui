@@ -374,6 +374,12 @@ class ControlCapability:
     #: ``POST|GET|DELETE /fans/openfan/maintenance`` run. Describes the build;
     #: whether a controller is attached is the device answer's ``present``.
     openfan_firmware_maintenance: bool = False
+    #: DEC-483: the daemon can write the OpenFAN firmware itself —
+    #: ``PUT /fans/openfan/firmware``, ``"write": "daemon"`` on the start,
+    #: ``daemon_write`` on the device answer and ``firmware_write`` on the run.
+    #: Describes the build; whether this daemon may open USB devices (the opt-in
+    #: drop-in) is ``daemon_write.available``.
+    openfan_firmware_write: bool = False
     #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
     #: suffix is stripped where the daemon reads it and in the state it saved
     #: before — so a driver rebuild no longer changes any fan header's id. Gates
@@ -2764,6 +2770,17 @@ class OpenFanUpdateRefusal:
 
 
 @dataclass
+class OpenFanDaemonWrite:
+    """``daemon_write`` on ``GET /fans/openfan/device`` (DEC-483): whether the
+    daemon may write the firmware itself. ``reason`` is ``no_usb_access`` until
+    the opt-in drop-in grants it the USB devices."""
+
+    available: bool = False
+    reason: str | None = None
+    message: str | None = None
+
+
+@dataclass
 class OpenFanDevice:
     """``GET /fans/openfan/device`` (DEC-481)."""
 
@@ -2780,6 +2797,45 @@ class OpenFanDevice:
     #: decides again, atomically.
     update_available: bool = False
     update_refusals: list[OpenFanUpdateRefusal] = field(default_factory=list)
+    #: ``None`` from a daemon without ``control.openfan_firmware_write``.
+    daemon_write: OpenFanDaemonWrite | None = None
+
+
+@dataclass
+class OpenFanFirmwareStaged:
+    """``PUT /fans/openfan/firmware`` → ``200`` (DEC-483): what the daemon makes
+    of an uploaded file. It keeps the file only when ``verdict`` is
+    ``daemon_write``; ``manual_copy`` is copied by hand, ``refused`` by no one."""
+
+    sha256: str = ""
+    size: int = 0
+    #: The published release the daemon recognised, by fingerprint.
+    release: str | None = None
+    verdict: str = ""
+    #: ``unknown_build`` | ``invalid_image`` | ``firmware_known_broken``.
+    reason: str | None = None
+    message: str = ""
+
+
+@dataclass
+class OpenFanFirmwareWrite:
+    """``firmware_write`` on the run record (DEC-483): the daemon's own write.
+    ``None`` on a run whose file is copied by hand."""
+
+    release: str = ""
+    #: ``pending`` | ``identifying`` | ``writing`` | ``verifying`` |
+    #: ``rebooting`` | ``written`` | ``fell_back``.
+    phase: str = ""
+    done_bytes: int = 0
+    total_bytes: int = 0
+    #: The bootloader's flash id, shown as the firmware shows its USB serial.
+    flash_id: str | None = None
+    #: The first erase was sent: the old firmware is no longer whole.
+    flash_changed: bool = False
+    #: Every byte was read back as the file's.
+    verified: bool = False
+    fallback_reason: str | None = None
+    fallback_detail: str | None = None
 
 
 @dataclass
@@ -2859,6 +2915,7 @@ class OpenFanMaintenanceRecord:
     before: OpenFanBoardSnapshot = field(default_factory=OpenFanBoardSnapshot)
     after: OpenFanBoardSnapshot | None = None
     evidence: OpenFanUpdateEvidence | None = None
+    firmware_write: OpenFanFirmwareWrite | None = None
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -2908,6 +2965,45 @@ def parse_openfan_device(data: dict) -> OpenFanDevice:
             for r in _wire_list(data, "update_refusals")
             if isinstance(r, dict)
         ],
+        daemon_write=_parse_openfan_daemon_write(data.get("daemon_write")),
+    )
+
+
+def _parse_openfan_daemon_write(raw: object) -> OpenFanDaemonWrite | None:
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanDaemonWrite(
+        available=raw.get("available") is True,
+        reason=_opt_str(raw.get("reason")),
+        message=_opt_str(raw.get("message")),
+    )
+
+
+def parse_openfan_firmware_staged(data: dict) -> OpenFanFirmwareStaged:
+    """Parse ``PUT /fans/openfan/firmware``, tolerating new fields and bad types."""
+    return OpenFanFirmwareStaged(
+        sha256=(_opt_str(data.get("sha256")) or "").lower(),
+        size=_opt_int(data.get("size")) or 0,
+        release=_opt_str(data.get("release")),
+        verdict=_opt_str(data.get("verdict")) or "",
+        reason=_opt_str(data.get("reason")),
+        message=_opt_str(data.get("message")) or "",
+    )
+
+
+def _parse_openfan_firmware_write(raw: object) -> OpenFanFirmwareWrite | None:
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanFirmwareWrite(
+        release=_opt_str(raw.get("release")) or "",
+        phase=_opt_str(raw.get("phase")) or "",
+        done_bytes=_opt_int(raw.get("done_bytes")) or 0,
+        total_bytes=_opt_int(raw.get("total_bytes")) or 0,
+        flash_id=_opt_str(raw.get("flash_id")),
+        flash_changed=raw.get("flash_changed") is True,
+        verified=raw.get("verified") is True,
+        fallback_reason=_opt_str(raw.get("fallback_reason")),
+        fallback_detail=_opt_str(raw.get("fallback_detail")),
     )
 
 
@@ -2979,6 +3075,7 @@ def parse_openfan_maintenance_record(data: dict) -> OpenFanMaintenanceRecord:
             if isinstance(evidence, dict)
             else None
         ),
+        firmware_write=_parse_openfan_firmware_write(data.get("firmware_write")),
         raw=dict(data),
     )
 

@@ -1042,7 +1042,9 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    needs a per-channel "does not power a pump" confirmation, and demo mode opens it with Start
    refused), **Update OpenFAN Firmware…** (`Hardware_Btn_openfanFirmware`, DEC-481: a modeless
    window over `services/openfan_firmware_view.py`; it checks the `.uf2` with `services/uf2.py`,
-   prepares a private copy and follows the daemon's run; shown where
+   refuses the FW_01 binary, prepares a private copy and follows the daemon's run; with
+   `control.openfan_firmware_write` (DEC-483) it uploads the checked file and lets the daemon write
+   a published release itself while `daemon_write.available`, and says who writes it; shown where
    `control.openfan_firmware_maintenance` is advertised and a controller is present or an update
    is reported, enabled while the link is `connected` and no PWM Test Report runs — or whenever
    an update is reported, so it can be followed), **Startup / Lifecycle Recording**, **Thermal

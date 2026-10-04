@@ -10,18 +10,26 @@
   follows the daemon as it sets the OpenFAN channels to 100 %, puts the board in update mode, waits while
   you copy the file onto its `RPI-RP2` drive, and gives the fans back to your profile. It shows the
   board's and the file's hardware revision side by side without enforcing either, recognises the three
-  published firmware files by their fingerprint, and reports what the board says before and after; it
-  cannot prove the exact build, and says so. It follows the run the daemon names for its start, and a
-  start the daemon did not answer is checked with the daemon rather than called failed. Closing the window
-  never stops an update, and a board left needing recovery is shown with the steps to recover it, after a
-  daemon restart too. Needs
-  control-ofc-daemon 3.8.0; with an older daemon the button does not appear (DEC-481).
+  published firmware files by their fingerprint, and reports what the board says before and after; for a
+  file you copy it cannot prove the exact build, and says so. It follows the run the daemon names for its
+  start, and a start the daemon did not answer is checked with the daemon rather than called failed.
+  Closing the window never stops an update, and a board left needing recovery is shown with the steps to
+  recover it, after a daemon restart too. Needs control-ofc-daemon 3.8.0; with an older daemon the button
+  does not appear (DEC-481).
+- **Control-OFC can write the OpenFAN firmware itself.** The window hands a checked file to
+  control-ofc-daemon 3.8.0, and when it is a published release the daemon knows and the daemon's opt-in
+  `openfan-firmware-write` drop-in is installed, the daemon writes it: it checks the board in update mode
+  is yours by its flash id, writes the file, reads every byte back and restarts the board — reported as
+  *Update complete — exact build verified*. The window says who writes the file, the confirmation names
+  it, a progress bar follows the write, and a write that cannot finish falls back to the copy by hand with
+  the reason. Any other file is copied by hand as before, and the 2023 FW_01 binary — a pre-production
+  debug build that drives no fan — is refused outright (DEC-483).
 - **One alert for an OpenFAN firmware update.** While an update runs, a single *OpenFAN firmware update
   in progress* warning — or a *needs recovery* error — stands in for the OpenFAN fans' *telemetry stale*
   warnings, which are expected while the board is away. A stalled fan, every other fan's warnings and the
   thermal banner are unchanged (DEC-482).
-- **The support bundle records the last firmware update** (its USB serial number removed) and the
-  daemon's `openfan_link` and `openfan_maintenance` status.
+- **The support bundle records the last firmware update**, with every USB serial number in that record
+  removed, and the daemon's `openfan_link` and `openfan_maintenance` status.
 - **A test refused because a firmware update holds the fans says so.** The PWM Test Report records it as
   an OpenFAN update holding the fans, not as a safety refusal; the other diagnostics show the daemon's own
   words, as for any refusal (DEC-481).

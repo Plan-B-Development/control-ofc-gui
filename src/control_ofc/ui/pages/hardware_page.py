@@ -223,7 +223,8 @@ class HardwarePage(QWidget):
     _ofancal_cancel_request = Signal()
     #: DEC-481, the OpenFAN firmware update window.
     _ofw_device_request = Signal()
-    _ofw_start_request = Signal(str, dict)
+    _ofw_stage_request = Signal(object)
+    _ofw_start_request = Signal(str, dict, object)
     _ofw_poll_request = Signal()
     _ofw_cancel_request = Signal()
     _validation_start_request = Signal(str, str, list, list, dict, bool)
@@ -1947,9 +1948,12 @@ class HardwarePage(QWidget):
         dialog = OpenFanFirmwareDialog(
             channels=self._firmware_channels(),
             prepared_dir=cache_dir() / "firmware",
+            daemon_write_supported=daemon_supports("openfan_firmware_write", self._capabilities())
+            is True,
             parent=self,
         )
         dialog.device_requested.connect(self._ofw_device_request.emit)
+        dialog.stage_requested.connect(self._ofw_stage_request.emit)
         dialog.start_requested.connect(self._ofw_start_request.emit)
         dialog.poll_requested.connect(self._ofw_poll_request.emit)
         dialog.cancel_requested.connect(self._ofw_cancel_request.emit)
@@ -1993,6 +1997,16 @@ class HardwarePage(QWidget):
     def _on_ofw_device_error(self, category: str, message: str) -> None:
         if self._ofw_dialog is not None:
             self._ofw_dialog.apply_device_error(category, message)
+
+    @Slot(object)
+    def _on_ofw_staged(self, staged) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_staged(staged)
+
+    @Slot(str, str, str)
+    def _on_ofw_stage_failed(self, category: str, message: str, sha256: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_stage_error(category, message, sha256)
 
     @Slot(object)
     def _on_ofw_run(self, record) -> None:
@@ -2679,11 +2693,14 @@ class HardwarePage(QWidget):
     def _ensure_ofw_worker(self) -> bool:
         def connect(w: _OpenFanFirmwareWorker) -> None:
             self._ofw_device_request.connect(w.do_device, Qt.ConnectionType.QueuedConnection)
+            self._ofw_stage_request.connect(w.do_stage, Qt.ConnectionType.QueuedConnection)
             self._ofw_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
             self._ofw_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
             self._ofw_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
             w.device_ready.connect(self._on_ofw_device, Qt.ConnectionType.QueuedConnection)
             w.device_error.connect(self._on_ofw_device_error, Qt.ConnectionType.QueuedConnection)
+            w.staged.connect(self._on_ofw_staged, Qt.ConnectionType.QueuedConnection)
+            w.stage_failed.connect(self._on_ofw_stage_failed, Qt.ConnectionType.QueuedConnection)
             w.run_updated.connect(self._on_ofw_run, Qt.ConnectionType.QueuedConnection)
             w.run_error.connect(self._on_ofw_run_error, Qt.ConnectionType.QueuedConnection)
             w.started.connect(self._on_ofw_started, Qt.ConnectionType.QueuedConnection)

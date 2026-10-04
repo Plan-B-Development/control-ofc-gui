@@ -411,6 +411,14 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `daemon_supports("openfan_firmware_maintenance", caps) is True`, outside demo mode, and while a
   controller is present (`status.openfan_link` present or `devices.openfan.present`) or an update
   is reported (`status.openfan_maintenance`).
+- `openfan_firmware_write` (bool, DEC-483, daemon ≥ 3.8.0) — the daemon can write the OpenFAN
+  firmware itself: `PUT /fans/openfan/firmware`, `"write": "daemon"` on the update's start,
+  `daemon_write` on the device answer and `firmware_write` on the run (§ OpenFan firmware update).
+  Hardcoded `true`: it describes the build. Whether this daemon may open USB devices — the opt-in
+  `openfan-firmware-write` drop-in — is the device answer's `daemon_write.available`. Absent →
+  `false`.
+  **GUI use (DEC-483):** registered in `daemon_features` as `openfan_firmware_write`; without it
+  the update window never uploads a file and every update is copied by hand.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -2867,13 +2875,16 @@ the **restart** duty as the minimum that keeps the fan running.
   end (up to the kick's window, 10 s at the default poll), and a kick owed after the cancel
   runs too, then the restore.
 
-### OpenFan firmware update (DEC-481)
-`[SAFETY]` Takes an OpenFAN controller through its USB bootloader and back while the user copies a
-firmware file onto the bootloader's `RPI-RP2` drive. **Daemon ≥ 3.8.0, capability-gated on
-`control.openfan_firmware_maintenance`.** The daemon never writes the firmware, never reads a file,
-never mounts a drive and never opens any device but the board's own serial interface; no client
-touches the board. Phase 1 cannot prove which exact build the board runs afterwards — the firmware
-carries no build identifier — so a run reports evidence, never an identity.
+### OpenFan firmware update (DEC-481, DEC-483)
+`[SAFETY]` Takes an OpenFAN controller through its USB bootloader and back while its firmware is
+written: by the user, copying a file onto the bootloader's `RPI-RP2` drive, or — for a published
+release the daemon knows, with `control.openfan_firmware_write` and the opt-in USB access — by the
+daemon itself (DEC-483). **Daemon ≥ 3.8.0, capability-gated on
+`control.openfan_firmware_maintenance`.** The daemon reads no file path and mounts no drive; it
+opens no device but the board's own serial interface and, to write, the PICOBOOT interface of the
+bootloader on the board's USB port. No client touches the board. The firmware carries no build
+identifier, so a copy by hand reports evidence, never an identity; only a daemon write that read
+every byte back ends `exact_build_verified`.
 
 **GUI use (DEC-481):** the Hardware page's **Update OpenFAN Firmware…** window. The GUI checks the
 chosen `.uf2` itself (`services/uf2.py`: at most 1 MiB of whole 512-byte blocks, the RP2040 family
@@ -2881,11 +2892,19 @@ id, main flash from `0x10000000` with no gap or repeat, the first boot stage's c
 OpenFAN USB names), copies it to `$XDG_CACHE_HOME/control-ofc/firmware/OpenFAN-<first 8 hex of the
 SHA-256>.uf2` (directory 0700, file 0600, read back and re-hashed) and sends only its fingerprint.
 It shows the board's hardware revision beside the file's and never gates on either; a file whose
-SHA-256 matches a published release says so. Closing the window never sends `DELETE` — the run
-goes on and the window can be reopened.
+SHA-256 matches a published release says so, and the 2023 FW_01 binary is refused by its
+fingerprint before anything is sent. Closing the window never sends `DELETE` — the run goes on and
+the window can be reopened.
+
+**GUI use (DEC-483):** with `control.openfan_firmware_write` the window uploads a file as soon as it
+passes those checks (`PUT /fans/openfan/firmware`), and starts with `"write": "daemon"` only when
+that upload's `verdict` is `daemon_write` for this file's SHA-256 and the device answer's
+`daemon_write.available` is `true` — it says who writes the file, and the confirmation names it.
+Just before such a start it uploads the file again, because the daemon keeps it only in memory. It
+prepares the copy either way: a write that falls back asks the user to drag it.
 
 - `GET /fans/openfan/device` — `{api_version, present, link?, port?, usb?, interface_number?,
-  hw_info?, fw_info?, update_available, update_refusals[]}`. `present`: a controller is adopted.
+  hw_info?, fw_info?, update_available, update_refusals[], daemon_write?}`. `present`: a controller is adopted.
   `link`: `status.openfan_link`'s token. `port`: the serial device it was adopted on. `usb`: the
   board's USB device as sysfs describes it — `{port, vendor_id, product_id, manufacturer?, product?,
   serial?, bcd_device?, config_descriptor_hex?}`, where `port` is the USB port path (`8-8`) and
@@ -2896,10 +2915,29 @@ goes on and the window can be reopened.
   behind a poll or an engine write holding it — and reused for 10 s; nothing is asked of the board
   while an update holds it. `update_available` is
   `update_refusals` being empty; each refusal is `{reason, message}` with the reasons of the `POST`
-  below, previewed without claiming anything — the `POST` decides again.
+  below, previewed without claiming anything — the `POST` decides again. `daemon_write` (DEC-483;
+  absent from a daemon without `control.openfan_firmware_write`): `{available, reason?, message?}`,
+  whether the daemon may open USB devices: `true` when `access(2)` grants read and write on any root
+  hub's node (`/dev/bus/usb/BBB/001`), with nothing opened; `reason: "no_usb_access"` until the
+  opt-in `openfan-firmware-write` drop-in grants `DeviceAllow=char-usb_device rw`. Informational like
+  the refusals.
+- `PUT /fans/openfan/firmware` (DEC-483, `control.openfan_firmware_write`) — body: the `.uf2` file's
+  raw bytes, any content type, at most 1 MiB. `400 validation_error` when empty; the framework's
+  `413` when larger. **`200`** `{api_version, sha256, size, release?, verdict, reason?, message}`:
+  `verdict` is `daemon_write` (a published OpenFAN release the daemon knows by SHA-256, which its
+  own UF2 parse accepts — RP2040 family, only the family flag, 256-byte pages numbered in order,
+  page-aligned inside the board's 4 MiB flash from `0x10000000`, no address twice, starting at the
+  start of flash — and which it keeps), `manual_copy` (`reason` `unknown_build`, or `invalid_image`
+  when that parse refused it) or `refused` (`reason: "firmware_known_broken"`: the 2023 FW_01
+  binary, which no update may use). `release` names a release the fingerprint matched. One file is
+  kept, in memory: each accepted (`200`) upload replaces it, with nothing when the daemon will not
+  write the new one, and a daemon restart forgets it. Touches no hardware and claims nothing.
 - `POST /fans/openfan/maintenance` — body `{expected_usb_serial, firmware: {sha256, size,
-  usb_config_descriptor_hex?, info?}}`: the board's USB serial number as the device answer reported
-  it, and what the client found in the file (never a path). `400 validation_error` unless the serial
+  usb_config_descriptor_hex?, info?}, write?}`: the board's USB serial number as the device answer
+  reported it, what the client found in the file (never a path), and who writes it — `"manual"`
+  (the default, and all a daemon without `control.openfan_firmware_write` reads) or `"daemon"`
+  (DEC-483: the daemon writes the file it kept from `PUT /fans/openfan/firmware` with this
+  `sha256`, from a copy, so a later upload cannot change it). `400 validation_error` unless the serial
   is 1–64 letters and digits, `sha256` 64 hex digits, `size` a positive multiple of 512 no larger
   than 1 MiB, the descriptor 9–512 bytes of hex and `info` at most 16 entries under the board
   reports' key and value rules. Unknown fields are ignored; a missing or mistyped field is the
@@ -2910,7 +2948,11 @@ goes on and the window can be reopened.
     started a run: the GUI says so and asks the daemon, and calls the start failed only once two
     answers show no run newer than the click.
   - **Refusals**, all before anything is touched: `503 hardware_unavailable` while the daemon is
-    shutting down; the `400`s above; otherwise `409 validation_error`, `retryable: true`, with
+    shutting down; the `400`s above; `409 validation_error`, `retryable: false`, `details.reason:
+    "firmware_known_broken"` for the FW_01 fingerprint whoever would write it (DEC-483); for
+    `"write": "daemon"`, `409`, `retryable: true`, with `daemon_write_unavailable` (no USB access)
+    or `firmware_not_staged` (the daemon keeps no file with that `sha256` that it would write —
+    upload it first); otherwise `409 validation_error`, `retryable: true`, with
     `details.reason` one of `openfan_not_connected`, `maintenance_active` (another run holds the
     controller, or its task is still alive), `calibration_active`, `openfan_link_not_ready` (the
     link is not `connected`, or the last update left the board needing recovery and the controller
@@ -2929,7 +2971,7 @@ goes on and the window can be reopened.
     starts (logged). Everything else — reads, profile CRUD and activation, config writes, override
     release and renew, an hwmon rescan, a GPU fan reset — answers as usual. Every route the daemon
     serves is classified, and a test fails on one that is not.
-- **The run**, seven stages, each ended by the run itself at its time limit:
+- **The run**, up to eight stages, each ended by the run itself at its time limit:
   1. `preparing` (10 s) — read the board's USB identity and its `>05` / `>06` reports (`before`).
   2. `parking` (15 s) — suspend OpenFan writes, then set every channel to **100 %**. A failed write
      ends the run with nothing changed. The last stage a cancel reaches.
@@ -2937,16 +2979,30 @@ goes on and the window can be reopened.
      that swaps the port) and send `>07`, which gets no reply. If the board is still in normal mode
      after 5 s, open the same port at **1200 baud** (`bootloader_trigger: "1200_baud"`) and wait
      5 s more. The bootloader must then appear on the **same USB port** within 10 s.
-  4. `waiting_for_file` (15 min) — the user copies the file onto the `RPI-RP2` drive
+  4. `writing_firmware` (DEC-483; only for `"write": "daemon"`; 15 s plus 1 s per 4 KiB sector the
+     image touches) — open the bootloader on the board's USB port (`2e8a:0003`, and no other
+     device), claim only its PICOBOOT interface, reset it, take exclusive access (its drive refuses
+     writes meanwhile), leave XIP and read the flash's unique id with picotool's helper. **Nothing
+     is erased unless that id, written `%02X` per byte, is `expected_usb_serial`** — the firmware
+     builds its USB serial from it. `firmware_write.flash_changed` is journaled before the first
+     erase; each touched sector is erased and programmed, then every byte is read back, and only
+     then is the board restarted. The stage ends when the bootloader has left the port (5 s). A
+     daemon stop is honoured between sectors: the drive is given back and the run ends interrupted.
+     Anything else that stops the write before the restart — no USB access, no PICOBOOT interface,
+     a flash that is not this board's, a failed or refused transfer, a byte read back wrong, no
+     restart — gives the drive back (exclusive access off), records the reason and goes on to
+     `waiting_for_file`, so the copy by hand is always the fallback. Nothing is retried.
+  5. `waiting_for_file` (15 min) — the user copies the file onto the `RPI-RP2` drive
      (`bootloader_drive`, a block-device name such as `sdb`). A drive belonging to another board in
-     its bootloader is listed in `other_bootloader_drives`, never to be used.
-  5. `waiting_for_return` (20 s) — the drive goes away, and the board must come back with the same
+     its bootloader is listed in `other_bootloader_drives`, never to be used. Skipped after a
+     daemon write that restarted the board.
+  6. `waiting_for_return` (20 s) — the drive goes away, and the board must come back with the same
      serial on the same USB port. If it comes back in its bootloader instead, the run notes it and
      returns to `waiting_for_file` with what is left of the 15 minutes — one file wait per run —
      and the third such return ends the run `needs_recovery`.
-  6. `checking` (10 s) — open only the interface the daemon used, `>00` with retries, then `>05` /
+  7. `checking` (10 s) — open only the interface the daemon used, `>00` with retries, then `>05` /
      `>06` (`after`) and the evidence.
-  7. `restoring_control` (10 s) — hand the port back, lift the suspension, and wait for a fresh
+  8. `restoring_control` (10 s) — hand the port back, lift the suspension, and wait for a fresh
      poll of every channel and for the settings of the active profile's OpenFan channels (every
      channel while the thermal force is active) to land.
 
@@ -2977,17 +3033,34 @@ goes on and the window can be reopened.
   boolean is `null` when a side is unknown, and `info_matches_file` compares only the keys the file
   carries). `verdict` is `consistent_with_file` | `previous_firmware` | `inconclusive`. Neither
   signal proves the exact build — the 2026-09-13 and 2026-09-27 releases share both — and a file
-  identical to the running firmware can only be `inconclusive`.
+  identical to the running firmware can only be `inconclusive`. `firmware_write` (DEC-483; `null`
+  unless the start asked the daemon to write): `{release, phase, done_bytes, total_bytes, flash_id,
+  flash_changed, verified, fallback_reason, fallback_detail}`. `phase` is `pending` | `identifying` |
+  `writing` | `verifying` | `rebooting` | `written` | `fell_back`; `done_bytes` of `total_bytes`
+  counts the bytes programmed while writing and read back while verifying (updated in memory per
+  sector; the journal is written at each phase). `flash_id` is the bootloader's flash id in the
+  serial's form, once read. `flash_changed`: set just before the first erase is sent, so from then on
+  the old firmware may no longer be whole. `verified`: every byte read back as the file's.
+  `fallback_reason` is `no_usb_access` | `usb_unavailable` | `flash_id_mismatch` (nothing was
+  written) | `transfer_failed` | `readback_mismatch` | `no_restart` (written and read back, but the
+  board did not restart), with the daemon's sentence in `fallback_detail` and in `notes[]`. Render an
+  unrecognised token.
 - `outcome` — `no_firmware_change` (refused, cancelled, or the board never left normal mode or
   restarted into its firmware instead; the fans are back under profile control) ·
   `needs_recovery` (the board is, or may be, in its bootloader with no firmware copied: copy the
-  file, press RESET or power-cycle the board) · `firmware_copied_board_not_back` (the drive went
+  file, press RESET or power-cycle the board — but after a daemon write that stopped part-way,
+  `firmware_write.flash_changed` without `verified`, only a copied firmware brings it back, and after
+  one written and read back RESET starts it) · `firmware_copied_board_not_back` (the drive went
   away but the board did not come back answering) · `board_back_control_not_restored` (the board
   answers but the fan settings did not land in time; writes resume, the engine keeps retrying, and
   there is **no** `crit` overlay) · `completed_build_not_confirmed` (control restored; the evidence
   is shown) · `back_on_previous_firmware` (control restored, but the evidence shows the previous
-  firmware) · `exact_build_verified` (reserved; Phase 1 never produces it). Render an unrecognised
-  token. `needs_recovery` and `firmware_copied_board_not_back` keep OpenFan writes suspended and
+  firmware) · `exact_build_verified` (DEC-483: the daemon wrote the file and read every byte back,
+  the board left its bootloader straight after the restart, came back without returning to it, and
+  the evidence verdict is not `previous_firmware` — reports that match the firmware before and not
+  the file end such a write `completed_build_not_confirmed`, with a detail saying so; writing the
+  build the board already ran is verified). Render an
+  unrecognised token. `needs_recovery` and `firmware_copied_board_not_back` keep OpenFan writes suspended and
   the `openfan` entry `crit` until the link reports `connected`.
 - **A daemon stop never resumes a run and repeats nothing.** At the next start an unfinished run
   in the journal is marked `interrupted: true` and finished by how far it got: before the

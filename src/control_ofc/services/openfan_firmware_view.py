@@ -1,23 +1,29 @@
-"""What the OpenFAN firmware update window says (DEC-481, DEC-482).
+"""What the OpenFAN firmware update window says (DEC-481, DEC-482, DEC-483).
 
 Qt-free: every decision about wording, tone and what is shown lives here and is
 unit-tested headlessly; ``ui/widgets/openfan_firmware_dialog.py`` renders it.
 
-The daemon runs the update; the user copies the file. So this text has two jobs
-the rest of the GUI rarely has: tell the user exactly what to do at one stage,
-and never claim more than the daemon can know. It cannot know which build is
-running — the firmware has no build identifier — so a result says what the
-board's own reports show, and no more.
+The daemon runs the update, and the file is written either by the daemon itself
+— a published release it knows, read back byte for byte (DEC-483) — or by the
+user copying it onto the board's drive. So this text has two jobs the rest of
+the GUI rarely has: tell the user exactly what to do at one stage, and never
+claim more than the daemon can know. Unless the daemon wrote the file and read
+it back, it cannot know which build is running — the firmware has no build
+identifier — so a result says what the board's own reports show, and no more.
 """
 
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from control_ofc.api.models import (
+    OpenFanDaemonWrite,
     OpenFanDevice,
+    OpenFanFirmwareStaged,
+    OpenFanFirmwareWrite,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
 )
@@ -26,12 +32,18 @@ from control_ofc.services.uf2 import RELEASES_URL, Uf2Inspection
 
 # ── Stages ────────────────────────────────────────────────────────────
 
-#: The run's stages in order, with what each does in a few words.
+STAGE_WRITING = "writing_firmware"
+STAGE_FILE = "waiting_for_file"
+
+#: The run's stages in order, with what each does in a few words. A run shows
+#: the daemon's write only when it was asked for, and the copy by hand only
+#: when the user writes the file (:func:`run_stages`).
 STAGES: tuple[tuple[str, str], ...] = (
     ("preparing", "Check the controller"),
     ("parking", "Set every OpenFAN channel to 100 %"),
     ("entering_bootloader", "Put the board in update mode"),
-    ("waiting_for_file", "Copy the firmware file"),
+    (STAGE_WRITING, "Write the firmware and read it back"),
+    (STAGE_FILE, "Copy the firmware file"),
     ("waiting_for_return", "Wait for the board to restart"),
     ("checking", "Check the board answers"),
     ("restoring_control", "Restore fan control"),
@@ -83,9 +95,10 @@ def link_text(link: str | None) -> str:
 
 INTRO = (
     "This updates the OpenFAN controller's firmware from a file you choose. "
-    "Control-OFC checks the file, puts the board in update mode and watches it; "
-    "you copy the file onto the board's RPI-RP2 drive. Control-OFC never writes "
-    "the firmware itself."
+    "Control-OFC checks the file, puts the board in update mode and watches it. "
+    "A published release it knows, Control-OFC can write itself and read back, once "
+    "the daemon may open USB devices; any other file you copy onto the board's "
+    "RPI-RP2 drive."
 )
 
 #: The three cooling windows (§3.5), in the order they happen.
@@ -105,8 +118,9 @@ COOLING_WINDOWS: tuple[str, ...] = (
 
 LEAVE_UPDATE_MODE = (
     "Once the board is in update mode it leaves it in one of three ways: a firmware "
-    "file is copied onto its RPI-RP2 drive, its RESET button is pressed, or the PC "
-    "is switched off and on. Control-OFC cannot take it out of update mode by itself."
+    "file is written to it — by Control-OFC, or by you copying it onto its RPI-RP2 "
+    "drive — its RESET button is pressed, or the PC is switched off and on. "
+    "Control-OFC restarts it only after writing a firmware and reading it back."
 )
 
 CLOSE_NOTE = (
@@ -117,6 +131,12 @@ CONFIRM_TEXT = (
     "I understand that the OpenFAN channels run at 100 % during the update and on "
     "the firmware's own default for a few seconds when it restarts, and that I copy "
     "the file onto the board's drive myself."
+)
+
+CONFIRM_TEXT_DAEMON = (
+    "I understand that the OpenFAN channels run at 100 % during the update and on "
+    "the firmware's own default for a few seconds when it restarts, and that if "
+    "Control-OFC cannot finish writing the file, I copy it onto the board's drive myself."
 )
 
 PREPARED_NOTE = (
@@ -328,6 +348,136 @@ def pump_note(lines: Iterable[ChannelLine]) -> str:
     )
 
 
+# ── Who writes the file (DEC-483) ─────────────────────────────────────
+
+WRITE_DAEMON = "daemon"
+WRITE_MANUAL = "manual"
+WRITE_REFUSED = "refused"
+
+#: ``verdict`` on ``PUT /fans/openfan/firmware``.
+VERDICT_DAEMON_WRITE = "daemon_write"
+VERDICT_REFUSED = "refused"
+REASON_UNKNOWN_BUILD = "unknown_build"
+NO_USB_ACCESS = "no_usb_access"
+
+
+@dataclass(frozen=True)
+class WritePlan:
+    """Who writes the chosen file, and what the file step says about it."""
+
+    method: str
+    tone: str = TONE_INFO
+    text: str = ""
+    #: The daemon has not answered about the file yet; Start waits for it.
+    pending: bool = False
+
+
+def _sentence(text: str | None) -> str:
+    """The daemon's clause as a sentence: first letter raised, one full stop."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    text = text[:1].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
+def write_plan(
+    *,
+    supported: bool,
+    device: OpenFanDevice | None,
+    inspection: Uf2Inspection | None,
+    staged: OpenFanFirmwareStaged | None,
+    stage_error: str,
+) -> WritePlan:
+    """Who writes the file: the daemon, only for a file it said it would write
+    and only while it may open USB devices; otherwise the user.
+
+    *staged* is the daemon's answer about this very file (the window drops an
+    answer about another); *stage_error* why it could not be asked. Like the
+    device answer, this is informational: the start decides again.
+    """
+    if inspection is None or not inspection.ok:
+        return WritePlan(WRITE_MANUAL)
+    if not supported:
+        return WritePlan(
+            WRITE_MANUAL,
+            TONE_INFO,
+            "This daemon does not write the firmware itself: you copy the file onto "
+            "the board's drive.",
+        )
+    if stage_error:
+        return WritePlan(
+            WRITE_MANUAL,
+            TONE_WARN,
+            f"The daemon could not be asked whether it can write this file itself "
+            f"({stage_error.rstrip('.')}), so you copy it onto the board's drive. "
+            "Read again asks once more.",
+        )
+    if staged is None:
+        return WritePlan(
+            WRITE_MANUAL,
+            TONE_INFO,
+            "Asking the daemon whether it can write this file itself…",
+            pending=True,
+        )
+    if staged.verdict == VERDICT_REFUSED:
+        return WritePlan(
+            WRITE_REFUSED,
+            TONE_CRIT,
+            _sentence(staged.message)
+            or f"No update may use this file ({staged.reason or 'no reason given'}).",
+        )
+    if staged.verdict != VERDICT_DAEMON_WRITE:
+        # `manual_copy`, or a verdict this client does not know: the copy by hand.
+        if staged.reason == REASON_UNKNOWN_BUILD:
+            text = (
+                "Control-OFC writes only the published OpenFAN releases it knows, so you "
+                "copy this file onto the board's drive."
+            )
+        else:
+            said = _sentence(staged.message) or (
+                f"The daemon will not write this file itself "
+                f"({staged.reason or staged.verdict or 'no reason given'})."
+            )
+            text = f"{said} You copy it onto the board's drive."
+        return WritePlan(WRITE_MANUAL, TONE_INFO, text)
+    release = f"the {staged.release}" if staged.release else "this published release"
+    access = device.daemon_write if device is not None else None
+    if access is None:
+        return WritePlan(WRITE_MANUAL)
+    if not access.available:
+        return WritePlan(WRITE_MANUAL, TONE_INFO, _no_access_text(release, access))
+    return WritePlan(
+        WRITE_DAEMON,
+        TONE_OK,
+        f"Control-OFC writes {release} itself. Before it writes anything it checks that "
+        "the board in update mode is this controller, and it reads every byte back "
+        "before the board restarts. If it cannot finish, the update waits for you to "
+        "copy the file instead.",
+    )
+
+
+def _no_access_text(release: str, access: OpenFanDaemonWrite) -> str:
+    if access.reason == NO_USB_ACCESS:
+        why = (
+            "the daemon may not open USB devices — the opt-in openfan-firmware-write "
+            "drop-in is not installed (the manual says how)"
+        )
+    else:
+        why = (access.message or "").strip().rstrip(".") or (
+            f"the daemon cannot now ({access.reason or 'no reason given'})"
+        )
+    return (
+        f"Control-OFC could write {release} itself, but {why}. Until then, you copy the "
+        "file onto the board's drive."
+    )
+
+
+def confirm_text(method: str) -> str:
+    """The confirmation for who writes the file."""
+    return CONFIRM_TEXT_DAEMON if method == WRITE_DAEMON else CONFIRM_TEXT
+
+
 # ── Starting ──────────────────────────────────────────────────────────
 
 
@@ -338,6 +488,7 @@ def start_block_reason(
     live_link: str | None,
     external_block: str,
     inspection: Uf2Inspection | None,
+    plan: WritePlan,
     prepared: bool,
     confirmed: bool,
     starting: bool,
@@ -372,6 +523,11 @@ def start_block_reason(
         return "Choose a firmware file."
     if not inspection.ok:
         return "The chosen file cannot be used."
+    if plan.method == WRITE_REFUSED:
+        return plan.text
+    if plan.pending:
+        return "Asking the daemon about the file…"
+    # The copy is prepared for a daemon write too: it is the fallback.
     if not prepared:
         return "The checked copy of the file could not be prepared."
     if not confirmed:
@@ -412,6 +568,40 @@ _RECOVERY_STEPS = (
     "Or switch the PC off and on.",
     "If no RPI-RP2 drive appears, follow the BOOT-button procedure in the OpenFAN "
     "firmware documentation, then copy a file.",
+    "Control-OFC keeps watching for the board and takes it back as soon as it answers.",
+)
+
+#: DEC-483: the daemon's write stopped part-way, so the old firmware is gone
+#: and the new one incomplete. Only a firmware file brings the board back.
+_PARTIAL_WRITE_SUMMARY = (
+    "The board is in update mode, or may be. Control-OFC had begun writing the firmware, "
+    "so part of the board's flash is rewritten: it has no complete firmware to run until "
+    "one is copied onto it. Its OpenFAN channels should still hold the 100 % they were "
+    "parked at, unless the board has restarted."
+)
+_PARTIAL_WRITE_STEPS = (
+    "Copy a firmware file onto the board's RPI-RP2 drive — the prepared file, or the "
+    "firmware you had before.",
+    "Pressing RESET or switching the PC off and on does not bring the board back until "
+    "then: it needs a firmware first.",
+    "If no RPI-RP2 drive appears, follow the BOOT-button procedure in the OpenFAN "
+    "firmware documentation, then copy a file.",
+    "Control-OFC keeps watching for the board and takes it back as soon as it answers.",
+)
+
+#: DEC-483: written and read back, but the board was not restarted from it.
+_WRITTEN_NOT_RESTARTED_SUMMARY = (
+    "The board is in update mode, or may be. Control-OFC wrote the new firmware and read "
+    "every byte back, but the board did not restart from it. Its OpenFAN channels should "
+    "still hold the 100 % they were parked at, unless the board has restarted."
+)
+_WRITTEN_NOT_RESTARTED_STEPS = (
+    "Press the board's RESET button, or switch the PC off and on: the board then starts "
+    "the new firmware.",
+    "Or copy a firmware file onto the board's RPI-RP2 drive — the prepared file, or the "
+    "firmware you had before.",
+    "If the board neither comes back nor shows an RPI-RP2 drive, follow the BOOT-button "
+    "procedure in the OpenFAN firmware documentation, then copy a file.",
     "Control-OFC keeps watching for the board and takes it back as soon as it answers.",
 )
 
@@ -460,7 +650,8 @@ _OUTCOMES: dict[str, OutcomeView] = {
         EXACT_BUILD_VERIFIED,
         TONE_OK,
         "Update complete — exact build verified",
-        "The board is back under fan control, and its flash holds exactly the selected file.",
+        "Control-OFC wrote the selected file and read every byte back, and the board "
+        "restarted from it straight away. It is back under fan control.",
     ),
     BACK_ON_PREVIOUS_FIRMWARE: OutcomeView(
         BACK_ON_PREVIOUS_FIRMWARE,
@@ -508,6 +699,18 @@ def outcome_view(record: OpenFanMaintenanceRecord) -> OutcomeView | None:
             "running — the firmware has no build identifier — so the evidence below is "
             "what the board's own reports show.",
         )
+    elif (
+        token == NEEDS_RECOVERY
+        and record.firmware_write is not None
+        and record.firmware_write.flash_changed
+    ):
+        # The generic recovery assumes the old firmware is still whole.
+        base = _OUTCOMES[token]
+        if record.firmware_write.verified:
+            summary, steps = _WRITTEN_NOT_RESTARTED_SUMMARY, _WRITTEN_NOT_RESTARTED_STEPS
+        else:
+            summary, steps = _PARTIAL_WRITE_SUMMARY, _PARTIAL_WRITE_STEPS
+        view = OutcomeView(token, base.tone, base.title, summary, steps)
     elif token in _OUTCOMES:
         view = _OUTCOMES[token]
     else:
@@ -568,6 +771,105 @@ def evidence_rows(record: OpenFanMaintenanceRecord) -> list[tuple[str, str]]:
     ]
 
 
+WRITE_PHASE_WRITING = "writing"
+WRITE_PHASE_VERIFYING = "verifying"
+WRITE_PHASE_WRITTEN = "written"
+WRITE_PHASE_FELL_BACK = "fell_back"
+FALLBACK_FLASH_ID_MISMATCH = "flash_id_mismatch"
+FALLBACK_NO_RESTART = "no_restart"
+
+_WRITE_PHASE_TEXT = {
+    "pending": "Opening the board's update interface.",
+    "identifying": "Checking that the board in update mode is this controller. Nothing is "
+    "written until it is.",
+    WRITE_PHASE_WRITING: "Writing the firmware. Leave the board connected.",
+    WRITE_PHASE_VERIFYING: "Reading the firmware back to check every byte.",
+    "rebooting": "Written and read back. Restarting the board.",
+    WRITE_PHASE_WRITTEN: "Written and read back. The board is restarting.",
+    WRITE_PHASE_FELL_BACK: "Control-OFC stopped writing. The update waits for you to copy "
+    "the file.",
+}
+
+_FALLBACK_TEXT = {
+    NO_USB_ACCESS: "the daemon may not open USB devices",
+    "usb_unavailable": "the board's update interface could not be opened",
+    FALLBACK_FLASH_ID_MISMATCH: "the board in update mode is not the controller the update "
+    "was started for",
+    "transfer_failed": "a transfer to the board failed",
+    "readback_mismatch": "the firmware read back was not the file's",
+    FALLBACK_NO_RESTART: "the board did not restart after the write",
+}
+
+
+def fallback_text(write: OpenFanFirmwareWrite) -> str:
+    """Why the daemon stopped writing and what that left on the board. An
+    unknown reason is shown as sent."""
+    reason = write.fallback_reason or ""
+    why = _FALLBACK_TEXT.get(reason, reason or "no reason given")
+    if write.verified:
+        left = "The new firmware is written and read back."
+    elif write.flash_changed:
+        left = (
+            "Part of the board's flash was already rewritten, so it needs a firmware "
+            "before it can run again."
+        )
+    else:
+        left = "Nothing was written to the board."
+    return f"Control-OFC could not write the firmware itself: {why}. {left}"
+
+
+def write_progress(write: OpenFanFirmwareWrite | None) -> tuple[int, int] | None:
+    """``(done, total)`` bytes while the daemon writes or reads back, else ``None``."""
+    if write is None or write.phase not in (WRITE_PHASE_WRITING, WRITE_PHASE_VERIFYING):
+        return None
+    if write.total_bytes <= 0:
+        return None
+    return (max(0, min(write.done_bytes, write.total_bytes)), write.total_bytes)
+
+
+def write_rows(record: OpenFanMaintenanceRecord) -> list[tuple[str, str]]:
+    """Who wrote the file, for the result. Nothing for a copy by hand."""
+    write = record.firmware_write
+    if write is None:
+        return []
+    name = f"the {write.release}" if write.release else "the selected file"
+    if write.phase == WRITE_PHASE_WRITTEN:
+        checked = "every byte read back" if write.verified else "not read back"
+        rows = [("Written by", f"Control-OFC — {name}, {checked}")]
+    elif write.phase == WRITE_PHASE_FELL_BACK:
+        why = write.fallback_detail or _FALLBACK_TEXT.get(write.fallback_reason or "", "")
+        rows = [
+            (
+                "Written by",
+                f"Not by Control-OFC ({why.rstrip('.') or 'no reason given'}); the update "
+                "went on to the copy by hand",
+            )
+        ]
+    elif not write.flash_changed:
+        rows = [("Written by", "Nobody — the update ended before Control-OFC wrote anything")]
+    elif write.verified:
+        rows = [
+            (
+                "Written by",
+                f"Control-OFC — {name}, every byte read back; the update ended before the "
+                "board came back",
+            )
+        ]
+    else:
+        rows = [
+            (
+                "Written by",
+                f"Control-OFC began writing {name}; the update ended before it finished, "
+                "with part of the flash rewritten",
+            )
+        ]
+    if write.flash_id:
+        same = write.flash_id.upper() == record.expected_usb_serial.upper()
+        whose = "this controller's serial number" if same else "not this controller's serial number"
+        rows.append(("Flash id", f"{write.flash_id} — {whose}"))
+    return rows
+
+
 def info_rows(record: OpenFanMaintenanceRecord) -> list[tuple[str, str, str, str]]:
     """``(key, before, after, file)`` for every report key any side has."""
 
@@ -606,6 +908,8 @@ class RunView:
     time_left: str
     #: Whether the user needs the prepared file now.
     wants_file: bool
+    #: ``(done, total)`` bytes while the daemon writes or reads back.
+    progress: tuple[int, int] | None
     warnings: tuple[str, ...]
     stages: tuple[StageRow, ...]
     notes: tuple[str, ...]
@@ -628,6 +932,27 @@ def time_left(deadline_unix_ms: int | None, now_unix_ms: int) -> str:
     return f"About {_seconds(left)} left for this stage."
 
 
+def run_stages(record: OpenFanMaintenanceRecord) -> tuple[tuple[str, str], ...]:
+    """The stages this run has. The daemon's write only when the start asked for
+    it; the copy by hand unless the daemon writes — it joins once the write
+    falls back to it."""
+    entered = {t.stage for t in record.stages} | {record.stage}
+    write = record.firmware_write
+    shown = []
+    for token, label in STAGES:
+        if token == STAGE_WRITING and write is None:
+            continue
+        if (
+            token == STAGE_FILE
+            and write is not None
+            and token not in entered
+            and write.phase != WRITE_PHASE_FELL_BACK
+        ):
+            continue
+        shown.append((token, label))
+    return tuple(shown)
+
+
 def _stage_rows(record: OpenFanMaintenanceRecord) -> tuple[StageRow, ...]:
     timings: dict[str, list] = {}
     for t in record.stages:
@@ -639,7 +964,7 @@ def _stage_rows(record: OpenFanMaintenanceRecord) -> tuple[StageRow, ...]:
         EXACT_BUILD_VERIFIED,
     )
     rows: list[StageRow] = []
-    for token, label in STAGES:
+    for token, label in run_stages(record):
         spans = timings.get(token, [])
         spent = sum(
             ((t.ended_unix_ms or t.started_unix_ms) - t.started_unix_ms)
@@ -679,18 +1004,38 @@ def _instruction(record: OpenFanMaintenanceRecord) -> str:
                 "1200-baud signal on the same port."
             )
         return text
-    if stage == "waiting_for_file":
+    if stage == STAGE_WRITING:
+        write = record.firmware_write
+        phase = write.phase if write is not None else ""
+        return _WRITE_PHASE_TEXT.get(phase, f"Writing the firmware ({phase or 'starting'}).")
+    if stage == STAGE_FILE:
         drive = record.bootloader_drive
         where = (
             f"the RPI-RP2 drive {drive}, on USB port {port}"
             if drive
             else (f"the board's RPI-RP2 drive, on USB port {port}")
         )
-        return (
-            f"Copy the prepared file onto {where}. The board restarts by itself once the "
-            "copy has finished."
-        )
+        copy_it = f"Copy the prepared file onto {where}."
+        lead = ""
+        write = record.firmware_write
+        if write is not None and write.phase == WRITE_PHASE_FELL_BACK:
+            lead = fallback_text(write) + " "
+            if write.fallback_reason == FALLBACK_FLASH_ID_MISMATCH:
+                # The drive may be another board's: the daemon could not tell.
+                copy_it = (
+                    f"Copy the prepared file onto {where} only if you are sure that drive "
+                    "is the OpenFAN board's."
+                )
+            elif write.fallback_reason == FALLBACK_NO_RESTART:
+                copy_it = f"Press the board's RESET button, or copy the prepared file onto {where}."
+        return f"{lead}{copy_it} The board restarts by itself once the copy has finished."
     if stage == "waiting_for_return":
+        if record.firmware_write is not None and STAGE_FILE not in {t.stage for t in record.stages}:
+            # Straight from the daemon's write: nobody copied anything.
+            return (
+                "Control-OFC wrote the firmware and read every byte back, and the board is "
+                "restarting from it. Waiting for it to come back on USB."
+            )
         return (
             "The drive has gone, so the copy finished. Waiting for the board to restart "
             "with its new firmware."
@@ -727,7 +1072,8 @@ def build_run_view(record: OpenFanMaintenanceRecord, now_unix_ms: int) -> RunVie
         ),
         instruction=_instruction(record) if running else "",
         time_left=time_left(record.stage_deadline_unix_ms, now_unix_ms) if running else "",
-        wants_file=running and record.stage == "waiting_for_file",
+        wants_file=running and record.stage == STAGE_FILE,
+        progress=write_progress(record.firmware_write) if running else None,
         warnings=warnings,
         stages=_stage_rows(record),
         notes=tuple(record.notes),
@@ -781,17 +1127,47 @@ def suppresses_fan_staleness(summary: OpenFanMaintenanceSummary | None, fan_id: 
 # ── Support bundle ────────────────────────────────────────────────────
 
 REDACTED = "(redacted)"
+#: A serial shorter than this identifies nothing, and scrubbing it from the
+#: daemon's words would mangle them.
+_MIN_SCRUBBED = 4
 
 
 def bundle_record(raw: Mapping) -> dict:
     """The last run as the support bundle carries it: the daemon's record with
-    the board's USB serial number removed. The record holds no file path."""
+    every USB serial number removed — the fields that hold one, and any place
+    the daemon's own words repeat it (a flash id that did not match is named in
+    a note, DEC-483). The record holds no file path."""
     out = copy.deepcopy(dict(raw))
-    if "expected_usb_serial" in out:
-        out["expected_usb_serial"] = REDACTED
+    serials: set[str] = set()
+
+    def take(holder: object, key: str, *, keep_null: bool = False) -> None:
+        if not isinstance(holder, dict) or key not in holder:
+            return
+        value = holder[key]
+        if isinstance(value, str) and len(value) >= _MIN_SCRUBBED:
+            serials.add(value)
+        if value is not None or not keep_null:
+            holder[key] = REDACTED
+
+    take(out, "expected_usb_serial")
     for side in ("before", "after"):
         snap = out.get(side)
-        usb = snap.get("usb") if isinstance(snap, dict) else None
-        if isinstance(usb, dict) and "serial" in usb:
-            usb["serial"] = REDACTED
-    return out
+        take(snap.get("usb") if isinstance(snap, dict) else None, "serial")
+    # A flash id never read stays null: that is how far the write got.
+    take(out.get("firmware_write"), "flash_id", keep_null=True)
+    if not serials:
+        return out
+    pattern = re.compile(
+        "|".join(re.escape(s) for s in sorted(serials, key=len, reverse=True)), re.IGNORECASE
+    )
+
+    def scrub(value: object) -> object:
+        if isinstance(value, str):
+            return pattern.sub(REDACTED, value)
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        if isinstance(value, dict):
+            return {k: scrub(v) for k, v in value.items()}
+        return value
+
+    return {k: scrub(v) for k, v in out.items()}

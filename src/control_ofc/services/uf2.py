@@ -1,9 +1,11 @@
-"""Check an OpenFAN firmware file before an update (DEC-481).
+"""Check an OpenFAN firmware file before an update (DEC-481, DEC-483).
 
-Pure Python, no Qt and no dependency. The daemon never sees the file: the user
-copies it onto the board's ``RPI-RP2`` drive. So this is the only check its bytes
-get, and it runs before anything changes. A file that fails any check is refused
-outright, with the reasons in plain words.
+Pure Python, no Qt and no dependency. This check runs before anything changes,
+and a file that fails any part of it is refused outright, with the reasons in
+plain words. A file the user copies onto the board's ``RPI-RP2`` drive gets no
+other check. A file the daemon writes itself (DEC-483) is uploaded only after
+passing this one, and the daemon fingerprints and parses it again before it
+writes a byte.
 
 What a file must be (`UF2 <https://github.com/microsoft/uf2>`_, RP2040 boot ROM):
 
@@ -101,6 +103,9 @@ class KnownRelease:
     size: int
     name: str
     where: str
+    #: Refused for any update, with the reason (Q4, DEC-483). The daemon refuses
+    #: it too, whoever would write it.
+    broken: str = ""
 
 
 #: Q5: the published OpenFAN firmware files Control-OFC knows.
@@ -111,6 +116,8 @@ KNOWN_RELEASES: tuple[KnownRelease, ...] = (
         name="2023-09-29 release (FW_01)",
         where="Firmware/Release Binaries/2023-09-29_OpenFAN_FW_01.uf2 in the OpenFanController "
         "repository",
+        broken="This is the 2023 FW_01 binary, a pre-production debug build: it floods the "
+        "serial link and drives no fan. Use a 2026 release instead.",
     ),
     KnownRelease(
         sha256="6614f66db6754cb598665a5da2b263acef749db4952e3925eab43bf8329d1cc4",
@@ -218,7 +225,11 @@ def crc32_mpeg2(data: bytes) -> int:
 def inspect_uf2(data: bytes) -> Uf2Inspection:
     """Check *data* as an OpenFAN firmware file and read out its evidence."""
     sha256 = hashlib.sha256(data).hexdigest()
-    base = {"size": len(data), "sha256": sha256, "release": known_release(sha256)}
+    release = known_release(sha256)
+    base = {"size": len(data), "sha256": sha256, "release": release}
+    if release is not None and release.broken:
+        # Known by its fingerprint, so its blocks need no reading.
+        return Uf2Inspection(**base, problems=(release.broken,), blocks=len(data) // BLOCK_SIZE)
     if not data:
         return Uf2Inspection(**base, problems=("The file is empty.",))
     if len(data) > MAX_FILE_BYTES:

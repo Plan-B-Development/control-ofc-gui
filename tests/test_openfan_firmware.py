@@ -1,4 +1,4 @@
-"""OpenFAN firmware update, GUI side (DEC-481, DEC-482).
+"""OpenFAN firmware update, GUI side (DEC-481, DEC-482, DEC-483).
 
 The standing rules apply: presence before absence; ``isVisibleTo(parent)``,
 never ``isVisible()``, under offscreen; ``.click()`` rather than the handler;
@@ -7,14 +7,16 @@ a relationship whose right-hand side the defect cannot satisfy.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
 import pytest
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QFileDialog, QLabel, QPushButton
+from PySide6.QtWidgets import QFileDialog, QLabel, QProgressBar, QPushButton, QWidget
 
 from control_ofc.api.errors import (
     DaemonError,
@@ -31,8 +33,11 @@ from control_ofc.api.models import (
     FanReading,
     OpenFanBoardSnapshot,
     OpenfanCapability,
+    OpenFanDaemonWrite,
     OpenFanDevice,
     OpenFanFirmwareClaim,
+    OpenFanFirmwareStaged,
+    OpenFanFirmwareWrite,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
     OpenFanStageTiming,
@@ -42,16 +47,18 @@ from control_ofc.api.models import (
     OperationMode,
     parse_capabilities,
     parse_openfan_device,
+    parse_openfan_firmware_staged,
     parse_openfan_maintenance_record,
     parse_status,
 )
 from control_ofc.constants import OPENFAN_DEVICE_TIMEOUT_S
 from control_ofc.services import openfan_firmware_view as view
+from control_ofc.services import uf2
 from control_ofc.services.alerts_view import next_action_for_warning
 from control_ofc.services.app_state import AppState
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.diagnostics_service import DiagnosticsService
-from control_ofc.services.uf2 import inspect_uf2, prepare_firmware
+from control_ofc.services.uf2 import KnownRelease, inspect_uf2, prepare_firmware
 from control_ofc.ui.pages.diagnostics_workers import (
     _is_soft_refusal,
     _OpenFanFirmwareWorker,
@@ -236,21 +243,27 @@ class TestRunView:
         assert view.time_left(None, NOW) == ""
 
 
+def _gate(**kw) -> str:
+    """``start_block_reason`` with every condition met, then *kw*."""
+    data = uf2_file(image())
+    args = {
+        "demo": False,
+        "device": _device(),
+        "live_link": "connected",
+        "external_block": "",
+        "inspection": inspect_uf2(data),
+        "plan": view.WritePlan(view.WRITE_MANUAL),
+        "prepared": True,
+        "confirmed": True,
+        "starting": False,
+    }
+    args.update(kw)
+    return view.start_block_reason(**args)
+
+
 class TestStartGate:
     def _reason(self, **kw) -> str:
-        data = uf2_file(image())
-        args = {
-            "demo": False,
-            "device": _device(),
-            "live_link": "connected",
-            "external_block": "",
-            "inspection": inspect_uf2(data),
-            "prepared": True,
-            "confirmed": True,
-            "starting": False,
-        }
-        args.update(kw)
-        return view.start_block_reason(**args)
+        return _gate(**kw)
 
     def test_every_condition_holds(self):
         assert self._reason() == ""
@@ -580,6 +593,8 @@ class TestClient:
 class _FakeClient:
     def __init__(self, *, start_error=None, status_error=None, no_run=False) -> None:
         self.calls: list[str] = []
+        self.staged = None
+        self.stage_error = None
         self._start_error = start_error
         self._status_error = status_error
         self._no_run = no_run
@@ -588,11 +603,18 @@ class _FakeClient:
         self.calls.append("device")
         return _device()
 
-    def start_openfan_maintenance(self, serial, firmware):
-        self.calls.append(f"start:{serial}:{firmware['sha256']}")
+    def start_openfan_maintenance(self, serial, firmware, *, daemon_write=False):
+        how = ":daemon" if daemon_write else ""
+        self.calls.append(f"start:{serial}:{firmware['sha256']}{how}")
         if self._start_error:
             raise self._start_error
         return "ofmaint-1"
+
+    def stage_openfan_firmware(self, data):
+        self.calls.append(f"stage:{len(data)}")
+        if self.stage_error:
+            raise self.stage_error
+        return self.staged
 
     def openfan_maintenance_status(self):
         self.calls.append("status")
@@ -628,7 +650,7 @@ class TestWorker:
     def test_a_start_posts_then_reads_the_run_back(self, qapp):
         fake = _FakeClient()
         worker, got = _worker(fake)
-        worker.do_start(SERIAL, {"sha256": "x"})
+        worker.do_start(SERIAL, {"sha256": "x"}, None)
         assert fake.calls == [f"start:{SERIAL}:x", "status"]
         assert got["started"] == ["ofmaint-1"], "the run the daemon's 202 named"
         assert [r.run_id for r in got["run"]] == ["ofmaint-1"]
@@ -639,7 +661,7 @@ class TestWorker:
             code="validation_error", message="a calibration runs", retryable=True, status=409
         )
         worker, got = _worker(_FakeClient(start_error=refusal))
-        worker.do_start(SERIAL, {"sha256": "x"})
+        worker.do_start(SERIAL, {"sha256": "x"}, None)
         assert got["start_failed"] == [("unavailable", "a calibration runs")]
         assert got["run_error"] == [] and got["run"] == []
 
@@ -656,7 +678,7 @@ class TestWorker:
     )
     def test_a_start_with_no_answer_may_have_started(self, qapp, error, words):
         worker, got = _worker(_FakeClient(start_error=error))
-        worker.do_start(SERIAL, {"sha256": "x"})
+        worker.do_start(SERIAL, {"sha256": "x"}, None)
         assert len(got["unconfirmed"]) == 1 and words in got["unconfirmed"][0][1]
         assert got["start_failed"] == [], "no answer is not a refusal"
         assert got["started"] == [] and got["run"] == []
@@ -665,7 +687,7 @@ class TestWorker:
         worker, got = _worker(
             _FakeClient(status_error=DaemonError(code="internal", message="boom", status=500))
         )
-        worker.do_start(SERIAL, {"sha256": "x"})
+        worker.do_start(SERIAL, {"sha256": "x"}, None)
         assert got["run_error"] == [("error", "boom")]
         assert got["start_failed"] == [], "the run started; the next poll finds it"
 
@@ -746,6 +768,7 @@ class TestAlertConsolidation:
 
 
 def _dialog(qtbot, tmp_path, **kw) -> OpenFanFirmwareDialog:
+    kw.setdefault("daemon_write_supported", False)
     dialog = OpenFanFirmwareDialog(
         channels=[], prepared_dir=tmp_path / "prepared", now_ms=lambda: NOW, **kw
     )
@@ -811,11 +834,11 @@ class TestWindowSetup:
         dialog = _ready(qtbot, tmp_path, monkeypatch)
         dialog._confirm.setChecked(True)
         sent = []
-        dialog.start_requested.connect(lambda s, c: sent.append((s, c)))
+        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
         start = dialog.findChild(QPushButton, "OfwDialog_Btn_start")
         start.click()
         start.click()
-        assert sent == [(SERIAL, dialog._inspection.claim())]
+        assert sent == [(SERIAL, dialog._inspection.claim(), None)], "no daemon write here"
         assert start.isEnabled() is False
 
     def test_a_refused_start_is_shown_and_start_comes_back(self, qtbot, tmp_path, monkeypatch):
@@ -1046,7 +1069,9 @@ class TestWindowFollowsARun:
 # ── the Hardware page ────────────────────────────────────────────────────────
 
 
-def _page(qtbot, *, flag=True, link="connected", update=None, mode=None) -> HardwarePage:
+def _page(
+    qtbot, *, flag=True, write=False, link="connected", update=None, mode=None
+) -> HardwarePage:
     state = AppState()
     state.set_connection(ConnectionState.CONNECTED)
     if mode is not None:
@@ -1054,7 +1079,9 @@ def _page(qtbot, *, flag=True, link="connected", update=None, mode=None) -> Hard
     state.set_capabilities(
         Capabilities(
             openfan=OpenfanCapability(present=True, channels=10),
-            control=ControlCapability(openfan_firmware_maintenance=flag),
+            control=ControlCapability(
+                openfan_firmware_maintenance=flag, openfan_firmware_write=write
+            ),
         )
     )
     state.set_fans([FanReading(id="openfan:ch00", source="openfan", rpm=900)])
@@ -1137,6 +1164,10 @@ class TestHardwarePage:
 
     def test_runs_reach_the_window_and_the_support_bundle(self, qtbot, monkeypatch, tmp_path):
         page = _page(qtbot)
+        # The host's own journal can name a real board (SERIAL is one), so the
+        # bundle's journal and kernel-log reads are kept off the host.
+        monkeypatch.setattr(page._diag, "fetch_journal_entries", lambda: "journal")
+        monkeypatch.setattr(page._diag, "fetch_kernel_log_amdgpu", lambda: "kernel")
         monkeypatch.setattr(page, "_ensure_ofw_worker", lambda: True)
         _button(page).click()
         record = parse_openfan_maintenance_record(RECORD_JSON)
@@ -1177,3 +1208,683 @@ class TestHardwarePage:
         page._ofw_worker = _OpenFanFirmwareWorker("/nonexistent.sock")
         page.cleanup()
         assert page._ofw_worker is None and page._ofw_thread is None
+
+
+# ── DEC-483: the daemon writes the file itself ───────────────────────────────
+
+RELEASE_NAME = "2026-09-27 release"
+OTHER_BOARD = "E66038B7132F2A27"
+CAN_WRITE = OpenFanDaemonWrite(available=True)
+NO_ACCESS = OpenFanDaemonWrite(
+    available=False,
+    reason="no_usb_access",
+    message="the daemon may not open USB devices, so it cannot write the firmware itself",
+)
+
+
+def _staged(data: bytes | None = None, **kw) -> OpenFanFirmwareStaged:
+    """The daemon's answer to an upload of *data* (the good test file by default)."""
+    data = uf2_file(image()) if data is None else data
+    base = OpenFanFirmwareStaged(
+        sha256=hashlib.sha256(data).hexdigest(),
+        size=len(data),
+        release=RELEASE_NAME,
+        verdict="daemon_write",
+        message=f"the {RELEASE_NAME} — Control-OFC writes it itself and reads every byte back",
+    )
+    return replace(base, **kw)
+
+
+def _write(phase: str, **kw) -> OpenFanFirmwareWrite:
+    return replace(
+        OpenFanFirmwareWrite(release=RELEASE_NAME, phase=phase, total_bytes=40_960), **kw
+    )
+
+
+def _write_record(stage: str, phase: str, **kw) -> OpenFanMaintenanceRecord:
+    """A run that asked the daemon to write, now in *stage*."""
+    timings = [
+        OpenFanStageTiming("preparing", NOW - 30_000, NOW - 29_000),
+        OpenFanStageTiming("parking", NOW - 29_000, NOW - 28_500),
+        OpenFanStageTiming("entering_bootloader", NOW - 28_500, NOW - 22_000),
+        OpenFanStageTiming("writing_firmware", NOW - 22_000, None),
+    ]
+    if stage != "writing_firmware":
+        timings[-1] = replace(timings[-1], ended_unix_ms=NOW - 5_000)
+        timings.append(OpenFanStageTiming(stage, NOW - 5_000, None))
+    return _record(stage=stage, stages=timings, firmware_write=_write(phase, **kw))
+
+
+class TestWritePlan:
+    def _plan(self, **kw) -> view.WritePlan:
+        data = uf2_file(image())
+        args = {
+            "supported": True,
+            "device": _device(daemon_write=CAN_WRITE),
+            "inspection": inspect_uf2(data),
+            "staged": _staged(data),
+            "stage_error": "",
+        }
+        args.update(kw)
+        return view.write_plan(**args)
+
+    def test_the_daemon_writes_only_a_file_it_keeps_and_only_while_it_may(self):
+        plan = self._plan()
+        assert (plan.method, plan.tone, plan.pending) == (view.WRITE_DAEMON, view.TONE_OK, False)
+        assert RELEASE_NAME in plan.text
+        # The opposite branch: the same file, without the USB access.
+        denied = self._plan(device=_device(daemon_write=NO_ACCESS))
+        assert denied.method == view.WRITE_MANUAL
+        assert "openfan-firmware-write" in denied.text and RELEASE_NAME in denied.text
+
+    def test_another_reason_it_cannot_write_is_the_daemons_own_words(self):
+        busy = OpenFanDaemonWrite(available=False, reason="brand_new", message="the bus is busy")
+        plan = self._plan(device=_device(daemon_write=busy))
+        assert plan.method == view.WRITE_MANUAL and "the bus is busy" in plan.text
+        bare = self._plan(device=_device(daemon_write=replace(busy, message=None)))
+        assert "(brand_new)" in bare.text
+
+    def test_a_device_answer_without_the_field_is_the_copy_by_hand(self):
+        assert self._plan(device=_device(daemon_write=None)).method == view.WRITE_MANUAL
+
+    def test_until_the_daemon_answers_start_waits(self):
+        plan = self._plan(staged=None)
+        assert plan.pending and plan.method == view.WRITE_MANUAL
+        assert _gate(plan=plan) == "Asking the daemon about the file…"
+
+    def test_a_file_it_will_not_write_is_copied_by_hand(self):
+        unknown = self._plan(
+            staged=_staged(verdict="manual_copy", reason="unknown_build", release=None)
+        )
+        assert unknown.method == view.WRITE_MANUAL
+        assert "only the published OpenFAN releases" in unknown.text
+        invalid = self._plan(
+            staged=_staged(
+                verdict="manual_copy",
+                reason="invalid_image",
+                release=None,
+                message="Control-OFC will not write this file itself: block 3 is out of order",
+            )
+        )
+        assert "block 3 is out of order." in invalid.text
+        assert invalid.text.endswith("You copy it onto the board's drive.")
+        new = self._plan(staged=_staged(verdict="brand_new", reason=None, message=""))
+        assert new.method == view.WRITE_MANUAL and "(brand_new)" in new.text
+
+    def test_a_file_the_daemon_refuses_blocks_start_in_its_words(self):
+        plan = self._plan(
+            staged=_staged(
+                verdict="refused",
+                reason="firmware_known_broken",
+                message="this is the 2023 FW_01 binary",
+            )
+        )
+        assert (plan.method, plan.tone) == (view.WRITE_REFUSED, view.TONE_CRIT)
+        assert _gate(plan=plan) == "This is the 2023 FW_01 binary."
+
+    def test_an_unanswered_upload_is_the_copy_by_hand_and_says_how_to_ask_again(self):
+        plan = self._plan(staged=None, stage_error="Daemon unavailable during the file upload.")
+        assert plan.method == view.WRITE_MANUAL and not plan.pending
+        assert "Daemon unavailable during the file upload" in plan.text
+        assert "Read again" in plan.text
+        assert _gate(plan=plan) == "", "the copy by hand can still start"
+
+    def test_an_older_daemon_or_a_refused_file_never_asks(self):
+        older = self._plan(supported=False)
+        assert older.method == view.WRITE_MANUAL and "does not write" in older.text
+        bad = inspect_uf2(uf2_file(image(names=False)))
+        assert self._plan(inspection=bad) == view.WritePlan(view.WRITE_MANUAL)
+
+    def test_the_confirmation_names_who_writes(self):
+        daemon, manual = view.confirm_text(view.WRITE_DAEMON), view.confirm_text(view.WRITE_MANUAL)
+        assert daemon != manual
+        assert (
+            "cannot finish writing" in daemon
+            and "copy the file onto the board's drive myself" in manual
+        )
+
+
+class TestDaemonWriteRun:
+    def test_a_copy_by_hand_has_no_write_stage_and_a_daemon_write_no_copy(self):
+        manual = [token for token, _ in view.run_stages(_record())]
+        assert "waiting_for_file" in manual and "writing_firmware" not in manual
+        daemon = [t for t, _ in view.run_stages(_write_record("writing_firmware", "writing"))]
+        assert "writing_firmware" in daemon and "waiting_for_file" not in daemon
+
+    def test_a_write_that_fell_back_shows_the_copy_as_the_current_stage(self):
+        record = _write_record("waiting_for_file", "fell_back", fallback_reason="transfer_failed")
+        tokens = [t for t, _ in view.run_stages(record)]
+        assert tokens.index("writing_firmware") < tokens.index("waiting_for_file")
+        rows = {row.token: row.state for row in view.build_run_view(record, NOW).stages}
+        assert rows["writing_firmware"] == view.ROW_DONE
+        assert rows["waiting_for_file"] == view.ROW_CURRENT
+
+    @pytest.mark.parametrize(
+        ("phase", "words"),
+        [
+            ("identifying", "Nothing is written until"),
+            ("writing", "Leave the board connected"),
+            ("verifying", "check every byte"),
+            ("rebooting", "Restarting the board"),
+            ("brand_new", "(brand_new)"),
+        ],
+    )
+    def test_each_phase_says_what_happens(self, phase, words):
+        run = view.build_run_view(_write_record("writing_firmware", phase), NOW)
+        assert words in run.instruction and run.wants_file is False
+
+    def test_progress_counts_the_bytes_while_writing_and_reading_back(self):
+        for phase in ("writing", "verifying"):
+            record = _write_record("writing_firmware", phase, done_bytes=8192)
+            assert view.build_run_view(record, NOW).progress == (8192, 40_960)
+        identifying = _write_record("writing_firmware", "identifying", done_bytes=8192)
+        assert view.build_run_view(identifying, NOW).progress is None
+        assert view.write_progress(_write("writing", done_bytes=-5)) == (0, 40_960)
+        assert view.write_progress(_write("writing", done_bytes=99_999)) == (40_960, 40_960)
+        assert view.write_progress(_write("writing", done_bytes=5, total_bytes=0)) is None
+
+    @pytest.mark.parametrize(
+        ("reason", "changed", "verified", "why", "what"),
+        [
+            ("no_usb_access", False, False, "may not open USB devices", "Copy the prepared file"),
+            ("transfer_failed", True, False, "already rewritten", "Copy the prepared file"),
+            ("flash_id_mismatch", False, False, "not the controller", "only if you are sure"),
+            ("no_restart", True, True, "written and read back", "Press the board's RESET"),
+            ("brand_new", False, False, "brand_new", "Copy the prepared file"),
+        ],
+    )
+    def test_a_fallback_says_why_what_it_left_and_what_to_do(
+        self, reason, changed, verified, why, what
+    ):
+        record = _write_record(
+            "waiting_for_file",
+            "fell_back",
+            fallback_reason=reason,
+            flash_changed=changed,
+            verified=verified,
+        )
+        run = view.build_run_view(record, NOW)
+        assert run.instruction.startswith("Control-OFC could not write the firmware itself")
+        assert why in run.instruction and what in run.instruction and run.wants_file
+
+    def test_nothing_written_is_said_only_when_nothing_was(self):
+        for changed in (False, True):
+            text = view.fallback_text(
+                _write("fell_back", fallback_reason="transfer_failed", flash_changed=changed)
+            )
+            assert ("Nothing was written" in text) is (not changed)
+
+    def test_the_result_names_who_wrote_it_and_whose_flash_it_was(self):
+        done = _finished(
+            "exact_build_verified",
+            firmware_write=_write("written", verified=True, flash_id=SERIAL),
+        )
+        rows = dict(view.write_rows(done))
+        assert RELEASE_NAME in rows["Written by"] and "every byte read back" in rows["Written by"]
+        assert rows["Flash id"] == f"{SERIAL} — this controller's serial number"
+        other = _finished(
+            "completed_build_not_confirmed",
+            firmware_write=_write(
+                "fell_back",
+                fallback_reason="flash_id_mismatch",
+                fallback_detail="the bootloader on USB port 8-8 has another board's flash, not "
+                "this controller's — nothing was written",
+                flash_id=OTHER_BOARD,
+            ),
+        )
+        rows = dict(view.write_rows(other))
+        assert rows["Flash id"] == f"{OTHER_BOARD} — not this controller's serial number"
+        assert "another board's flash" in rows["Written by"]
+        assert "copy by hand" in rows["Written by"]
+        assert view.write_rows(_finished("completed_build_not_confirmed")) == []
+
+    @pytest.mark.parametrize(
+        ("write", "says", "never"),
+        [
+            (_write("pending"), "before Control-OFC wrote anything", "stopped at"),
+            (
+                _write("identifying", flash_id=SERIAL),
+                "before Control-OFC wrote anything",
+                "stopped at",
+            ),
+            (_write("writing", flash_changed=True), "part of the flash", "every byte read back"),
+            (
+                _write("rebooting", flash_changed=True, verified=True),
+                "every byte read back",
+                "part of the flash",
+            ),
+        ],
+        ids=["pending", "identifying", "writing", "rebooting"],
+    )
+    def test_the_result_says_how_far_an_unfinished_write_got(self, write, says, never):
+        record = _finished("needs_recovery", firmware_write=write)
+        row = dict(view.write_rows(record))["Written by"]
+        assert says in row and never not in row
+
+    def test_needs_recovery_says_what_the_write_left_on_the_board(self):
+        whole = view.outcome_view(_finished("needs_recovery"))
+        reset = [step for step in whole.steps if "RESET" in step]
+        assert reset, "precondition: with the old firmware whole, RESET is a way back"
+        partial = view.outcome_view(
+            _finished("needs_recovery", firmware_write=_write("writing", flash_changed=True))
+        )
+        assert partial.title == whole.title
+        assert "no firmware was copied" not in partial.summary
+        assert "rewritten" in partial.summary
+        assert partial.steps[0].startswith("Copy a firmware file")
+        assert not set(reset) & set(partial.steps), "RESET is not offered as a way back"
+        written = view.outcome_view(
+            _finished(
+                "needs_recovery",
+                firmware_write=_write("rebooting", flash_changed=True, verified=True),
+            )
+        )
+        assert "read every byte back" in written.summary
+        assert "RESET" in written.steps[0]
+        # Nothing written: the old firmware is whole, as after a copy that never came.
+        untouched = view.outcome_view(
+            _finished("needs_recovery", firmware_write=_write("identifying", flash_id=SERIAL))
+        )
+        assert (untouched.summary, untouched.steps) == (whole.summary, whole.steps)
+
+    def test_after_a_daemon_write_the_return_wait_claims_no_copy(self):
+        copied = view.build_run_view(_record(stage="waiting_for_return"), NOW)
+        assert "copy finished" in copied.instruction, "precondition: a copy by hand says so"
+        written = view.build_run_view(
+            _write_record("waiting_for_return", "written", flash_changed=True, verified=True), NOW
+        )
+        assert "copy" not in written.instruction.lower()
+        assert "restart" in written.instruction
+        # A write that fell back and was then copied by hand is a copy again.
+        fell_back = _write_record(
+            "waiting_for_return", "fell_back", fallback_reason="transfer_failed"
+        )
+        stages = [
+            *fell_back.stages[:-1],
+            OpenFanStageTiming("waiting_for_file", NOW - 5_000, NOW - 1_000),
+            OpenFanStageTiming("waiting_for_return", NOW - 1_000, None),
+        ]
+        run = view.build_run_view(replace(fell_back, stages=stages), NOW)
+        assert "copy finished" in run.instruction
+
+    def test_only_its_own_outcome_claims_the_exact_build(self):
+        exact = view.outcome_view(_finished("exact_build_verified"))
+        assert exact.tone == view.TONE_OK and "read every byte back" in exact.summary
+        unconfirmed = view.outcome_view(_finished("completed_build_not_confirmed"))
+        assert "read every byte back" not in unconfirmed.summary
+
+    def test_the_bundle_scrubs_every_serial_wherever_the_daemon_wrote_it(self):
+        raw = {
+            "expected_usb_serial": SERIAL,
+            "notes": [
+                f"the bootloader has the flash of board {OTHER_BOARD}, not of the {SERIAL} "
+                "the update was started for"
+            ],
+            "firmware_write": {
+                "phase": "fell_back",
+                "flash_id": OTHER_BOARD,
+                "fallback_detail": f"flash of board {OTHER_BOARD.lower()}",
+            },
+        }
+        out = view.bundle_record(raw)
+        text = json.dumps(out)
+        assert SERIAL not in text and OTHER_BOARD not in text
+        assert OTHER_BOARD.lower() not in text
+        assert out["firmware_write"]["flash_id"] == view.REDACTED
+        assert "has the flash of board" in out["notes"][0], "the daemon's words stay"
+        assert raw["firmware_write"]["flash_id"] == OTHER_BOARD, "the original is untouched"
+        never = view.bundle_record({"firmware_write": {"flash_id": None}})
+        assert never["firmware_write"]["flash_id"] is None, "how far the write got stays"
+
+
+class TestWireDaemonWrite:
+    def test_the_device_answer_carries_daemon_write(self):
+        answer = {
+            "present": True,
+            "daemon_write": {"available": False, "reason": "r", "message": "m"},
+        }
+        assert parse_openfan_device(answer).daemon_write == OpenFanDaemonWrite(False, "r", "m")
+        assert parse_openfan_device({"present": True}).daemon_write is None
+        assert parse_openfan_device({"daemon_write": "yes"}).daemon_write is None
+        loose = parse_openfan_device({"daemon_write": {"available": "true"}})
+        assert loose.daemon_write == OpenFanDaemonWrite(available=False)
+
+    def test_an_upload_answer(self):
+        staged = parse_openfan_firmware_staged(
+            {
+                "api_version": 1,
+                "sha256": "AB" * 32,
+                "size": 79_360,
+                "release": RELEASE_NAME,
+                "verdict": "daemon_write",
+                "message": "m",
+            }
+        )
+        assert staged == OpenFanFirmwareStaged(
+            "ab" * 32, 79_360, RELEASE_NAME, "daemon_write", None, "m"
+        )
+        bad = parse_openfan_firmware_staged({"size": "big", "verdict": 3, "reason": 4})
+        assert bad == OpenFanFirmwareStaged()
+
+    def test_a_record_carries_the_write(self):
+        write = {
+            "release": RELEASE_NAME,
+            "phase": "written",
+            "done_bytes": 4096,
+            "total_bytes": 4096,
+            "flash_id": SERIAL,
+            "flash_changed": True,
+            "verified": True,
+            "fallback_reason": None,
+            "fallback_detail": None,
+        }
+        parsed = parse_openfan_maintenance_record(dict(RECORD_JSON, firmware_write=write))
+        assert parsed.firmware_write == OpenFanFirmwareWrite(
+            RELEASE_NAME, "written", 4096, 4096, SERIAL, True, True, None, None
+        )
+        assert parse_openfan_maintenance_record(RECORD_JSON).firmware_write is None
+        nulled = parse_openfan_maintenance_record(dict(RECORD_JSON, firmware_write=None))
+        assert nulled.firmware_write is None
+
+    def test_the_capability_flag_gates_through_the_registry(self):
+        caps = parse_capabilities({"control": {"openfan_firmware_write": True}})
+        assert caps.control.openfan_firmware_write is True
+        assert daemon_supports("openfan_firmware_write", caps) is True
+        assert daemon_supports("openfan_firmware_write", parse_capabilities({})) is False
+
+
+class TestClientDaemonWrite:
+    @staticmethod
+    def _client(seen: list, answer: dict):
+        from control_ofc.api.client import DaemonClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=answer)
+
+        client = DaemonClient.__new__(DaemonClient)
+        client._client = httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="http://localhost"
+        )
+        return client
+
+    def test_the_upload_is_the_raw_file_and_its_answer_is_parsed(self):
+        seen: list[httpx.Request] = []
+        client = self._client(
+            seen,
+            {"sha256": "ab" * 32, "size": 3, "verdict": "manual_copy", "reason": "unknown_build"},
+        )
+        staged = client.stage_openfan_firmware(b"\x00\x01\x02")
+        (request,) = seen
+        assert (request.method, request.url.path) == ("PUT", "/fans/openfan/firmware")
+        assert request.content == b"\x00\x01\x02"
+        assert request.headers["content-type"] == "application/octet-stream"
+        assert (staged.verdict, staged.reason, staged.size) == ("manual_copy", "unknown_build", 3)
+
+    def test_only_a_daemon_write_names_the_writer(self):
+        seen: list[httpx.Request] = []
+        client = self._client(seen, {"run_id": "r1"})
+        assert client.start_openfan_maintenance(SERIAL, {"sha256": "x"}) == "r1"
+        client.start_openfan_maintenance(SERIAL, {"sha256": "x"}, daemon_write=True)
+        manual, daemon = (json.loads(r.content) for r in seen)
+        assert "write" not in manual, "a copy by hand reads the same to every daemon"
+        assert daemon["write"] == "daemon"
+        assert manual["firmware"] == daemon["firmware"] == {"sha256": "x"}
+
+
+class TestWorkerDaemonWrite:
+    def test_an_upload_answers_with_the_daemons_verdict(self, qapp):
+        fake = _FakeClient()
+        fake.staged = _staged()
+        worker, _ = _worker(fake)
+        staged = []
+        worker.staged.connect(staged.append)
+        worker.do_stage(b"abc")
+        assert fake.calls == ["stage:3"] and staged == [fake.staged]
+
+    def test_a_failed_upload_names_the_file_by_its_fingerprint(self, qapp):
+        fake = _FakeClient()
+        fake.stage_error = DaemonUnavailable()
+        worker, _ = _worker(fake)
+        failed = []
+        worker.stage_failed.connect(lambda c, m, sha: failed.append((c, m, sha)))
+        worker.do_stage(b"abc")
+        assert failed == [
+            (
+                "unavailable",
+                "Daemon unavailable during the file upload.",
+                hashlib.sha256(b"abc").hexdigest(),
+            )
+        ]
+
+    def test_a_daemon_write_hands_the_file_over_again_then_starts(self, qapp):
+        data = uf2_file(image())
+        sha = hashlib.sha256(data).hexdigest()
+        fake = _FakeClient()
+        fake.staged = _staged(data)
+        worker, got = _worker(fake)
+        staged = []
+        worker.staged.connect(staged.append)
+        worker.do_start(SERIAL, {"sha256": sha}, data)
+        assert fake.calls == [f"stage:{len(data)}", f"start:{SERIAL}:{sha}:daemon", "status"]
+        assert staged == [fake.staged], "the window sees the fresh answer"
+        assert got["started"] == ["ofmaint-1"] and got["start_failed"] == []
+
+    @pytest.mark.parametrize(
+        "change",
+        [{"verdict": "manual_copy", "reason": "unknown_build"}, {"sha256": "cd" * 32}],
+        ids=["not-kept", "another-file"],
+    )
+    def test_a_daemon_that_would_not_write_it_now_starts_nothing(self, qapp, change):
+        data = uf2_file(image())
+        fake = _FakeClient()
+        fake.staged = _staged(data, **change)
+        worker, got = _worker(fake)
+        worker.do_start(SERIAL, {"sha256": hashlib.sha256(data).hexdigest()}, data)
+        assert fake.calls == [f"stage:{len(data)}"], "no start was sent"
+        assert len(got["start_failed"]) == 1
+        assert "will not write this file itself now" in got["start_failed"][0][1]
+        assert got["started"] == [] and got["unconfirmed"] == []
+
+    def test_an_upload_that_fails_before_the_start_starts_nothing(self, qapp):
+        data = uf2_file(image())
+        fake = _FakeClient()
+        fake.stage_error = DaemonTimeout(message="slow")
+        worker, got = _worker(fake)
+        worker.do_start(SERIAL, {"sha256": "x"}, data)
+        assert fake.calls == [f"stage:{len(data)}"]
+        assert got["start_failed"] == [
+            ("unavailable", "The daemon could not be given the file again: slow")
+        ]
+        assert got["unconfirmed"] == [], "nothing was sent that could have started a run"
+
+
+class TestWindowDaemonWrite:
+    def _choose(self, qtbot, tmp_path, monkeypatch, *, access=CAN_WRITE, supported=True):
+        """A window that may ask the daemon to write, with a checked file chosen."""
+        dialog = _dialog(qtbot, tmp_path, daemon_write_supported=supported)
+        uploads: list[bytes] = []
+        dialog.stage_requested.connect(uploads.append)
+        dialog.set_live_status("connected", None)
+        dialog.apply_device(_device(daemon_write=access))
+        path = _good_file(tmp_path)
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(path), ""))
+        )
+        dialog.findChild(QPushButton, "OfwDialog_Btn_choose").click()
+        return dialog, uploads, path.read_bytes()
+
+    def test_a_chosen_file_goes_to_the_daemon_and_start_waits_for_its_answer(
+        self, qtbot, tmp_path, monkeypatch
+    ):
+        dialog, uploads, data = self._choose(qtbot, tmp_path, monkeypatch)
+        assert uploads == [data]
+        start = dialog.findChild(QPushButton, "OfwDialog_Btn_start")
+        dialog._confirm.setChecked(True)
+        assert not start.isEnabled() and start.toolTip() == "Asking the daemon about the file…"
+        dialog.apply_staged(_staged(data))
+        writer = dialog.findChild(QLabel, "OfwDialog_Label_writer")
+        assert writer.isVisibleTo(dialog) and f"writes the {RELEASE_NAME} itself" in writer.text()
+
+    def test_a_daemon_write_starts_with_the_files_bytes(self, qtbot, tmp_path, monkeypatch):
+        dialog, _, data = self._choose(qtbot, tmp_path, monkeypatch)
+        dialog.apply_staged(_staged(data))
+        assert dialog._confirm.text() == view.confirm_text(view.WRITE_DAEMON)
+        dialog._confirm.setChecked(True)
+        sent = []
+        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
+        dialog.findChild(QPushButton, "OfwDialog_Btn_start").click()
+        assert sent == [(SERIAL, dialog._inspection.claim(), data)]
+
+    def test_without_usb_access_the_same_file_is_copied_by_hand(self, qtbot, tmp_path, monkeypatch):
+        dialog, _, data = self._choose(qtbot, tmp_path, monkeypatch, access=NO_ACCESS)
+        dialog.apply_staged(_staged(data))
+        writer = dialog.findChild(QLabel, "OfwDialog_Label_writer")
+        assert "openfan-firmware-write" in writer.text()
+        assert dialog._confirm.text() == view.confirm_text(view.WRITE_MANUAL)
+        dialog._confirm.setChecked(True)
+        sent = []
+        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
+        dialog.findChild(QPushButton, "OfwDialog_Btn_start").click()
+        assert sent == [(SERIAL, dialog._inspection.claim(), None)]
+
+    def test_the_file_to_copy_is_offered_only_while_the_user_would_copy_it(
+        self, qtbot, tmp_path, monkeypatch
+    ):
+        dialog, _, data = self._choose(qtbot, tmp_path, monkeypatch)
+        box = dialog.findChild(QWidget, "OfwDialog_Widget_prepared")
+        assert box.isVisibleTo(dialog), "presence first: offered until the daemon answers"
+        dialog.apply_staged(_staged(data))
+        assert not box.isVisibleTo(dialog)
+        assert dialog._prepared is not None, "still prepared, as the fallback"
+
+    def test_a_change_of_writer_takes_the_confirmation_back(self, qtbot, tmp_path, monkeypatch):
+        dialog, _, data = self._choose(qtbot, tmp_path, monkeypatch, access=NO_ACCESS)
+        dialog.apply_staged(_staged(data))
+        dialog._confirm.setChecked(True)
+        dialog.apply_device(_device(daemon_write=NO_ACCESS))
+        assert dialog._confirm.isChecked(), "presence first: the same writer keeps it"
+        dialog.apply_device(_device(daemon_write=CAN_WRITE))  # the drop-in, then Read again
+        assert not dialog._confirm.isChecked()
+        assert dialog._confirm.text() == view.confirm_text(view.WRITE_DAEMON)
+
+    def test_an_answer_about_another_file_is_ignored(self, qtbot, tmp_path, monkeypatch):
+        dialog, _, _data = self._choose(qtbot, tmp_path, monkeypatch)
+        other = hashlib.sha256(b"another file").hexdigest()
+        dialog.apply_staged(_staged(b"another file"))
+        dialog.apply_stage_error("unavailable", "gone", other)
+        assert dialog._plan().pending
+        dialog.apply_stage_error("unavailable", "gone", dialog._inspection.sha256)
+        assert dialog._plan().method == view.WRITE_MANUAL and not dialog._plan().pending
+
+    def test_read_again_asks_about_the_file_again(self, qtbot, tmp_path, monkeypatch):
+        dialog, uploads, data = self._choose(qtbot, tmp_path, monkeypatch)
+        dialog.apply_stage_error("unavailable", "gone", dialog._inspection.sha256)
+        assert not dialog._plan().pending
+        dialog.findChild(QPushButton, "OfwDialog_Btn_refresh").click()
+        assert uploads == [data, data] and dialog._plan().pending
+
+    def test_an_older_daemon_is_never_sent_the_file(self, qtbot, tmp_path, monkeypatch):
+        dialog, uploads, _ = self._choose(qtbot, tmp_path, monkeypatch, supported=False)
+        assert dialog._inspection is not None and dialog._inspection.ok, "a file was checked"
+        assert uploads == []
+        assert dialog._plan().method == view.WRITE_MANUAL
+
+    def test_fw_01_is_refused_before_anything_is_sent(self, qtbot, tmp_path, monkeypatch):
+        data = uf2_file(image())
+        broken = KnownRelease(
+            sha256=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+            name="2023-09-29 release (FW_01)",
+            where="test",
+            broken="This is the 2023 FW_01 binary.",
+        )
+        monkeypatch.setattr(uf2, "KNOWN_RELEASES", (broken,))
+        dialog, uploads, _ = self._choose(qtbot, tmp_path, monkeypatch)
+        assert uploads == []
+        finding = dialog.findChild(QLabel, "OfwDialog_Label_finding0")
+        assert finding.text() == broken.broken
+        dialog._confirm.setChecked(True)
+        assert dialog.findChild(QPushButton, "OfwDialog_Btn_start").isEnabled() is False
+        assert not (tmp_path / "prepared").exists() or not list((tmp_path / "prepared").iterdir())
+
+    def test_the_write_shows_its_progress(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path, daemon_write_supported=True)
+        dialog.apply_run(_write_record("writing_firmware", "writing", done_bytes=8192))
+        bar = dialog.findChild(QProgressBar, "OfwDialog_Progress_write")
+        assert bar.isVisibleTo(dialog)
+        assert (bar.value(), bar.maximum(), bar.format()) == (8192, 40_960, "8 of 40 KiB")
+        dialog.apply_run(_write_record("waiting_for_return", "written", done_bytes=40_960))
+        assert not bar.isVisibleTo(dialog)
+
+    def test_a_fallback_offers_the_prepared_copy(self, qtbot, tmp_path):
+        data = uf2_file(image())
+        r = inspect_uf2(data)
+        prepared = prepare_firmware(data, r, tmp_path / "prepared")
+        dialog = _dialog(qtbot, tmp_path, daemon_write_supported=True)
+        record = _write_record("waiting_for_file", "fell_back", fallback_reason="no_usb_access")
+        dialog.apply_run(replace(record, firmware=OpenFanFirmwareClaim(r.sha256, len(data))))
+        handle = dialog.findChild(dlg_mod.FileDragHandle, "OfwDialog_Label_dragFile")
+        assert handle.path == prepared and dialog._prepared_box.isVisibleTo(dialog)
+        instruction = dialog.findChild(QLabel, "OfwDialog_Label_instruction")
+        assert instruction.text().startswith("Control-OFC could not write the firmware itself")
+
+    def test_the_result_says_who_wrote_it(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path, daemon_write_supported=True)
+        dialog.apply_run(_write_record("writing_firmware", "writing"))
+        dialog.apply_run(
+            _finished(
+                "exact_build_verified",
+                firmware_write=_write("written", verified=True, flash_id=SERIAL),
+            )
+        )
+        assert dialog.mode == dlg_mod.MODE_RESULT
+        name = dialog.findChild(QLabel, "OfwDialog_EvidenceLabel_0")
+        value = dialog.findChild(QLabel, "OfwDialog_EvidenceValue_0")
+        assert name.text() == "Written by" and "every byte read back" in value.text()
+
+
+class TestHardwarePageDaemonWrite:
+    @pytest.mark.parametrize("advertised", [True, False])
+    def test_the_window_may_ask_the_daemon_to_write_only_where_it_can(
+        self, qtbot, monkeypatch, advertised
+    ):
+        page = _page(qtbot, write=advertised)
+        monkeypatch.setattr(page, "_ensure_ofw_worker", lambda: True)
+        _button(page).click()
+        assert page._ofw_dialog is not None
+        expected = page._state.capabilities.control.openfan_firmware_write
+        assert page._ofw_dialog._write_supported is expected
+
+    def test_an_upload_reaches_the_daemon_and_its_answer_the_window(
+        self, qtbot, monkeypatch, tmp_path
+    ):
+        page = _page(qtbot, write=True)
+        data = uf2_file(image())
+        fake = _FakeClient(no_run=True)
+        fake.staged = _staged(data)
+
+        def build(worker, thread, worker_cls, connect):
+            # The page's own wiring, on a worker that talks to no daemon.
+            w = worker_cls("/nonexistent.sock")
+            w._client = fake
+            connect(w)
+            return w, None, True
+
+        monkeypatch.setattr(page, "_ensure_worker", build)
+        monkeypatch.setattr("control_ofc.paths.cache_dir", lambda: tmp_path)
+        _button(page).click()
+        dialog = page._ofw_dialog
+        assert dialog is not None
+        path = tmp_path / "OpenFAN_Firmware.uf2"
+        path.write_bytes(data)
+        monkeypatch.setattr(
+            QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(path), ""))
+        )
+        dialog.findChild(QPushButton, "OfwDialog_Btn_choose").click()
+        qtbot.waitUntil(lambda: dialog._staged is not None, timeout=2000)
+        assert dialog._staged == fake.staged and f"stage:{len(data)}" in fake.calls
+        fake.stage_error = DaemonUnavailable()
+        dialog.findChild(QPushButton, "OfwDialog_Btn_refresh").click()
+        qtbot.waitUntil(lambda: bool(dialog._stage_error), timeout=2000)
+        page.cleanup()

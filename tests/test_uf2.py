@@ -7,6 +7,7 @@ none is committed. ``OFC_FIRMWARE_DIR`` opts in to a run over real files.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 import struct
@@ -267,6 +268,25 @@ class TestKnownReleases:
     def test_an_unpublished_file_matches_nothing(self):
         assert inspect_uf2(uf2_file(image())).release is None
 
+    def test_fw_01_is_the_one_release_refused(self):
+        refused = [r.name for r in KNOWN_RELEASES if r.broken]
+        assert refused == ["2023-09-29 release (FW_01)"]
+
+    def test_a_refused_release_is_refused_however_well_it_parses(self, monkeypatch):
+        data = uf2_file(image())
+        assert inspect_uf2(data).ok, "presence first: the file itself passes"
+        broken = uf2.KnownRelease(
+            sha256=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+            name="test release",
+            where="here",
+            broken="Refused.",
+        )
+        monkeypatch.setattr(uf2, "KNOWN_RELEASES", (broken,))
+        r = inspect_uf2(data)
+        assert (r.ok, r.problems, r.release) == (False, ("Refused.",), broken)
+        assert r.blocks == len(data) // 512
+
 
 class TestReadAndPrepare:
     def test_reading_stops_one_byte_past_the_bound(self, tmp_path):
@@ -326,6 +346,9 @@ def test_real_firmware_files_pass_and_published_ones_are_recognised():
     assert files, "precondition: the folder holds firmware files"
     for path in files:
         r = inspect_uf2(read_firmware_file(path))
+        if r.release is not None and r.release.broken:
+            assert r.problems == (r.release.broken,), path.name  # FW_01 (DEC-483)
+            continue
         assert r.ok, (path.name, r.problems)
         assert r.info and "FW_REV" in r.info, path.name
         assert r.usb_config_descriptor_hex, path.name

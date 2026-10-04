@@ -1,9 +1,10 @@
-"""The "Update OpenFAN Firmware" window (DEC-481).
+"""The "Update OpenFAN Firmware" window (DEC-481, DEC-483).
 
 A thin renderer over ``services.openfan_firmware_view``; the checks on the file
 are ``services.uf2``. Every decision about wording lives there and is unit-tested
 headlessly. This window owns the file picker, the prepared copy it offers for
-dragging, the confirmation, the 1 Hz poll while a run is followed, and nothing
+dragging, the upload that asks the daemon whether it would write the file
+itself, the confirmation, the 1 Hz poll while a run is followed, and nothing
 else.
 
 **Modeless, one at a time.** The update runs daemon-side for up to a quarter of
@@ -12,8 +13,9 @@ application; the Hardware page raises the one already open rather than opening a
 second. **Closing it never stops the update**, and a reopened window picks the
 run up again from ``GET /fans/openfan/maintenance``.
 
-The GUI never touches the board: the daemon puts it in update mode and watches
-it, and the user copies the file.
+The GUI never touches the board: the daemon puts it in update mode, watches it
+and — for a published release it knows, with the opt-in USB access — writes the
+file itself; otherwise the user copies the file.
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -42,12 +45,12 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import (
     OpenFanDevice,
+    OpenFanFirmwareStaged,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
 )
 from control_ofc.services.openfan_firmware_view import (
     CLOSE_NOTE,
-    CONFIRM_TEXT,
     COOLING_WINDOWS,
     INTRO,
     LEAVE_UPDATE_MODE,
@@ -59,9 +62,13 @@ from control_ofc.services.openfan_firmware_view import (
     TONE_INFO,
     TONE_OK,
     TONE_WARN,
+    WRITE_DAEMON,
+    WRITE_MANUAL,
     ChannelLine,
     RunView,
+    WritePlan,
     build_run_view,
+    confirm_text,
     device_rows,
     evidence_rows,
     file_findings,
@@ -70,6 +77,8 @@ from control_ofc.services.openfan_firmware_view import (
     outcome_view,
     pump_note,
     start_block_reason,
+    write_plan,
+    write_rows,
 )
 from control_ofc.services.uf2 import (
     RELEASES_URL,
@@ -192,7 +201,11 @@ class OpenFanFirmwareDialog(ModalDialog):
     """Prepares, starts and follows one OpenFAN firmware update."""
 
     device_requested = Signal()
-    start_requested = Signal(str, dict)  # expected USB serial, firmware claim
+    #: The checked file's bytes, for the daemon's verdict on it (DEC-483).
+    stage_requested = Signal(object)
+    #: Expected USB serial, firmware claim, and the file's bytes when the
+    #: daemon is to write it (else None).
+    start_requested = Signal(str, dict, object)
     poll_requested = Signal()
     cancel_requested = Signal()
 
@@ -201,6 +214,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         *,
         channels: list[ChannelLine],
         prepared_dir: Path,
+        daemon_write_supported: bool,
         demo: bool = False,
         parent: QWidget | None = None,
         now_ms: Callable[[], int] | None = None,
@@ -208,6 +222,8 @@ class OpenFanFirmwareDialog(ModalDialog):
         super().__init__("Update OpenFAN Firmware", parent, modal=False)
         self.setObjectName("OpenFanFirmwareDialog")
         self._demo = demo
+        #: ``control.openfan_firmware_write``: the daemon can be asked to write.
+        self._write_supported = daemon_write_supported and not demo
         self._prepared_dir = prepared_dir
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
         self._mode = MODE_SETUP
@@ -217,6 +233,11 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._external_block = ""
         self._inspection: Uf2Inspection | None = None
         self._prepared: Path | None = None
+        #: The checked file's bytes, kept for the daemon to write (DEC-483).
+        self._data: bytes | None = None
+        #: The daemon's answer about this file, or why it could not be asked.
+        self._staged: OpenFanFirmwareStaged | None = None
+        self._stage_error = ""
         #: The run this window follows; "" when none.
         self._run_id = ""
         #: The run that was current when Start was clicked, ignored until the
@@ -267,6 +288,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         setup.addLayout(self._file_grid)
         self._findings = QVBoxLayout()
         setup.addLayout(self._findings)
+        self._write_lbl = _wrapped("", "OfwDialog_Label_writer")
+        self._write_lbl.setVisible(False)
+        setup.addWidget(self._write_lbl)
         releases = QLabel(f'Official releases: <a href="{RELEASES_URL}">{RELEASES_URL}</a>')
         releases.setObjectName("OfwDialog_Label_releases")
         releases.setTextFormat(Qt.TextFormat.RichText)
@@ -285,7 +309,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         setup.addWidget(_heading("Before you start", "OfwDialog_Label_confirmHeading"))
         setup.addWidget(_wrapped(LEAVE_UPDATE_MODE, "OfwDialog_Label_leave"))
         setup.addWidget(_wrapped(CLOSE_NOTE, "OfwDialog_Label_close", "CardMeta"))
-        self._confirm = QCheckBox(CONFIRM_TEXT)
+        self._confirm = QCheckBox(confirm_text(WRITE_MANUAL))
         self._confirm.setObjectName("OfwDialog_Check_confirm")
         self._confirm.toggled.connect(self._refresh_start)
         setup.addWidget(self._confirm)
@@ -324,6 +348,11 @@ class OpenFanFirmwareDialog(ModalDialog):
         progress.addLayout(self._stage_box)
         self._instruction = _wrapped("", "OfwDialog_Label_instruction")
         progress.addWidget(self._instruction)
+        self._write_bar = QProgressBar()
+        self._write_bar.setObjectName("OfwDialog_Progress_write")
+        self._write_bar.setAccessibleName("Firmware written, or read back")
+        self._write_bar.setVisible(False)
+        progress.addWidget(self._write_bar)
         self._time_left = _wrapped("", "OfwDialog_Label_timeLeft", "CardMeta")
         progress.addWidget(self._time_left)
         self._warnings = _wrapped("", "OfwDialog_Label_warnings", "WarningChip")
@@ -456,6 +485,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._device = device
         self._render_device()
         self._render_findings()
+        self._render_write_plan()
         self._refresh_start()
 
     @Slot(str, str)
@@ -482,6 +512,9 @@ class OpenFanFirmwareDialog(ModalDialog):
     def _load_file(self, path: Path) -> None:
         self._inspection = None
         self._prepared = None
+        self._data = None
+        self._staged = None
+        self._stage_error = ""
         self._confirm.setChecked(False)
         self._file_path_lbl.setText(str(path))
         try:
@@ -489,19 +522,80 @@ class OpenFanFirmwareDialog(ModalDialog):
         except FirmwareFileError as exc:
             self._fill_grid(self._file_grid, [], "OfwDialog_File")
             self._set_findings_text(str(exc), TONE_CRIT)
+            self._render_write_plan()
             self._refresh_start()
             return
         inspection = inspect_uf2(data)
         self._inspection = inspection
         if inspection.ok:
+            # Prepared whoever writes it: the copy is the daemon write's fallback.
             try:
                 self._prepared = prepare_firmware(data, inspection, self._prepared_dir)
             except PreparedFileError as exc:
                 self._show_status(str(exc))
+            self._data = data
+            self._request_stage()
         self._fill_grid(self._file_grid, file_rows(inspection), "OfwDialog_File")
         self._render_findings()
         self._render_prepared(self._prepared)
+        self._render_write_plan()
         self._refresh_start()
+
+    # ── who writes it (DEC-483) ──────────────────────────────────────
+
+    def _request_stage(self) -> None:
+        """Hand the daemon the checked file and ask what it would do with it."""
+        if not self._write_supported or self._data is None:
+            return
+        self._staged = None
+        self._stage_error = ""
+        self.stage_requested.emit(self._data)
+
+    @Slot(object)
+    def apply_staged(self, staged: OpenFanFirmwareStaged) -> None:
+        if self._inspection is None or staged.sha256 != self._inspection.sha256:
+            return  # about a file chosen before this one
+        self._staged = staged
+        self._stage_error = ""
+        self._render_write_plan()
+        self._refresh_start()
+
+    @Slot(str, str, str)
+    def apply_stage_error(self, _category: str, message: str, sha256: str) -> None:
+        if self._inspection is None or sha256 != self._inspection.sha256:
+            return
+        self._staged = None
+        self._stage_error = message or "no answer"
+        self._render_write_plan()
+        self._refresh_start()
+
+    def _plan(self) -> WritePlan:
+        if self._demo:
+            return WritePlan(WRITE_MANUAL)
+        return write_plan(
+            supported=self._write_supported,
+            device=self._device,
+            inspection=self._inspection,
+            staged=self._staged,
+            stage_error=self._stage_error,
+        )
+
+    def _render_write_plan(self) -> None:
+        plan = self._plan()
+        self._write_lbl.setText(plan.text)
+        set_chip_class(self._write_lbl, _TONE_CHIP.get(plan.tone, "CardMeta"))
+        self._write_lbl.setVisible(bool(plan.text))
+        # The confirmation names who writes the file, so a change of writer
+        # takes it back.
+        text = confirm_text(plan.method)
+        if self._confirm.text() != text:
+            self._confirm.setText(text)
+            self._confirm.setChecked(False)
+        if self._mode == MODE_SETUP:
+            # Nothing to copy while the daemon writes; offered again on a fallback.
+            self._prepared_box.setVisible(
+                self._prepared is not None and plan.method != WRITE_DAEMON
+            )
 
     def _render_findings(self) -> None:
         _clear_layout(self._findings)
@@ -546,6 +640,7 @@ class OpenFanFirmwareDialog(ModalDialog):
             live_link=self._live_link,
             external_block=self._external_block,
             inspection=self._inspection,
+            plan=self._plan(),
             prepared=self._prepared is not None,
             confirmed=self._confirm.isChecked(),
             starting=self._starting,
@@ -577,7 +672,8 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._unconfirmed_misses = 0
         self._show_status("Starting…")
         self._refresh_start()
-        self.start_requested.emit(serial, self._inspection.claim())
+        write = self._data if self._plan().method == WRITE_DAEMON else None
+        self.start_requested.emit(serial, self._inspection.claim(), write)
         self._timer.start()
 
     @Slot(str)
@@ -766,6 +862,12 @@ class OpenFanFirmwareDialog(ModalDialog):
             self._stage_box.addWidget(label)
         self._instruction.setText(view.instruction)
         self._instruction.setVisible(bool(view.instruction))
+        if view.progress is not None:
+            done, total = view.progress
+            self._write_bar.setRange(0, total)
+            self._write_bar.setValue(done)
+            self._write_bar.setFormat(f"{done // 1024} of {total // 1024} KiB")
+        self._write_bar.setVisible(view.progress is not None)
         self._time_left.setText(view.time_left)
         self._time_left.setVisible(bool(view.time_left))
         self._warnings.setText("\n".join(view.warnings))
@@ -792,7 +894,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._outcome_steps.setVisible(bool(outcome.steps))
         self._outcome_detail.setText(outcome.detail)
         self._outcome_detail.setVisible(bool(outcome.detail))
-        self._fill_grid(self._evidence_grid, evidence_rows(record), "OfwDialog_Evidence")
+        self._fill_grid(
+            self._evidence_grid, write_rows(record) + evidence_rows(record), "OfwDialog_Evidence"
+        )
         rows = info_rows(record) if record.board_answered or record.after else []
         self._info_table.setRowCount(len(rows))
         for r, values in enumerate(rows):
@@ -811,6 +915,11 @@ class OpenFanFirmwareDialog(ModalDialog):
     @Slot()
     def _on_refresh(self) -> None:
         self.device_requested.emit()
+        # Ask about the file again too: the daemon may have restarted since,
+        # with the drop-in installed, and it keeps the file only in memory.
+        self._request_stage()
+        self._render_write_plan()
+        self._refresh_start()
 
     @Slot()
     def _on_again(self) -> None:
@@ -821,6 +930,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._render_last()
         self._set_mode(MODE_SETUP)
         self._render_prepared(self._prepared)
+        self._render_write_plan()
         self.device_requested.emit()
 
     # ── helpers ──────────────────────────────────────────────────────
@@ -831,7 +941,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._progress.setVisible(mode in (MODE_RUN, MODE_RESULT))
         self._result.setVisible(mode == MODE_RESULT)
         if mode == MODE_SETUP:
-            self._prepared_box.setVisible(self._prepared is not None)
+            self._prepared_box.setVisible(
+                self._prepared is not None and self._plan().method != WRITE_DAEMON
+            )
         self._start_btn.setVisible(mode == MODE_SETUP)
         self._cancel_btn.setVisible(mode == MODE_RUN)
         self._again_btn.setVisible(mode == MODE_RESULT)

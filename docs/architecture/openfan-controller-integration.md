@@ -279,6 +279,12 @@ release builds. A write to the fan chips' registers bypasses everything the daem
   replies, so a debug line can arrive before a reply or between an information block's lines;
   both readers skip it. After a restart the firmware prints start-up lines before it answers, so
   the update's first `>00` on the returned board retries until a reply arrives or 10 s pass.
+- **The daemon's own write is not on this line** (DEC-483, opt-in). It talks to the RP2040 boot
+  ROM, not to the firmware: the PICOBOOT vendor interface of the bootloader (`2e8a:0003`) on the
+  board's USB port, over usbfs (`serial/picoboot.rs`, RP2040 datasheet §2.8.5). It reads the flash
+  chip's unique id first — the firmware builds its USB serial from that id, so it says whose flash
+  this is — then erases, programs and reads back the sectors the file covers, and restarts the
+  board. Nothing in the serial protocol changes.
 
 ---
 

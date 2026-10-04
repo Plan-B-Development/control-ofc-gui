@@ -32,6 +32,7 @@ from control_ofc.api.models import (
     IdentifyResult,
     OpenFanCalibrationRun,
     OpenFanDevice,
+    OpenFanFirmwareStaged,
     OpenFanMaintenanceCancel,
     OpenFanMaintenanceRecord,
     OpenFanRole,
@@ -69,6 +70,7 @@ from control_ofc.api.models import (
     parse_identify_result,
     parse_openfan_calibration_run,
     parse_openfan_device,
+    parse_openfan_firmware_staged,
     parse_openfan_maintenance_record,
     parse_openfan_roles,
     parse_override_grant,
@@ -153,6 +155,7 @@ class DaemonClient:
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
         timeout: float | None = None,
+        content: bytes | None = None,
     ) -> dict[str, Any]:
         """Issue one request and map transport faults to daemon errors.
 
@@ -181,6 +184,10 @@ class DaemonClient:
                 kwargs["params"] = params
             if timeout is not None:
                 kwargs["timeout"] = timeout
+            if content is not None:
+                # A raw body (the firmware upload), never mixed with ``json``.
+                kwargs["content"] = content
+                kwargs["headers"] = {"Content-Type": "application/octet-stream"}
             resp = self._client.request(method, path, **kwargs)
         except httpx.TimeoutException as e:
             raise DaemonTimeout(message=str(e), endpoint=path, method=method) from e
@@ -1098,19 +1105,34 @@ class DaemonClient:
             self._get("/fans/openfan/device", timeout=OPENFAN_DEVICE_TIMEOUT_S)
         )
 
-    def start_openfan_maintenance(self, expected_usb_serial: str, firmware: dict) -> str:
+    def stage_openfan_firmware(self, data: bytes) -> OpenFanFirmwareStaged:
+        """PUT /fans/openfan/firmware — hand the daemon the checked file's bytes
+        (DEC-483). Its answer says whether it would write the file itself, and it
+        keeps the file only then. Touches no hardware.
+
+        Gate on ``capabilities.control.openfan_firmware_write``.
+        """
+        return parse_openfan_firmware_staged(
+            self._request("PUT", "/fans/openfan/firmware", content=data)
+        )
+
+    def start_openfan_maintenance(
+        self, expected_usb_serial: str, firmware: dict, *, daemon_write: bool = False
+    ) -> str:
         """POST /fans/openfan/maintenance — start a firmware update; returns its run id.
 
         *firmware* is :meth:`control_ofc.services.uf2.Uf2Inspection.claim` of the
-        checked file. The daemon re-checks every condition atomically and
-        answers ``409`` with ``details.reason`` when one fails; the run then
-        proceeds daemon-side and is read back with
-        :meth:`openfan_maintenance_status`.
+        checked file. With *daemon_write* the daemon writes the file it was last
+        given by :meth:`stage_openfan_firmware` itself (DEC-483); without it the
+        body carries no ``write`` and the user copies the file, as every daemon
+        reads it. The daemon re-checks every condition atomically and answers
+        ``409`` with ``details.reason`` when one fails; the run then proceeds
+        daemon-side and is read back with :meth:`openfan_maintenance_status`.
         """
-        data = self._post(
-            "/fans/openfan/maintenance",
-            json={"expected_usb_serial": expected_usb_serial, "firmware": firmware},
-        )
+        body: dict[str, Any] = {"expected_usb_serial": expected_usb_serial, "firmware": firmware}
+        if daemon_write:
+            body["write"] = "daemon"
+        data = self._post("/fans/openfan/maintenance", json=body)
         run_id = data.get("run_id")
         return run_id if isinstance(run_id, str) else ""
 
