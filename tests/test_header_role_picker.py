@@ -290,10 +290,11 @@ class TestNoFanView:
         assert view.role_label == "No fan"
         status = next(r for r in view.live_rows if r.label == "Status")
         assert (status.value, status.state) == ("No fan", "neutral")
-        # Opposite branch: the same alarm on an ordinary header escalates.
+        # Opposite branch: the same alarm on an ordinary header escalates (a
+        # driver alarm is warning-tone, `ALERT-a`).
         plain = build_header_inspector_view(_hdr(), reading=alarm, capabilities=_caps())
         assert plain.no_fan is False
-        assert next(r for r in plain.live_rows if r.label == "Status").state == "critical"
+        assert next(r for r in plain.live_rows if r.label == "Status").state == "warn"
 
     def test_a_protected_pump_set_to_no_fan_still_alarms(self):
         """The daemon still protects a header its label names a pump (DEC-312), so
@@ -305,7 +306,7 @@ class TestNoFanView:
         view = build_header_inspector_view(header, reading=alarm, capabilities=_caps())
         assert view.no_fan is False
         assert view.pump_protected is True
-        assert next(r for r in view.live_rows if r.label == "Status").state == "critical"
+        assert next(r for r in view.live_rows if r.label == "Status").state == "warn"
 
 
 @pytest.fixture()

@@ -57,6 +57,7 @@ STATUS_NORMAL = "Normal"
 STATUS_UNAVAILABLE = "Unavailable"
 STATUS_UNKNOWN = "Unknown"
 STATUS_NEEDS_ATTENTION = "Needs attention"
+STATUS_DRIVER_ALARM = "Driver alarm"
 STATUS_POSSIBLE_OVERRIDE = "Possible device override"
 STATUS_CONTROL_RECLAIMED = "Control reclaimed"
 STATUS_NO_FAN = "No fan"
@@ -342,8 +343,12 @@ def build_header_inspector_view(
         status, status_state = STATUS_UNAVAILABLE, "neutral"
     elif reading is None:
         status, status_state = STATUS_UNKNOWN, "neutral"
-    elif reading.fan_alarm or stalled:
+    elif stalled:
         status, status_state = STATUS_NEEDS_ATTENTION, "critical"
+    elif reading.fan_alarm is True:
+        # `ALERT-a`: the fan card's warning-tone state (DEC-459), not a stall —
+        # what raises the chip's alarm depends on the chip.
+        status, status_state = STATUS_DRIVER_ALARM, "warn"
     elif enable_revert_count > 0 and ownership == OWNER_EXTERNAL:
         # The header was taken back and is currently NOT ours. A historical
         # reclaim we successfully recovered from is not a live problem, which is

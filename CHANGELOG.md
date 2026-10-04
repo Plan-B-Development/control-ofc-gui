@@ -10,6 +10,10 @@
   profile could drive it. With control-ofc-daemon 3.7.0 each fan's control method, Dashboard card and
   picker row follow its own card (`devices.amd_gpus`). With an older daemon the second card's control
   method now reads "unknown" instead of the primary card's answer (`GPU-b`).
+- **A driver alarm reads the same in Cooling Hardware as on the Dashboard.** A header whose fan chip flags
+  an alarm showed a red *Needs attention* status in its Cooling Hardware card while the Dashboard fan card
+  called it an amber *Driver alarm*. The header card now shows an amber *Driver alarm* too; a stalled fan
+  still shows a red *Needs attention* (`ALERT-a`).
 
 ## [3.6.0] — 2026-10-03
 

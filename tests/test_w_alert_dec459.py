@@ -29,6 +29,7 @@ from control_ofc.services.alerts_view import next_action_for_warning
 from control_ofc.services.app_state import AppState
 from control_ofc.services.fan_cards_view import FanState, build_fan_card_vms
 from control_ofc.services.header_inspector_view import (
+    STATUS_DRIVER_ALARM,
     STATUS_NEEDS_ATTENTION,
     STATUS_NORMAL,
     build_header_inspector_views,
@@ -245,6 +246,38 @@ class TestHeaderInspectorReadsTheHold:
         assert HEADER.id in state.stalled_fan_ids, "precondition: the hold is on"
         view = page._header_cards[HEADER.id]._view
         assert _status(view) == STATUS_NEEDS_ATTENTION
+
+
+def _status_row(view):
+    return next(r for r in view.live_rows if r.label == "Status")
+
+
+class TestHeaderInspectorDriverAlarm:
+    """`ALERT-a` (U12): the inspector agrees with the fan card on a driver alarm."""
+
+    def test_an_alarm_alone_is_the_cards_warning_state(self):
+        reading = _hwmon_reading(False, alarm=True, rpm=400)
+        [view] = build_header_inspector_views([HEADER], readings=[reading], stalled_ids=frozenset())
+        [card] = _alarm_cards(reading)
+        assert card.state is FanState.DRIVER_ALARM, "precondition: the card calls it an alarm"
+        row = _status_row(view)
+        assert row.value == STATUS_DRIVER_ALARM == card.state.value
+        assert row.state == "warn"
+
+    def test_a_stall_stays_critical_with_or_without_the_alarm(self):
+        for alarm in (True, False):
+            [view] = build_header_inspector_views(
+                [HEADER], readings=[_hwmon_reading(True, alarm=alarm)], stalled_ids={HEADER.id}
+            )
+            row = _status_row(view)
+            assert (row.value, row.state) == (STATUS_NEEDS_ATTENTION, "critical"), alarm
+
+    @pytest.mark.parametrize("alarm", [False, None])
+    def test_no_alarm_is_normal(self, alarm):
+        [view] = build_header_inspector_views(
+            [HEADER], readings=[_hwmon_reading(False, alarm=alarm, rpm=400)], stalled_ids=()
+        )
+        assert _status_row(view).value == STATUS_NORMAL
 
 
 # ── WIRE-o (Q2-C): the driver alarm is a card state, never an alert ──────────

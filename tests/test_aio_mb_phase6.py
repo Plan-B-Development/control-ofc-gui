@@ -407,14 +407,16 @@ def test_a_normal_motherboard_aio_produces_no_warnings():
 
 
 def test_a_fan_alarm_does_escalate():
-    """The counterpart: the guard above must not pass by never escalating."""
+    """The counterpart: the guard above must not pass by never escalating.
+
+    A driver alarm alone is the fan card's warning tone (`ALERT-a`, U12)."""
     header = _fan_header()
     view = build_header_inspector_view(
         header,
         reading=_reading(header.id, fan_alarm=True),
         capabilities=_caps(),
     )
-    assert view.status_state == "critical"
+    assert view.status_state == "warn"
 
 
 # ── §10: device override uses cautious wording ───────────────────────────────
