@@ -2980,8 +2980,8 @@ prepares the copy either way: a write that falls back asks the user to drag it.
      ends the run with nothing changed. The last stage a cancel reaches.
   3. `entering_bootloader` (30 s in all) — borrow the serial port from the poll loop (the only code
      that swaps the port) and send `>07`, which gets no reply. If the board is still in normal mode
-     after 5 s, open the same port at **1200 baud** (`bootloader_trigger: "1200_baud"`) and wait
-     5 s more. The bootloader must then appear on the **same USB port** within 10 s.
+     after 5 s, switch the borrowed port to **1200 baud** and close it, opening nothing
+     (`bootloader_trigger: "1200_baud"`), and wait 5 s more. The bootloader must then appear on the **same USB port** within 10 s.
   4. `writing_firmware` (DEC-483; only for `"write": "daemon"`; 15 s plus 1 s per 4 KiB sector the
      image touches) — open the bootloader on the board's USB port (`2e8a:0003`, and no other
      device), claim only its PICOBOOT interface, reset it, take exclusive access (its drive refuses
