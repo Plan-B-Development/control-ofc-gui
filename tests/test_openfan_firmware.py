@@ -756,6 +756,23 @@ class TestAlertConsolidation:
         state.set_fans([stalled])
         assert "fan_stall:openfan:ch01" in _keys(state)
 
+    def test_the_poll_that_ends_an_update_raises_no_staleness(self, qapp):
+        # A poll applies its status, then its sensors and its fans, and the last
+        # two each reconcile (`polling.py`): the update that has just ended must
+        # not be judged against the previous poll's paused readings.
+        state = _state_with(OpenFanMaintenanceSummary("r1", "restoring_control", "running"))
+        assert "fan_stale:openfan:ch00" not in _keys(state), "precondition: stood in for"
+        state.set_status(DaemonStatus())
+        state.set_sensors([])
+        state.set_fans([FanReading(id="openfan:ch00", source="openfan", rpm=900, age_ms=100)])
+        raised = {o.key for o in state.alerts.unacknowledged()}
+        assert "fan_stale:openfan:ch00" not in raised
+        # The stand-in ends with that poll: a reading still stale after it warns.
+        state.set_status(DaemonStatus())
+        state.set_sensors([])
+        state.set_fans([FanReading(id="openfan:ch00", source="openfan", rpm=900, age_ms=12_000)])
+        assert "fan_stale:openfan:ch00" in _keys(state)
+
     def test_a_daemon_gone_long_enough_drops_the_update_alert(self, qapp):
         state = _state_with(OpenFanMaintenanceSummary("r1", "parking", "running"))
         assert view.UPDATE_ALERT_RUNNING in _keys(state)

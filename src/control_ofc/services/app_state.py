@@ -19,6 +19,7 @@ from control_ofc.api.models import (
     FanReading,
     Freshness,
     HwmonHeader,
+    OpenFanMaintenanceSummary,
     OpenFanRole,
     OperationMode,
     SensorReading,
@@ -139,6 +140,9 @@ class AppState(QObject):
         self.daemon_status: DaemonStatus | None = None
         self.sensors: list[SensorReading] = []
         self.fans: list[FanReading] = []
+        # DEC-482: the update the daemon reported in the poll that delivered
+        # `fans` — what the stand-in for their staleness reads (`set_fans`).
+        self._fans_update: OpenFanMaintenanceSummary | None = None
         self.hwmon_headers: list[HwmonHeader] = []
         # `ROLE-f` (DEC-475): each OpenFan channel's role and pump protection,
         # on the capabilities interval and after a role write. Empty when the
@@ -310,6 +314,12 @@ class AppState(QObject):
 
     def set_fans(self, fans: list[FanReading]) -> None:
         self.fans = fans
+        # DEC-482: a poll applies its status before its fans, and `set_sensors`
+        # reconciles in between. Judged against the newest status, the previous
+        # poll's paused readings raised every OpenFAN channel's staleness in the
+        # poll that ended an update, until that poll's fresh readings arrived.
+        ds = self.daemon_status
+        self._fans_update = ds.openfan_maintenance if ds else None
         # Before the signal, so a `fans_updated` slot reads this poll's answer.
         self._stall_hold.update(fans, self._clock())
         self.fans_updated.emit(fans)
@@ -617,9 +627,11 @@ class AppState(QObject):
         # OpenFAN fans' staleness warnings, whose cause is that update. Every other
         # alert stands, a stall on those same fans included. Not once the daemon has
         # been unreachable long enough that nothing current is known (DEC-459).
+        # A reading is judged against the update reported with it (`set_fans`).
         update = ds.openfan_maintenance if ds and not self._thermal_unreachable else None
+        fans_update = None if self._thermal_unreachable else self._fans_update
         for f in self.fans:
-            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(update, f.id):
+            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(fans_update, f.id):
                 conditions.append(
                     AlertCondition(
                         key=f"fan_stale:{f.id}",
