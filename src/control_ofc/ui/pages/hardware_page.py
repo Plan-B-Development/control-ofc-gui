@@ -224,7 +224,7 @@ class HardwarePage(QWidget):
     #: DEC-481, the OpenFAN firmware update window.
     _ofw_device_request = Signal()
     _ofw_stage_request = Signal(object)
-    _ofw_start_request = Signal(str, dict, object)
+    _ofw_start_request = Signal(str, dict, object, str)
     _ofw_poll_request = Signal()
     _ofw_cancel_request = Signal()
     _validation_start_request = Signal(str, str, list, list, dict, bool)
@@ -1134,11 +1134,13 @@ class HardwarePage(QWidget):
         """Show the firmware update only where it can exist, and say why not (DEC-481).
 
         Shown when the daemon advertises it and an OpenFAN controller is
-        present, or an update is reported, never in demo mode. Enabled when the
-        link is connected and no PWM Test Report runs — or whenever an update is
-        running or needs recovery, so the window can always be reopened to
-        follow it. A board left in its bootloader across a daemon restart is
-        not adopted, so presence alone would hide its recovery steps.
+        present, an update is reported, or the daemon reports an OpenFAN board
+        that does not answer (DEC-484) — never in demo mode. Enabled when the
+        link is connected or such a board is there, and no PWM Test Report runs
+        — or whenever an update is running or needs recovery, so the window can
+        always be reopened to follow it. A board left in its bootloader across a
+        daemon restart is not adopted, so presence alone would hide its recovery
+        steps.
         """
         if not hasattr(self, "_ofw_btn"):
             return
@@ -1146,7 +1148,17 @@ class HardwarePage(QWidget):
         status = self._state.daemon_status if self._state else None
         link = status.openfan_link if status else None
         update = status.openfan_maintenance if status else None
-        present = link is not None or update is not None or bool(caps and caps.openfan.present)
+        silent = (
+            status.openfan_silent_board
+            if status and daemon_supports("openfan_firmware_silent_update", caps) is True
+            else None
+        )
+        present = (
+            link is not None
+            or update is not None
+            or silent is not None
+            or bool(caps and caps.openfan.present)
+        )
         supported = daemon_supports("openfan_firmware_maintenance", caps) is True
         visible = supported and present and not self._is_demo()
         self._ofw_btn.setVisible(visible)
@@ -1154,6 +1166,12 @@ class HardwarePage(QWidget):
             enabled, tip = True, "Follow the OpenFAN firmware update."
         elif self._report_active:
             enabled, tip = False, RUN_ACTIVE_REASON
+        elif silent is not None:
+            enabled = True
+            tip = (
+                f"Update the OpenFAN board that does not answer (USB serial number "
+                f"{silent.usb_serial})."
+            )
         elif link != "connected":
             from control_ofc.services.openfan_firmware_view import link_text
 
@@ -1962,6 +1980,7 @@ class HardwarePage(QWidget):
         dialog.set_live_status(
             status.openfan_link if status else None,
             status.openfan_maintenance if status else None,
+            status.openfan_silent_board if status else None,
         )
         dialog.set_external_block(RUN_ACTIVE_REASON if self._report_active else "")
         dialog.request_initial()
@@ -1981,12 +2000,14 @@ class HardwarePage(QWidget):
 
     @Slot(object)
     def _on_status_for_firmware(self, status) -> None:
-        key = (status.openfan_link, status.openfan_maintenance)
+        key = (status.openfan_link, status.openfan_maintenance, status.openfan_silent_board)
         if key != self._ofw_status_key:
             self._ofw_status_key = key
             self._sync_firmware_button()
         if self._ofw_dialog is not None:
-            self._ofw_dialog.set_live_status(status.openfan_link, status.openfan_maintenance)
+            self._ofw_dialog.set_live_status(
+                status.openfan_link, status.openfan_maintenance, status.openfan_silent_board
+            )
 
     @Slot(object)
     def _on_ofw_device(self, device) -> None:

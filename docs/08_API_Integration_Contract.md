@@ -409,8 +409,9 @@ GUI treats every flag as false / old behaviour (AIP-180):
   **GUI use (DEC-481):** registered in `daemon_features` as `openfan_firmware_maintenance`; the
   Hardware page shows **Update OpenFAN Firmware…** only where
   `daemon_supports("openfan_firmware_maintenance", caps) is True`, outside demo mode, and while a
-  controller is present (`status.openfan_link` present or `devices.openfan.present`) or an update
-  is reported (`status.openfan_maintenance`).
+  controller is present (`status.openfan_link` present or `devices.openfan.present`), an update
+  is reported (`status.openfan_maintenance`) or — with `openfan_firmware_silent_update` — a board
+  that does not answer is (`status.openfan_silent_board`).
 - `openfan_firmware_write` (bool, DEC-483, daemon ≥ 3.8.0) — the daemon can write the OpenFAN
   firmware itself: `PUT /fans/openfan/firmware`, `"write": "daemon"` on the update's start,
   `daemon_write` on the device answer and `firmware_write` on the run (§ OpenFan firmware update).
@@ -419,6 +420,14 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `false`.
   **GUI use (DEC-483):** registered in `daemon_features` as `openfan_firmware_write`; without it
   the update window never uploads a file and every update is copied by hand.
+- `openfan_firmware_silent_update` (bool, DEC-484, daemon ≥ 3.8.0) — an OpenFAN board on USB that
+  does not answer can be updated: `/status` carries `openfan_silent_board`, the device answer
+  `silent_board`, the update's start takes `"board": "silent"` and the run reports `board`
+  (§ OpenFan firmware update). Hardcoded `true`: it describes the build; whether such a board is
+  there is the status field. Absent → `false`.
+  **GUI use (DEC-484):** registered in `daemon_features` as `openfan_firmware_silent_update`; with
+  it the Hardware page shows and enables **Update OpenFAN Firmware…** while
+  `status.openfan_silent_board` names a board, with or without a controller present.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -1234,14 +1243,19 @@ before the daemon's startup seed runs); `top_summary` is a daemon string, render
 
 #### OpenFAN link and firmware update (DEC-481, daemon ≥ 3.8.0)
 
-Two additive fields, capability `control.openfan_firmware_maintenance`, on `/status` and `/poll`:
+Three additive fields on `/status` and `/poll`: `openfan_link` and `openfan_maintenance` with
+capability `control.openfan_firmware_maintenance`, and `openfan_silent_board` with
+`control.openfan_firmware_silent_update`:
 
-- **`openfan_link`** (string; omitted when no OpenFan controller has been adopted) — what the
+- **`openfan_link`** (string; omitted when no OpenFan controller has been adopted and no update
+  runs) — what the
   OpenFan poll loop last observed of its serial link, kept apart from presence: `"connected"` (the
   last poll succeeded, or a verified adoption has just happened), `"unresponsive"` (polls are
   failing, short of the reconnect threshold; the loop still holds the port), `"reconnecting"` (the
   loop has given up on the port and is searching), or `"maintenance"` while a firmware update holds
-  the controller. An update starts only from `"connected"`. Render an unrecognised token as sent.
+  the controller. The connected board's update starts only from `"connected"`; a silent board's
+  (DEC-484) only while the field is absent or `"reconnecting"`. Render an unrecognised token as
+  sent.
 - **`openfan_maintenance`** (object; omitted unless an update is running or the last one left its
   board needing recovery) — `{run_id,
   stage, state, outcome?}`. While a run holds the controller, `state` is `"running"` and `stage` is
@@ -1250,6 +1264,17 @@ Two additive fields, capability `control.openfan_firmware_maintenance`, on `/sta
   stage: "finished", state: "needs_recovery", outcome}`, with OpenFan writes still suspended, until
   the poll loop next reports the link `connected`. Every other outcome clears it at once. The full
   record is `GET /fans/openfan/maintenance`.
+- **`openfan_silent_board`** (object, DEC-484, capability `control.openfan_firmware_silent_update`;
+  omitted when there is none) — `{usb_serial, usb_port}`: an OpenFAN board on USB (vendor `2e8a`,
+  product `000a`, manufacturer `Karanovic Research`, product `OpenFan`, a serial number) whose
+  serial device an adoption probe — at boot, a rescan, the post-boot search or the poll loop's
+  reconnect search — opened without an answer to the identity handshake, and which is still the
+  node that probe opened. A board no probe has opened is never silent, whatever its USB ids. It is
+  published only while no controller answers — none is adopted, or the link is `reconnecting` —
+  and never while an update runs. A read-only watch refreshes it every 2 s from sysfs, opening
+  nothing, and forgets the evidence for a node that has gone or changed; a controller answering on
+  a node — an adoption, a reconnect or a hand-back there — drops that node's evidence at once.
+  While an update runs, `openfan_link` reads `maintenance` even when no controller is adopted.
 
 **The `openfan` subsystem entry** reports the update in place of the poll's freshness: `warn`
 naming the stage while a run holds the controller, `crit` once a stage has overrun its time limit
@@ -1266,7 +1291,11 @@ away — and one alert stands in for them: `openfan_update:running` (warning, na
 against the `openfan_maintenance` of that same poll, so the poll that ends an update raises nothing
 for the previous poll's paused readings. A stall on any fan, the staleness of every other fan, the
 thermal banner and every other alert are unchanged; the daemon itself gives the OpenFAN channels no
-`stall_detected` while an update suspends their writes. The tray is unchanged: it shows
+`stall_detected` while an update suspends their writes. **DEC-484:** while `openfan_silent_board`
+is present the GUI raises one warning, `openfan_update:silent_board:<usb_serial>`, naming the
+board's USB port — never its serial number, since the event log carries the sentence into the
+support bundle — and pointing at the update window, and it stands in for the
+`fan_stale:openfan:*` warnings the same way, judged against the same poll's status. The tray is unchanged: it shows
 `thermal_state`, which an update does not move.
 
 ### GET /sensors
@@ -2878,11 +2907,13 @@ the **restart** duty as the minimum that keeps the fan running.
   end (up to the kick's window, 10 s at the default poll), and a kick owed after the cancel
   runs too, then the restore.
 
-### OpenFan firmware update (DEC-481, DEC-483)
+### OpenFan firmware update (DEC-481, DEC-483, DEC-484)
 `[SAFETY]` Takes an OpenFAN controller through its USB bootloader and back while its firmware is
 written: by the user, copying a file onto the bootloader's `RPI-RP2` drive, or — for a published
 release the daemon knows, with `control.openfan_firmware_write` and the opt-in USB access — by the
-daemon itself (DEC-483). **Daemon ≥ 3.8.0, capability-gated on
+daemon itself (DEC-483). The board is the adopted controller, which answers, or — with
+`control.openfan_firmware_silent_update` — an OpenFAN board on USB that does not answer (DEC-484,
+§ A silent board below). **Daemon ≥ 3.8.0, capability-gated on
 `control.openfan_firmware_maintenance`.** The daemon reads no file path and mounts no drive; it
 opens no device but the board's own serial interface and, to write, the PICOBOOT interface of the
 bootloader on the board's USB port. No client touches the board. The firmware carries no build
@@ -2907,7 +2938,7 @@ Just before such a start it uploads the file again, because the daemon keeps it 
 prepares the copy either way: a write that falls back asks the user to drag it.
 
 - `GET /fans/openfan/device` — `{api_version, present, link?, port?, usb?, interface_number?,
-  hw_info?, fw_info?, update_available, update_refusals[], daemon_write?}`. `present`: a controller is adopted.
+  hw_info?, fw_info?, update_available, update_refusals[], daemon_write?, silent_board?}`. `present`: a controller is adopted.
   `link`: `status.openfan_link`'s token. `port`: the serial device it was adopted on. `usb`: the
   board's USB device as sysfs describes it — `{port, vendor_id, product_id, manufacturer?, product?,
   serial?, bcd_device?, config_descriptor_hex?}`, where `port` is the USB port path (`8-8`) and
@@ -2923,7 +2954,14 @@ prepares the copy either way: a write that falls back asks the user to drag it.
   whether the daemon may open USB devices: `true` when `access(2)` grants read and write on any root
   hub's node (`/dev/bus/usb/BBB/001`), with nothing opened; `reason: "no_usb_access"` until the
   opt-in `openfan-firmware-write` drop-in grants `DeviceAllow=char-usb_device rw`. Informational like
-  the refusals.
+  the refusals. `silent_board` (DEC-484; present only while `status.openfan_silent_board` could be,
+  read afresh from sysfs): `{usb, interface_number, tty, update_available, update_refusals[]}` — the
+  board that does not answer, in `usb`'s shape; the serial interface its update signals on (the
+  lowest-numbered one with a tty, interface 0 on every known build) and that interface's device;
+  and whether its update could start now. Its refusals are those of the silent start below that
+  need no link: `maintenance_active`, `diagnostic_active`, `calibration_active`,
+  `validation_recording`, `thermal_emergency`, `bootloader_present`. The device answer's own
+  `update_refusals` stay the connected board's (`openfan_not_connected` when none is adopted).
 - `PUT /fans/openfan/firmware` (DEC-483, `control.openfan_firmware_write`) — body: the `.uf2` file's
   raw bytes, any content type, at most 1 MiB. `400 validation_error` when empty; the framework's
   `413` when larger. **`200`** `{api_version, sha256, size, release?, verdict, reason?, message}`:
@@ -2936,11 +2974,13 @@ prepares the copy either way: a write that falls back asks the user to drag it.
   kept, in memory: each accepted (`200`) upload replaces it, with nothing when the daemon will not
   write the new one, and a daemon restart forgets it. Touches no hardware and claims nothing.
 - `POST /fans/openfan/maintenance` — body `{expected_usb_serial, firmware: {sha256, size,
-  usb_config_descriptor_hex?, info?}, write?}`: the board's USB serial number as the device answer
-  reported it, what the client found in the file (never a path), and who writes it — `"manual"`
+  usb_config_descriptor_hex?, info?}, write?, board?}`: the board's USB serial number as the device
+  answer reported it, what the client found in the file (never a path), who writes it — `"manual"`
   (the default, and all a daemon without `control.openfan_firmware_write` reads) or `"daemon"`
   (DEC-483: the daemon writes the file it kept from `PUT /fans/openfan/firmware` with this
-  `sha256`, from a copy, so a later upload cannot change it). `400 validation_error` unless the serial
+  `sha256`, from a copy, so a later upload cannot change it) — and which board: `"connected"` (the
+  default, and all an older daemon reads) or `"silent"` (DEC-484, `silent_board.usb.serial` as
+  `expected_usb_serial`). An unknown `board` is the framework's plain-text `422`. `400 validation_error` unless the serial
   is 1–64 letters and digits, `sha256` 64 hex digits, `size` a positive multiple of 512 no larger
   than 1 MiB, the descriptor 9–512 bytes of hex and `info` at most 16 entries under the board
   reports' key and value rules. Unknown fields are ignored; a missing or mistyped field is the
@@ -2964,7 +3004,11 @@ prepares the copy either way: a write that falls back asks the user to drag it.
     `RPI-RP2` drive at a time), `usb_identity_unavailable`, `identity_mismatch` (the connected
     board's serial is not `expected_usb_serial`), `diagnostic_active` (a diagnostic holds the write
     pause — even one whose deadman lapsed), `thermal_emergency`, `validation_recording`. `message`
-    is the daemon's sentence: render it.
+    is the daemon's sentence: render it. A silent start (DEC-484) needs no controller: it answers
+    `maintenance_active`, `calibration_active`, `bootloader_present`, `diagnostic_active`,
+    `thermal_emergency` and `validation_recording` as above, and `board_not_silent` when no OpenFAN
+    board with that serial is on USB without answering (§ A silent board), or when a controller
+    answers — that board is updated as the connected one.
   - **The claim** is one decision under the lock the diagnostic pause uses. From then until the run
     ends, every diagnostic that takes the write pause (the verifies, characterisation, control-path
     discovery, the stall probe, the OpenFan calibration on either route), a validation session
@@ -3029,7 +3073,9 @@ prepares the copy either way: a write that falls back asks the user to drag it.
   first stage starts and once finished), `stages[]` (`{stage, started_unix_ms, ended_unix_ms}`),
   `started_unix_ms`, `finished_unix_ms`, `cancellable`, `outcome`, `outcome_detail`, `interrupted`,
   `cancelled`, `bootloader_requested`, `bootloader_seen`, `board_answered`, `bootloader_trigger`
-  (`">07"` | `"1200_baud"`), `bootloader_drive`, `other_bootloader_drives[]`, `notes[]`,
+  (`">07"` | `"1200_baud"` | `"boot_button"`, DEC-484), `board` (`"connected"` | `"silent"`,
+  DEC-484; absent from an older record → `"connected"`), `bootloader_drive`,
+  `other_bootloader_drives[]`, `notes[]`,
   `expected_usb_serial`, `usb_port`, `interface_number`, `tty`, `firmware` (the claim as sent),
   `before` / `after` (`{usb, hw_info, fw_info}`; `after` once checked) and `evidence`
   (`{descriptor_changed, descriptor_matches_file, info_matches_file, info_changed, verdict}`; each
@@ -3049,7 +3095,8 @@ prepares the copy either way: a write that falls back asks the user to drag it.
   board did not restart), with the daemon's sentence in `fallback_detail` and in `notes[]`. Render an
   unrecognised token.
 - `outcome` — `no_firmware_change` (refused, cancelled, or the board never left normal mode or
-  restarted into its firmware instead; the fans are back under profile control) ·
+  restarted into its firmware instead; the fans are back under profile control — for a silent
+  board's run, nothing on the board was changed and it stays as it was) ·
   `needs_recovery` (the board is, or may be, in its bootloader with no firmware copied: copy the
   file, press RESET or power-cycle the board — but after a daemon write that stopped part-way,
   `firmware_write.flash_changed` without `verified`, only a copied firmware brings it back, and after
@@ -3077,7 +3124,60 @@ prepares the copy either way: a write that falls back asks the user to drag it.
   the record says `cancellable` (`preparing` and `parking`); `409 validation_error`
   (`retryable: false`) with `details.reason: "not_cancellable"` once parking has finished and the
   bootloader request is next; `404 not_found` when no run is running. A cancel lands before the
-  next channel or at the end of the stage, and the fans return to profile control.
+  next channel or at the end of the stage, and the fans return to profile control. A silent
+  board's run (DEC-484) stays `cancellable` until its bootloader appears.
+
+**A silent board (DEC-484).** An OpenFAN board on USB that does not answer Control-OFC — the 2023
+FW_01 build, which floods its serial line; a firmware with another command set; a hung one; a board
+an earlier update left back but silent — is known by evidence only (`status.openfan_silent_board`):
+an adoption probe opened its serial device and the identity handshake got no answer. **This path
+has not been run on hardware.**
+
+- **The claim** (`"board": "silent"`) is taken while no controller answers, never against a link
+  that reads `connected`, under the adoption lock as well as the diagnostic pause's: an adoption
+  either installed its controller first — the board answers, `board_not_silent` — or finds the
+  claim and installs nothing. It suspends OpenFan writes at once: nothing is sent to a board that
+  does not answer, and **nothing is parked** — its channels stay wherever its firmware has them,
+  before and during the update, and a thermal emergency cannot reach them (the case before the
+  update, too). A board the last run left needing recovery may be the silent one: the claim takes
+  that recovery's place, and a run that ends `no_firmware_change` having handed nothing over puts
+  it back — in memory only. The journal then holds the silent run, so after a daemon restart the
+  board reads as a silent board again (`openfan_silent_board`, once a probe has had no answer from
+  it), not as needing recovery.
+- **Openers.** Every OpenFan probe after boot runs under the rescan's single-flight flag. The run
+  waits up to 30 s for a probe already running, then holds the flag until it has handed the board
+  over or ended, so no probe opens the board meanwhile; a rescan refuses while the run holds the
+  controller, as for any run. When a controller was adopted, its poll loop is parked on the port
+  loan — lent even though it is not connected — so its reconnect search opens nothing either.
+- **The run.** `preparing` (45 s with the waits above) — re-read the board's USB identity from
+  sysfs (`before.usb`; no reports, it does not answer). `entering_bootloader` — ask once more, on
+  the loop's port when one was lent and is open on this board's node, and otherwise on a fresh
+  open of the board's serial interface. A lent port open on another node — a loop whose own board
+  has just stopped answering lends that board's port until its first reconnect attempt closes it —
+  is closed unused: that board, which may be driving fans, is never asked or signalled. A board
+  that answers now is not silent, is never signalled, and is handed over (the run ends
+  `no_firmware_change`). Otherwise journal `bootloader_requested` with `bootloader_trigger:
+  "1200_baud"`, switch that port to 1200 baud and close it — no `>07`, which a firmware that does
+  not speak the protocol may read otherwise — and watch 5 s for the board to leave and 10 s for its
+  bootloader on the same USB port. When it has not appeared, or the serial device would not open
+  (no signal is sent then), `waiting_for_boot_button` (10 min; `bootloader_trigger:
+  "boot_button"`): the user holds BOOT, presses and releases RESET, and releases BOOT. Its
+  `stage_deadline_unix_ms` adds the 10 s a bootloader takes to appear, because a board the buttons
+  restart just before the 10 min run out is waited for. Until the
+  bootloader is on the port a cancel ends the run `no_firmware_change` — with the port empty it
+  first waits as long as a bootloader takes to appear (10 s), so a board on its way into one is not
+  left there — and the time running out ends it the same way, after the same wait while the port is
+  empty. Either ends the wait only once the next look at the port, 200 ms on, still finds the board
+  running its firmware: the buttons may have been pressed in between. From the bootloader on, the
+  run is the connected board's from `writing_firmware`, and a cancel that arrived meanwhile is noted
+  and ignored. So a cancel the daemon took (`202`) can be overtaken by a board already on its way
+  into its bootloader: `cancellable` turns `false` and the run goes on, and a client that sent one
+  says so (the GUI does). The hand-back gives the port back to the parked poll loop or, where none ran, adopts the
+  board as the controller, starting one; only the run's own adoption installs a controller while it
+  holds it.
+- **After a run with no poll loop** that leaves the board needing recovery, the read-only recovery
+  watch that follows a restart (above) runs at once, adopting the board once it is back running
+  firmware. One watch per board: a board already watched for gets no second.
 
 ### OpenFan calibrate (deprecated)
 - `POST /fans/openfan/{ch}/calibrate` — **deprecated since DEC-452.** **No GUI caller.** Starts

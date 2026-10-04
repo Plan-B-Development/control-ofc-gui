@@ -1,4 +1,4 @@
-"""OpenFAN firmware update, GUI side (DEC-481, DEC-482, DEC-483).
+"""OpenFAN firmware update, GUI side (DEC-481 to DEC-484).
 
 The standing rules apply: presence before absence; ``isVisibleTo(parent)``,
 never ``isVisible()``, under offscreen; ``.click()`` rather than the handler;
@@ -40,6 +40,8 @@ from control_ofc.api.models import (
     OpenFanFirmwareWrite,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
+    OpenFanSilentBoard,
+    OpenFanSilentBoardEntry,
     OpenFanStageTiming,
     OpenFanUpdateEvidence,
     OpenFanUpdateRefusal,
@@ -603,8 +605,8 @@ class _FakeClient:
         self.calls.append("device")
         return _device()
 
-    def start_openfan_maintenance(self, serial, firmware, *, daemon_write=False):
-        how = ":daemon" if daemon_write else ""
+    def start_openfan_maintenance(self, serial, firmware, *, daemon_write=False, board="connected"):
+        how = (":daemon" if daemon_write else "") + (f":{board}" if board != "connected" else "")
         self.calls.append(f"start:{serial}:{firmware['sha256']}{how}")
         if self._start_error:
             raise self._start_error
@@ -650,7 +652,7 @@ class TestWorker:
     def test_a_start_posts_then_reads_the_run_back(self, qapp):
         fake = _FakeClient()
         worker, got = _worker(fake)
-        worker.do_start(SERIAL, {"sha256": "x"}, None)
+        worker.do_start(SERIAL, {"sha256": "x"}, None, "connected")
         assert fake.calls == [f"start:{SERIAL}:x", "status"]
         assert got["started"] == ["ofmaint-1"], "the run the daemon's 202 named"
         assert [r.run_id for r in got["run"]] == ["ofmaint-1"]
@@ -661,7 +663,7 @@ class TestWorker:
             code="validation_error", message="a calibration runs", retryable=True, status=409
         )
         worker, got = _worker(_FakeClient(start_error=refusal))
-        worker.do_start(SERIAL, {"sha256": "x"}, None)
+        worker.do_start(SERIAL, {"sha256": "x"}, None, "connected")
         assert got["start_failed"] == [("unavailable", "a calibration runs")]
         assert got["run_error"] == [] and got["run"] == []
 
@@ -678,7 +680,7 @@ class TestWorker:
     )
     def test_a_start_with_no_answer_may_have_started(self, qapp, error, words):
         worker, got = _worker(_FakeClient(start_error=error))
-        worker.do_start(SERIAL, {"sha256": "x"}, None)
+        worker.do_start(SERIAL, {"sha256": "x"}, None, "connected")
         assert len(got["unconfirmed"]) == 1 and words in got["unconfirmed"][0][1]
         assert got["start_failed"] == [], "no answer is not a refusal"
         assert got["started"] == [] and got["run"] == []
@@ -687,7 +689,7 @@ class TestWorker:
         worker, got = _worker(
             _FakeClient(status_error=DaemonError(code="internal", message="boom", status=500))
         )
-        worker.do_start(SERIAL, {"sha256": "x"}, None)
+        worker.do_start(SERIAL, {"sha256": "x"}, None, "connected")
         assert got["run_error"] == [("error", "boom")]
         assert got["start_failed"] == [], "the run started; the next poll finds it"
 
@@ -851,11 +853,13 @@ class TestWindowSetup:
         dialog = _ready(qtbot, tmp_path, monkeypatch)
         dialog._confirm.setChecked(True)
         sent = []
-        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
+        dialog.start_requested.connect(lambda s, c, w, b: sent.append((s, c, w, b)))
         start = dialog.findChild(QPushButton, "OfwDialog_Btn_start")
         start.click()
         start.click()
-        assert sent == [(SERIAL, dialog._inspection.claim(), None)], "no daemon write here"
+        assert sent == [(SERIAL, dialog._inspection.claim(), None, view.BOARD_CONNECTED)], (
+            "no daemon write here"
+        )
         assert start.isEnabled() is False
 
     def test_a_refused_start_is_shown_and_start_comes_back(self, qtbot, tmp_path, monkeypatch):
@@ -1682,7 +1686,7 @@ class TestWorkerDaemonWrite:
         worker, got = _worker(fake)
         staged = []
         worker.staged.connect(staged.append)
-        worker.do_start(SERIAL, {"sha256": sha}, data)
+        worker.do_start(SERIAL, {"sha256": sha}, data, "connected")
         assert fake.calls == [f"stage:{len(data)}", f"start:{SERIAL}:{sha}:daemon", "status"]
         assert staged == [fake.staged], "the window sees the fresh answer"
         assert got["started"] == ["ofmaint-1"] and got["start_failed"] == []
@@ -1697,7 +1701,7 @@ class TestWorkerDaemonWrite:
         fake = _FakeClient()
         fake.staged = _staged(data, **change)
         worker, got = _worker(fake)
-        worker.do_start(SERIAL, {"sha256": hashlib.sha256(data).hexdigest()}, data)
+        worker.do_start(SERIAL, {"sha256": hashlib.sha256(data).hexdigest()}, data, "connected")
         assert fake.calls == [f"stage:{len(data)}"], "no start was sent"
         assert len(got["start_failed"]) == 1
         assert "will not write this file itself now" in got["start_failed"][0][1]
@@ -1708,7 +1712,7 @@ class TestWorkerDaemonWrite:
         fake = _FakeClient()
         fake.stage_error = DaemonTimeout(message="slow")
         worker, got = _worker(fake)
-        worker.do_start(SERIAL, {"sha256": "x"}, data)
+        worker.do_start(SERIAL, {"sha256": "x"}, data, "connected")
         assert fake.calls == [f"stage:{len(data)}"]
         assert got["start_failed"] == [
             ("unavailable", "The daemon could not be given the file again: slow")
@@ -1749,9 +1753,9 @@ class TestWindowDaemonWrite:
         assert dialog._confirm.text() == view.confirm_text(view.WRITE_DAEMON)
         dialog._confirm.setChecked(True)
         sent = []
-        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
+        dialog.start_requested.connect(lambda s, c, w, b: sent.append((s, c, w, b)))
         dialog.findChild(QPushButton, "OfwDialog_Btn_start").click()
-        assert sent == [(SERIAL, dialog._inspection.claim(), data)]
+        assert sent == [(SERIAL, dialog._inspection.claim(), data, view.BOARD_CONNECTED)]
 
     def test_without_usb_access_the_same_file_is_copied_by_hand(self, qtbot, tmp_path, monkeypatch):
         dialog, _, data = self._choose(qtbot, tmp_path, monkeypatch, access=NO_ACCESS)
@@ -1761,9 +1765,9 @@ class TestWindowDaemonWrite:
         assert dialog._confirm.text() == view.confirm_text(view.WRITE_MANUAL)
         dialog._confirm.setChecked(True)
         sent = []
-        dialog.start_requested.connect(lambda s, c, w: sent.append((s, c, w)))
+        dialog.start_requested.connect(lambda s, c, w, b: sent.append((s, c, w, b)))
         dialog.findChild(QPushButton, "OfwDialog_Btn_start").click()
-        assert sent == [(SERIAL, dialog._inspection.claim(), None)]
+        assert sent == [(SERIAL, dialog._inspection.claim(), None, view.BOARD_CONNECTED)]
 
     def test_the_file_to_copy_is_offered_only_while_the_user_would_copy_it(
         self, qtbot, tmp_path, monkeypatch
@@ -1905,3 +1909,368 @@ class TestHardwarePageDaemonWrite:
         dialog.findChild(QPushButton, "OfwDialog_Btn_refresh").click()
         qtbot.waitUntil(lambda: bool(dialog._stage_error), timeout=2000)
         page.cleanup()
+
+
+# ── DEC-484: a board on USB that does not answer ─────────────────────────────
+
+ENTRY = OpenFanSilentBoardEntry(usb_serial=SERIAL, usb_port="8-8")
+
+
+def _silent_device(**kw) -> OpenFanDevice:
+    """No controller answers; the daemon offers the silent board."""
+    base = OpenFanDevice(
+        present=False,
+        update_available=False,
+        update_refusals=[
+            OpenFanUpdateRefusal("openfan_not_connected", "no OpenFan controller is connected")
+        ],
+        daemon_write=CAN_WRITE,
+        silent_board=OpenFanSilentBoard(
+            usb=OpenFanUsbDevice(
+                port="8-8",
+                vendor_id="2e8a",
+                product_id="000a",
+                serial=SERIAL,
+                config_descriptor_hex="0902bb",
+            ),
+            interface_number=0,
+            tty="/dev/ttyACM1",
+            update_available=True,
+        ),
+    )
+    return replace(base, **kw)
+
+
+def _silent_record(**kw) -> OpenFanMaintenanceRecord:
+    fields = {
+        "board": "silent",
+        "stages": [
+            OpenFanStageTiming("preparing", NOW - 30_000, NOW - 29_000),
+            OpenFanStageTiming("entering_bootloader", NOW - 29_000, NOW - 22_000),
+            OpenFanStageTiming("waiting_for_file", NOW - 22_000, None),
+        ],
+        "bootloader_trigger": "1200_baud",
+    }
+    return _record(**{**fields, **kw})
+
+
+class TestSilentWire:
+    def test_the_status_names_the_board_or_nothing(self):
+        assert parse_status({}).openfan_silent_board is None, "an older daemon"
+        entry = parse_status({"openfan_silent_board": {"usb_serial": SERIAL, "usb_port": "8-8"}})
+        assert entry.openfan_silent_board == ENTRY
+        for bad in ("x", {"usb_port": "8-8"}, {"usb_serial": ""}, {"usb_serial": 7}):
+            assert parse_status({"openfan_silent_board": bad}).openfan_silent_board is None, bad
+
+    def test_the_device_answer_carries_the_board_and_its_own_refusals(self):
+        device = parse_openfan_device(
+            {
+                "present": False,
+                "silent_board": {
+                    "usb": {"port": "8-8", "vendor_id": "2e8a", "serial": SERIAL},
+                    "interface_number": 0,
+                    "tty": "/dev/ttyACM1",
+                    "update_available": False,
+                    "update_refusals": [
+                        {"reason": "calibration_active", "message": "a calibration runs"}
+                    ],
+                },
+            }
+        )
+        board = device.silent_board
+        assert board.usb.serial == SERIAL and board.usb.port == "8-8"
+        assert (board.interface_number, board.tty) == (0, "/dev/ttyACM1")
+        assert board.update_available is False
+        assert board.update_refusals == [
+            OpenFanUpdateRefusal("calibration_active", "a calibration runs")
+        ]
+        assert parse_openfan_device({"present": True}).silent_board is None
+
+    def test_a_run_names_its_board_and_an_older_one_is_the_connected_boards(self):
+        assert parse_openfan_maintenance_record({**RECORD_JSON, "board": "silent"}).board == (
+            "silent"
+        )
+        assert "board" not in RECORD_JSON, "precondition: a record from an older daemon"
+        assert parse_openfan_maintenance_record(RECORD_JSON).board == "connected"
+
+    def test_the_capability_gates_it(self):
+        caps = parse_capabilities({"control": {"openfan_firmware_silent_update": True}})
+        assert caps.control.openfan_firmware_silent_update is True
+        assert daemon_supports("openfan_firmware_silent_update", caps) is True
+        assert daemon_supports("openfan_firmware_silent_update", parse_capabilities({})) is False
+
+    def test_only_a_silent_start_names_its_board(self):
+        seen: list[httpx.Request] = []
+        client = TestClientDaemonWrite()._client(seen, {"run_id": "r1"})
+        client.start_openfan_maintenance(SERIAL, {"sha256": "x"})
+        client.start_openfan_maintenance(SERIAL, {"sha256": "x"}, board="silent")
+        connected, silent = (json.loads(r.content) for r in seen)
+        assert "board" not in connected, "the connected board reads the same to every daemon"
+        assert silent["board"] == "silent"
+        assert silent["expected_usb_serial"] == connected["expected_usb_serial"] == SERIAL
+
+    def test_the_worker_passes_the_board_on(self, qapp):
+        fake = _FakeClient()
+        worker, got = _worker(fake)
+        worker.do_start(SERIAL, {"sha256": "x"}, None, view.BOARD_SILENT)
+        assert fake.calls == [f"start:{SERIAL}:x:silent", "status"]
+        assert got["started"] == ["ofmaint-1"]
+
+
+class TestSilentView:
+    def test_the_update_is_for_the_board_the_daemon_offers(self):
+        silent = _silent_device()
+        assert view.update_board(silent) == view.BOARD_SILENT
+        assert view.target_usb(silent) is silent.silent_board.usb
+        connected = _device()
+        assert view.update_board(connected) == view.BOARD_CONNECTED
+        assert view.target_usb(connected) is connected.usb
+        assert view.update_board(None) == view.BOARD_CONNECTED
+
+    def test_the_controller_section_describes_the_board_that_does_not_answer(self):
+        rows = dict(view.device_rows(_silent_device()))
+        assert "not answering" in rows["Controller"]
+        assert rows["USB serial number"] == SERIAL and rows["USB port"] == "8-8"
+        assert "No OpenFAN controller is connected." not in rows.values()
+        absent = dict(view.device_rows(_silent_device(silent_board=None)))
+        assert absent == {"Controller": "No OpenFAN controller is connected."}
+
+    def test_start_needs_no_link_for_a_silent_board(self):
+        # The connected board's gate refuses without a link; the silent board's
+        # has none to wait for.
+        assert "not connected" in _gate(device=_device(), live_link="reconnecting")
+        assert _gate(device=_silent_device(), live_link="reconnecting") == ""
+        assert _gate(device=_silent_device(), live_link=None) == ""
+
+    def test_a_silent_boards_refusal_is_the_daemons_own_words(self):
+        board = replace(
+            _silent_device().silent_board,
+            update_available=False,
+            update_refusals=[OpenFanUpdateRefusal("thermal_emergency", "a thermal emergency")],
+        )
+        assert _gate(device=_silent_device(silent_board=board)) == "a thermal emergency"
+        no_serial = replace(board, update_available=True, update_refusals=[], usb=None)
+        assert "USB serial number" in _gate(device=_silent_device(silent_board=no_serial))
+
+    def test_the_cooling_text_says_nothing_is_parked(self):
+        assert view.cooling_windows(view.BOARD_CONNECTED) == view.COOLING_WINDOWS
+        silent = view.cooling_windows(view.BOARD_SILENT)
+        assert len(silent) == len(view.COOLING_WINDOWS)
+        assert "is set to 100 %" in view.COOLING_WINDOWS[0]
+        assert "cannot set" in silent[0] and "Nothing is set to 100 %" in silent[0]
+        assert view.confirm_text(view.WRITE_MANUAL, view.BOARD_SILENT) != view.confirm_text(
+            view.WRITE_MANUAL
+        )
+        for method in (view.WRITE_MANUAL, view.WRITE_DAEMON):
+            assert "cannot set" in view.confirm_text(method, view.BOARD_SILENT)
+            assert "100 %" in view.confirm_text(method)
+        pump = [view.ChannelLine("openfan:ch01", "Pump", True)]
+        assert "set to 100 %" in view.pump_note(pump)
+        assert "100 %" not in view.pump_note(pump, view.BOARD_SILENT)
+
+    def test_a_silent_run_has_no_parking_and_asks_for_the_buttons_only_when_needed(self):
+        tokens = [t for t, _ in view.run_stages(_silent_record())]
+        assert "parking" not in tokens and view.STAGE_BOOT_BUTTON not in tokens
+        assert "parking" in [t for t, _ in view.run_stages(_record())], "the connected run parks"
+        waiting = _silent_record(
+            stage=view.STAGE_BOOT_BUTTON,
+            cancellable=True,
+            bootloader_trigger="boot_button",
+            stages=[
+                OpenFanStageTiming("preparing", NOW - 30_000, NOW - 29_000),
+                OpenFanStageTiming("entering_bootloader", NOW - 29_000, NOW - 22_000),
+                OpenFanStageTiming(view.STAGE_BOOT_BUTTON, NOW - 22_000, None),
+            ],
+        )
+        v = view.build_run_view(waiting, NOW)
+        rows = {r.token: r.state for r in v.stages}
+        assert rows[view.STAGE_BOOT_BUTTON] == view.ROW_CURRENT
+        assert v.can_cancel, "cancellable until the board is in update mode"
+        for words in ("BOOT", "RESET", "8-8", "Cancel"):
+            assert words in v.instruction
+        # The daemon takes a cancel here, but a board already restarting into
+        # update mode is not left there: the window does not promise otherwise.
+        assert "unless the board is already restarting" in v.instruction
+
+    def test_a_silent_boards_signal_is_not_called_a_fallback(self):
+        connected = view.build_run_view(
+            _record(stage="entering_bootloader", bootloader_trigger="1200_baud"), NOW
+        )
+        assert "did not respond to the first request" in connected.instruction
+        silent = view.build_run_view(_silent_record(stage="entering_bootloader"), NOW)
+        assert "1200-baud" in silent.instruction
+        assert "first request" not in silent.instruction
+        assert "goes on even if Cancel is pressed" in silent.instruction
+
+    def test_no_change_to_a_silent_board_never_claims_its_fans_are_controlled(self):
+        for cancelled in (True, False):
+            connected = view.outcome_view(_finished("no_firmware_change", cancelled=cancelled))
+            assert "profile control" in connected.summary
+            silent = view.outcome_view(
+                _finished("no_firmware_change", cancelled=cancelled, board="silent")
+            )
+            assert silent.title == connected.title
+            assert "profile control" not in silent.summary
+
+    def test_a_silent_board_left_in_update_mode_was_never_parked(self):
+        connected = view.outcome_view(_finished("needs_recovery"))
+        silent = view.outcome_view(_finished("needs_recovery", board="silent"))
+        assert "parked at" in connected.summary
+        assert "parked" not in silent.summary and "old firmware last set" in silent.summary
+        assert silent.steps == connected.steps
+        partial = _write("writing", flash_changed=True)
+        silent_partial = view.outcome_view(
+            _finished("needs_recovery", board="silent", firmware_write=partial)
+        )
+        assert "part of the board's flash" in silent_partial.summary
+        assert "parked" not in silent_partial.summary
+
+
+class TestSilentAlert:
+    def test_the_board_is_named_once_and_points_at_the_window(self):
+        assert view.silent_board_alert(None) is None
+        a = view.silent_board_alert(ENTRY)
+        assert a.level == "warning" and a.key.startswith(view.UPDATE_ALERT_SILENT)
+        # Named by its port: the event log carries the sentence into the
+        # support bundle, which keeps the serial out.
+        assert "USB port 8-8" in a.detail
+        assert SERIAL not in a.detail
+        other = view.silent_board_alert(OpenFanSilentBoardEntry(OTHER_BOARD, "8-8"))
+        assert other.key != a.key, "another board is another alert"
+        action = next_action_for_warning({"_key": a.key, "source": "openfan"})
+        assert "update the board that does not answer" in action
+
+    def test_it_stands_in_for_the_openfan_fans_staleness_only(self, qapp):
+        state = _state_with(None)
+        assert "fan_stale:openfan:ch00" in _keys(state), "precondition: stale"
+        state.set_status(DaemonStatus(openfan_silent_board=ENTRY))
+        state.set_fans(state.fans)
+        keys = _keys(state)
+        assert keys[view.silent_board_alert(ENTRY).key] == "warning"
+        assert "fan_stale:openfan:ch00" not in keys
+        assert "fan_stale:hwmon:nct6798:pwm2" in keys, "other fans keep theirs"
+
+    def test_it_ends_with_the_board_and_with_a_daemon_gone_long_enough(self, qapp):
+        state = _state_with(None)
+        key = view.silent_board_alert(ENTRY).key
+        state.set_status(DaemonStatus(openfan_silent_board=ENTRY))
+        state.set_fans(state.fans)
+        assert key in _keys(state)
+        state.set_connection(ConnectionState.DISCONNECTED)
+        state._thermal_clear_timer.timeout.emit()
+        assert key not in _keys(state)
+
+
+def _silent_ready(qtbot, tmp_path, monkeypatch) -> OpenFanFirmwareDialog:
+    """A window offered a silent board, with a checked, prepared file."""
+    dialog = _dialog(qtbot, tmp_path)
+    dialog.set_live_status(None, None, ENTRY)
+    dialog.apply_device(_silent_device())
+    path = _good_file(tmp_path)
+    monkeypatch.setattr(
+        QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (str(path), ""))
+    )
+    dialog.findChild(QPushButton, "OfwDialog_Btn_choose").click()
+    return dialog
+
+
+class TestSilentWindow:
+    def test_the_window_words_the_board_that_does_not_answer(self, qtbot, tmp_path, monkeypatch):
+        dialog = _silent_ready(qtbot, tmp_path, monkeypatch)
+        first = dialog.findChild(QLabel, "OfwDialog_Label_cooling0")
+        assert first.text() == f"•  {view.COOLING_WINDOWS_SILENT[0]}"
+        assert dialog._confirm.text() == view.confirm_text(view.WRITE_MANUAL, view.BOARD_SILENT)
+        # And back: a controller that answers is the connected board's update.
+        dialog.apply_device(_device())
+        assert first.text() == f"•  {view.COOLING_WINDOWS[0]}"
+        assert dialog._confirm.text() == view.confirm_text(view.WRITE_MANUAL)
+
+    def test_start_updates_the_silent_board_by_its_serial(self, qtbot, tmp_path, monkeypatch):
+        dialog = _silent_ready(qtbot, tmp_path, monkeypatch)
+        start = dialog.findChild(QPushButton, "OfwDialog_Btn_start")
+        assert not start.isEnabled() and "confirmation" in start.toolTip()
+        dialog._confirm.setChecked(True)
+        assert start.isEnabled(), "no link is needed"
+        sent = []
+        dialog.start_requested.connect(lambda s, c, w, b: sent.append((s, c, w, b)))
+        start.click()
+        assert sent == [
+            (
+                _silent_device().silent_board.usb.serial,
+                dialog._inspection.claim(),
+                None,
+                view.BOARD_SILENT,
+            )
+        ]
+
+    def test_a_silent_board_appearing_or_going_rereads_the_controller(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        asked = []
+        dialog.device_requested.connect(lambda: asked.append(1))
+        dialog.set_live_status("reconnecting", None)
+        assert asked == [], "precondition: nothing changed that the window shows"
+        dialog.set_live_status("reconnecting", None, ENTRY)
+        assert len(asked) == 1
+        dialog.set_live_status("reconnecting", None, ENTRY)
+        assert len(asked) == 1, "the same board is not re-read every second"
+        dialog.set_live_status("reconnecting", None)
+        assert len(asked) == 2
+
+    def test_a_cancel_the_run_went_on_past_says_so_until_the_run_ends(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        waiting = _silent_record(stage=view.STAGE_BOOT_BUTTON, cancellable=True)
+        dialog.apply_run(waiting)
+        dialog.findChild(QPushButton, "OfwDialog_Btn_cancel").click()
+        assert status.text() == "Cancelling…" and status.isVisibleTo(dialog)
+        dialog.apply_run(waiting)
+        assert status.text() == "Cancelling…", "still cancellable: the cancel may yet land"
+        # The daemon took the cancel, but the buttons had already restarted the
+        # board: the run went on to the file.
+        dialog.apply_run(_silent_record(cancellable=False))
+        assert status.text() == view.CANCEL_TOO_LATE and status.isVisibleTo(dialog)
+        dialog.apply_run(_finished("completed_build_not_confirmed", board="silent"))
+        assert dialog.mode == dlg_mod.MODE_RESULT
+        assert not status.isVisibleTo(dialog), "the result says what became of it"
+
+    def test_a_run_moving_on_with_no_cancel_sent_says_nothing_of_one(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        dialog.apply_run(_silent_record(stage=view.STAGE_BOOT_BUTTON, cancellable=True))
+        dialog.apply_run(_silent_record(cancellable=False))
+        assert dialog.mode == dlg_mod.MODE_RUN, "precondition: followed"
+        assert not status.isVisibleTo(dialog)
+
+
+class TestSilentHardwarePage:
+    def _silent_page(self, qtbot, *, flag=True) -> HardwarePage:
+        page = _page(qtbot, link=None)
+        page._state.set_capabilities(
+            Capabilities(
+                openfan=OpenfanCapability(present=False, channels=0),
+                control=ControlCapability(
+                    openfan_firmware_maintenance=True, openfan_firmware_silent_update=flag
+                ),
+            )
+        )
+        page._sync_diagnostic_enablement()
+        return page
+
+    def test_a_board_that_does_not_answer_gets_the_button(self, qtbot):
+        page = self._silent_page(qtbot)
+        assert not _button(page).isVisibleTo(page), "precondition: no controller, no board"
+        page._state.set_status(DaemonStatus(openfan_silent_board=ENTRY))
+        assert _button(page).isVisibleTo(page) and _button(page).isEnabled()
+        assert SERIAL in _button(page).toolTip()
+
+    def test_without_the_capability_the_board_is_not_offered(self, qtbot):
+        page = self._silent_page(qtbot, flag=False)
+        page._state.set_status(DaemonStatus(openfan_silent_board=ENTRY))
+        assert not _button(page).isVisibleTo(page)
+
+    def test_a_report_run_stands_it_down(self, qtbot):
+        page = self._silent_page(qtbot)
+        page._state.set_status(DaemonStatus(openfan_silent_board=ENTRY))
+        assert _button(page).isEnabled(), "precondition"
+        page._on_report_active(True)
+        assert not _button(page).isEnabled() and _button(page).toolTip() == RUN_ACTIVE_REASON

@@ -174,7 +174,8 @@ control_ofc/
                                #   advice, end keyed on completed_unix_ms — DEC-453.
     openfan_firmware_view.py   # OpenFAN firmware update VM — DEC-481: stages, outcomes, file
                                #   findings, the start gate, who writes the file (DEC-483),
-                               #   and the DEC-482 alert that stands in for the OpenFAN fans'
+                               #   which board — connected or silent (DEC-484) — and the
+                               #   DEC-482/484 alerts that stand in for the OpenFAN fans'
                                #   staleness warnings.
     uf2.py                     # Qt-free .uf2 checker + private prepared copy — DEC-481.
                                #   Reads at most 1 MiB + 1 of a regular file; never a device.

@@ -380,6 +380,11 @@ class ControlCapability:
     #: Describes the build; whether this daemon may open USB devices (the opt-in
     #: drop-in) is ``daemon_write.available``.
     openfan_firmware_write: bool = False
+    #: DEC-484: an OpenFAN board on USB that does not answer can be updated —
+    #: ``status.openfan_silent_board``, ``silent_board`` on the device answer,
+    #: ``"board": "silent"`` on the start and ``board`` on the run. Describes
+    #: the build; whether such a board is there is the status field.
+    openfan_firmware_silent_update: bool = False
     #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
     #: suffix is stripped where the daemon reads it and in the state it saved
     #: before — so a driver rebuild no longer changes any fan header's id. Gates
@@ -793,6 +798,18 @@ class OpenFanMaintenanceSummary:
 
 
 @dataclass
+class OpenFanSilentBoardEntry:
+    """``status.openfan_silent_board`` (DEC-484): an OpenFAN board on USB, with
+    the board's USB identity, whose serial device an adoption probe opened
+    without an answer. The daemon publishes it only while no controller
+    answers and no update runs."""
+
+    usb_serial: str = ""
+    #: Its physical USB port path (``8-8``).
+    usb_port: str = ""
+
+
+@dataclass
 class DaemonStatus:
     api_version: int = 1
     daemon_version: str = ""
@@ -893,6 +910,10 @@ class DaemonStatus:
     # recovery. `None` otherwise, and on an older daemon. The full run is
     # `GET /fans/openfan/maintenance`.
     openfan_maintenance: OpenFanMaintenanceSummary | None = None
+    # DEC-484: an OpenFAN board on USB that does not answer, while no
+    # controller does and no update runs. `None` otherwise, and on an older
+    # daemon.
+    openfan_silent_board: OpenFanSilentBoardEntry | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2519,6 +2540,8 @@ def parse_status(data: dict) -> DaemonStatus:
         # older daemon → None.
         openfan_link=_opt_str(data.get("openfan_link")),
         openfan_maintenance=_parse_openfan_maintenance_summary(data.get("openfan_maintenance")),
+        # DEC-484: omitted when there is none, absent on an older daemon → None.
+        openfan_silent_board=_parse_openfan_silent_board_entry(data.get("openfan_silent_board")),
     )
 
 
@@ -2561,6 +2584,20 @@ def _parse_openfan_maintenance_summary(raw: object) -> OpenFanMaintenanceSummary
         state=_opt_str(raw.get("state")) or "",
         outcome=_opt_str(raw.get("outcome")),
     )
+
+
+def _parse_openfan_silent_board_entry(raw: object) -> OpenFanSilentBoardEntry | None:
+    """``status.openfan_silent_board``, or ``None`` when absent or malformed.
+
+    A board without a serial is not one the start could name, so it reads as
+    absent rather than as a board with an empty serial.
+    """
+    if not isinstance(raw, dict):
+        return None
+    serial = _opt_str(raw.get("usb_serial"))
+    if not serial:
+        return None
+    return OpenFanSilentBoardEntry(usb_serial=serial, usb_port=_opt_str(raw.get("usb_port")) or "")
 
 
 def _parse_readiness_rollup(raw: object) -> ReadinessRollup | None:
@@ -2781,6 +2818,24 @@ class OpenFanDaemonWrite:
 
 
 @dataclass
+class OpenFanSilentBoard:
+    """``silent_board`` on ``GET /fans/openfan/device`` (DEC-484): an OpenFAN
+    board on USB that does not answer, and whether its update could start.
+
+    The daemon offers one only while no controller answers. ``tty`` and
+    ``interface_number`` are where it signals the board; the window names the
+    USB port instead.
+    """
+
+    usb: OpenFanUsbDevice | None = None
+    interface_number: int | None = None
+    tty: str | None = None
+    #: Informational, like the device answer's own: the start decides again.
+    update_available: bool = False
+    update_refusals: list[OpenFanUpdateRefusal] = field(default_factory=list)
+
+
+@dataclass
 class OpenFanDevice:
     """``GET /fans/openfan/device`` (DEC-481)."""
 
@@ -2799,6 +2854,9 @@ class OpenFanDevice:
     update_refusals: list[OpenFanUpdateRefusal] = field(default_factory=list)
     #: ``None`` from a daemon without ``control.openfan_firmware_write``.
     daemon_write: OpenFanDaemonWrite | None = None
+    #: DEC-484: the board on USB that does not answer, while no controller
+    #: does. ``None`` otherwise, and from an older daemon.
+    silent_board: OpenFanSilentBoard | None = None
 
 
 @dataclass
@@ -2916,6 +2974,10 @@ class OpenFanMaintenanceRecord:
     after: OpenFanBoardSnapshot | None = None
     evidence: OpenFanUpdateEvidence | None = None
     firmware_write: OpenFanFirmwareWrite | None = None
+    #: DEC-484: ``connected`` — the adopted controller, parked first — or
+    #: ``silent``, a board that did not answer. A run from an older daemon is
+    #: the connected board's.
+    board: str = "connected"
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -2957,15 +3019,32 @@ def parse_openfan_device(data: dict) -> OpenFanDevice:
         hw_info=_str_map(data.get("hw_info")),
         fw_info=_str_map(data.get("fw_info")),
         update_available=data.get("update_available") is True,
-        update_refusals=[
-            OpenFanUpdateRefusal(
-                reason=_opt_str(r.get("reason")) or "",
-                message=_opt_str(r.get("message")) or "",
-            )
-            for r in _wire_list(data, "update_refusals")
-            if isinstance(r, dict)
-        ],
+        update_refusals=_parse_update_refusals(data),
         daemon_write=_parse_openfan_daemon_write(data.get("daemon_write")),
+        silent_board=_parse_openfan_silent_board(data.get("silent_board")),
+    )
+
+
+def _parse_update_refusals(data: dict) -> list[OpenFanUpdateRefusal]:
+    return [
+        OpenFanUpdateRefusal(
+            reason=_opt_str(r.get("reason")) or "",
+            message=_opt_str(r.get("message")) or "",
+        )
+        for r in _wire_list(data, "update_refusals")
+        if isinstance(r, dict)
+    ]
+
+
+def _parse_openfan_silent_board(raw: object) -> OpenFanSilentBoard | None:
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanSilentBoard(
+        usb=_parse_openfan_usb(raw.get("usb")),
+        interface_number=_opt_int(raw.get("interface_number")),
+        tty=_opt_str(raw.get("tty")),
+        update_available=raw.get("update_available") is True,
+        update_refusals=_parse_update_refusals(raw),
     )
 
 
@@ -3076,6 +3155,7 @@ def parse_openfan_maintenance_record(data: dict) -> OpenFanMaintenanceRecord:
             else None
         ),
         firmware_write=_parse_openfan_firmware_write(data.get("firmware_write")),
+        board=_opt_str(data.get("board")) or "connected",
         raw=dict(data),
     )
 

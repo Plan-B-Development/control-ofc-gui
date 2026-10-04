@@ -94,11 +94,12 @@ CASES = [
      "device_error", "device_ready", unexpected_error_message("the controller read")),
     # An unexpected failure of the POST answers on `start_unconfirmed`: it may
     # have reached the daemon, so the window asks rather than says it failed.
-    ("ofw-start", _OpenFanFirmwareWorker, "do_start", ("S", {}, None), "start_openfan_maintenance",
-     "start_unconfirmed", "run_updated", unexpected_error_message("the update start")),
+    ("ofw-start", _OpenFanFirmwareWorker, "do_start", ("S", {}, None, "connected"),
+     "start_openfan_maintenance", "start_unconfirmed", "run_updated",
+     unexpected_error_message("the update start")),
     # DEC-483: the upload before a daemon write fails before anything is sent
     # that could start a run, so it answers on `start_failed`.
-    ("ofw-start-write", _OpenFanFirmwareWorker, "do_start", ("S", {}, b"uf2"),
+    ("ofw-start-write", _OpenFanFirmwareWorker, "do_start", ("S", {}, b"uf2", "connected"),
      "stage_openfan_firmware", "start_failed", "run_updated",
      unexpected_error_message("the update start")),
     ("ofw-stage", _OpenFanFirmwareWorker, "do_stage", (b"uf2",), "stage_openfan_firmware",

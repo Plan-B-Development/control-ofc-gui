@@ -1,4 +1,4 @@
-"""What the OpenFAN firmware update window says (DEC-481, DEC-482, DEC-483).
+"""What the OpenFAN firmware update window says (DEC-481 to DEC-484).
 
 Qt-free: every decision about wording, tone and what is shown lives here and is
 unit-tested headlessly; ``ui/widgets/openfan_firmware_dialog.py`` renders it.
@@ -10,6 +10,11 @@ the GUI rarely has: tell the user exactly what to do at one stage, and never
 claim more than the daemon can know. Unless the daemon wrote the file and read
 it back, it cannot know which build is running — the firmware has no build
 identifier — so a result says what the board's own reports show, and no more.
+
+An update is for one of two boards (DEC-484): the adopted controller, which
+answers and is parked at 100 % first, or a board on USB that does not answer —
+whose channels Control-OFC cannot set at all, so nothing is parked and the text
+says so.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from control_ofc.api.models import (
     OpenFanFirmwareWrite,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
+    OpenFanSilentBoardEntry,
+    OpenFanUsbDevice,
 )
 from control_ofc.services.cooling_watch import CoolingAlert
 from control_ofc.services.uf2 import RELEASES_URL, Uf2Inspection
@@ -34,14 +41,18 @@ from control_ofc.services.uf2 import RELEASES_URL, Uf2Inspection
 
 STAGE_WRITING = "writing_firmware"
 STAGE_FILE = "waiting_for_file"
+STAGE_PARKING = "parking"
+#: DEC-484: a silent board the 1200-baud signal did not move.
+STAGE_BOOT_BUTTON = "waiting_for_boot_button"
 
 #: The run's stages in order, with what each does in a few words. A run shows
 #: the daemon's write only when it was asked for, and the copy by hand only
 #: when the user writes the file (:func:`run_stages`).
 STAGES: tuple[tuple[str, str], ...] = (
     ("preparing", "Check the controller"),
-    ("parking", "Set every OpenFAN channel to 100 %"),
+    (STAGE_PARKING, "Set every OpenFAN channel to 100 %"),
     ("entering_bootloader", "Put the board in update mode"),
+    (STAGE_BOOT_BUTTON, "Press BOOT and RESET on the board"),
     (STAGE_WRITING, "Write the firmware and read it back"),
     (STAGE_FILE, "Copy the firmware file"),
     ("waiting_for_return", "Wait for the board to restart"),
@@ -91,6 +102,30 @@ def link_text(link: str | None) -> str:
     return _LINK_TEXT.get(link, link)
 
 
+# ── Which board (DEC-484) ─────────────────────────────────────────────
+
+BOARD_CONNECTED = "connected"
+BOARD_SILENT = "silent"
+
+
+def update_board(device: OpenFanDevice | None) -> str:
+    """Which board an update started now is for: the silent one the daemon
+    offers, or the connected controller. The daemon offers a silent board only
+    while no controller answers, so the two never compete."""
+    if device is not None and device.silent_board is not None:
+        return BOARD_SILENT
+    return BOARD_CONNECTED
+
+
+def target_usb(device: OpenFanDevice | None) -> OpenFanUsbDevice | None:
+    """The USB identity of the board an update would be for."""
+    if device is None:
+        return None
+    if device.silent_board is not None:
+        return device.silent_board.usb
+    return device.usb
+
+
 # ── Fixed text ────────────────────────────────────────────────────────
 
 INTRO = (
@@ -116,6 +151,25 @@ COOLING_WINDOWS: tuple[str, ...] = (
     "If the board does not come back, its channels stay on that default until it does.",
 )
 
+#: DEC-484: the same windows for a board that does not answer. Nothing is
+#: parked: Control-OFC cannot set its channels until it answers.
+COOLING_WINDOWS_SILENT: tuple[str, ...] = (
+    "The board does not answer, so Control-OFC cannot set its OpenFAN channels: they "
+    "stay wherever its firmware has them, before and during the update, and a thermal "
+    "emergency cannot reach them until the board answers again. Nothing is set to "
+    "100 % first.",
+    "While the board is in update mode, its fan chips should keep those settings — the "
+    "board's design says so, though it has not yet been measured. Fans on the "
+    "motherboard stay under normal control, and a thermal emergency still forces them.",
+    COOLING_WINDOWS[2],
+    COOLING_WINDOWS[3],
+)
+
+
+def cooling_windows(board: str) -> tuple[str, ...]:
+    return COOLING_WINDOWS_SILENT if board == BOARD_SILENT else COOLING_WINDOWS
+
+
 LEAVE_UPDATE_MODE = (
     "Once the board is in update mode it leaves it in one of three ways: a firmware "
     "file is written to it — by Control-OFC, or by you copying it onto its RPI-RP2 "
@@ -139,12 +193,32 @@ CONFIRM_TEXT_DAEMON = (
     "Control-OFC cannot finish writing the file, I copy it onto the board's drive myself."
 )
 
+CONFIRM_TEXT_SILENT = (
+    "I understand that Control-OFC cannot set the OpenFAN channels while the board does "
+    "not answer, that they run on the firmware's own default for a few seconds when it "
+    "restarts, and that I copy the file onto the board's drive myself."
+)
+
+CONFIRM_TEXT_SILENT_DAEMON = (
+    "I understand that Control-OFC cannot set the OpenFAN channels while the board does "
+    "not answer, that they run on the firmware's own default for a few seconds when it "
+    "restarts, and that if Control-OFC cannot finish writing the file, I copy it onto the "
+    "board's drive myself."
+)
+
 PREPARED_NOTE = (
     "This is the checked copy. Nothing can prove which file reaches the drive — "
     "after the update, the board's own reports are the evidence, shown with the result."
 )
 
 DEMO_REFUSAL = "Demo mode has no OpenFAN controller to update."
+
+#: A cancel the daemon took while the run could still stop, that the run then
+#: went on past: a board on its way into update mode is not left there (DEC-484).
+CANCEL_TOO_LATE = (
+    "The cancel came too late: the board was already on its way into update mode, so "
+    "the update goes on."
+)
 
 
 # ── The controller ────────────────────────────────────────────────────
@@ -165,10 +239,24 @@ def device_rows(device: OpenFanDevice | None) -> list[tuple[str, str]]:
     """The Controller section: what the daemon can say about the board."""
     if device is None:
         return [("Controller", "Reading…")]
+    unknown = "Unknown"
+    silent = device.silent_board
+    if silent is not None:
+        # DEC-484: the board the update is for, which a probe found not answering.
+        board_usb = silent.usb
+        return [
+            (
+                "Controller",
+                "On USB, but not answering Control-OFC — it may run firmware Control-OFC "
+                "cannot talk to. Its fans are not under fan control.",
+            ),
+            ("USB serial number", (board_usb.serial if board_usb else None) or unknown),
+            ("USB port", (board_usb.port if board_usb else None) or unknown),
+            ("Firmware report", "No answer"),
+        ]
     if not device.present:
         return [("Controller", "No OpenFAN controller is connected.")]
     usb = device.usb
-    unknown = "Unknown"
     no_answer = "No answer — unknown"
     return [
         ("Connection", link_text(device.link)),
@@ -265,7 +353,8 @@ def file_findings(inspection: Uf2Inspection, device: OpenFanDevice | None) -> li
         )
 
     desc_file = inspection.usb_config_descriptor_hex
-    desc_board = device.usb.config_descriptor_hex if device and device.usb else None
+    usb = target_usb(device)
+    desc_board = usb.config_descriptor_hex if usb else None
     same_reports = bool(info) and all(board.get(k) == v for k, v in info.items())
     if desc_file is None:
         found.append(
@@ -337,11 +426,16 @@ def channel_lines(
     return [ChannelLine(f, name(f), is_pump_protected(f)) for f in ids]
 
 
-def pump_note(lines: Iterable[ChannelLine]) -> str:
+def pump_note(lines: Iterable[ChannelLine], board: str = BOARD_CONNECTED) -> str:
     pumps = [line.name for line in lines if line.pump]
     if not pumps:
         return ""
     names = ", ".join(pumps)
+    if board == BOARD_SILENT:
+        return (
+            f"Pump: {names}. It stays wherever the board's firmware has it, and runs on "
+            "the firmware's default for the few seconds the new firmware takes to start."
+        )
     return (
         f"Pump: {names}. It is set to 100 % like every channel, and runs on the "
         "firmware's default for the few seconds the new firmware takes to start."
@@ -473,8 +567,10 @@ def _no_access_text(release: str, access: OpenFanDaemonWrite) -> str:
     )
 
 
-def confirm_text(method: str) -> str:
-    """The confirmation for who writes the file."""
+def confirm_text(method: str, board: str = BOARD_CONNECTED) -> str:
+    """The confirmation for who writes the file, and for which board."""
+    if board == BOARD_SILENT:
+        return CONFIRM_TEXT_SILENT_DAEMON if method == WRITE_DAEMON else CONFIRM_TEXT_SILENT
     return CONFIRM_TEXT_DAEMON if method == WRITE_DAEMON else CONFIRM_TEXT
 
 
@@ -506,19 +602,24 @@ def start_block_reason(
         return external_block
     if device is None:
         return "Reading the controller…"
-    if not device.present:
-        return "No OpenFAN controller is connected."
-    if live_link != "connected":
-        return f"The OpenFAN controller is not connected ({link_text(live_link).lower()})."
-    if not device.update_available:
-        first = device.update_refusals[0] if device.update_refusals else None
-        if first is None:
-            return "The daemon cannot start an update now."
-        # The daemon's own words; a refusal without them shows its token rather
-        # than nothing.
-        return first.message or f"The daemon cannot start an update now ({first.reason})."
-    if not (device.usb and device.usb.serial):
-        return "The daemon could not read the controller's USB serial number."
+    silent = device.silent_board
+    if silent is not None:
+        # DEC-484: no link to wait for — the board's silence is the point.
+        refusal = _refusal_text(silent.update_available, silent.update_refusals)
+        if refusal:
+            return refusal
+        if not (silent.usb and silent.usb.serial):
+            return "The daemon could not read the board's USB serial number."
+    else:
+        if not device.present:
+            return "No OpenFAN controller is connected."
+        if live_link != "connected":
+            return f"The OpenFAN controller is not connected ({link_text(live_link).lower()})."
+        refusal = _refusal_text(device.update_available, device.update_refusals)
+        if refusal:
+            return refusal
+        if not (device.usb and device.usb.serial):
+            return "The daemon could not read the controller's USB serial number."
     if inspection is None:
         return "Choose a firmware file."
     if not inspection.ok:
@@ -533,6 +634,18 @@ def start_block_reason(
     if not confirmed:
         return "Tick the confirmation first."
     return ""
+
+
+def _refusal_text(available: bool, refusals: list) -> str:
+    """The daemon's first reason an update could not start, or ``""``."""
+    if available:
+        return ""
+    first = refusals[0] if refusals else None
+    if first is None:
+        return "The daemon cannot start an update now."
+    # The daemon's own words; a refusal without them shows its token rather
+    # than nothing.
+    return first.message or f"The daemon cannot start an update now ({first.reason})."
 
 
 # ── Outcomes ──────────────────────────────────────────────────────────
@@ -561,6 +674,23 @@ class OutcomeView:
     detail: str = ""
 
 
+#: The channels of a board left in update mode, by whether it was parked first.
+_PARKED_HOLD = (
+    "Its OpenFAN channels should still hold the 100 % they were parked at, unless the "
+    "board has restarted."
+)
+_SILENT_HOLD = (
+    "Its OpenFAN channels should still hold whatever its old firmware last set, unless "
+    "the board has restarted."
+)
+
+
+def _hold(record: OpenFanMaintenanceRecord) -> str:
+    """What a board in update mode does with its channels (DEC-484: a silent
+    board was never parked)."""
+    return _SILENT_HOLD if record.board == BOARD_SILENT else _PARKED_HOLD
+
+
 _RECOVERY_STEPS = (
     "Copy a firmware file onto the board's RPI-RP2 drive — the prepared file, or the "
     "firmware you had before.",
@@ -576,8 +706,7 @@ _RECOVERY_STEPS = (
 _PARTIAL_WRITE_SUMMARY = (
     "The board is in update mode, or may be. Control-OFC had begun writing the firmware, "
     "so part of the board's flash is rewritten: it has no complete firmware to run until "
-    "one is copied onto it. Its OpenFAN channels should still hold the 100 % they were "
-    "parked at, unless the board has restarted."
+    "one is copied onto it."
 )
 _PARTIAL_WRITE_STEPS = (
     "Copy a firmware file onto the board's RPI-RP2 drive — the prepared file, or the "
@@ -592,8 +721,7 @@ _PARTIAL_WRITE_STEPS = (
 #: DEC-483: written and read back, but the board was not restarted from it.
 _WRITTEN_NOT_RESTARTED_SUMMARY = (
     "The board is in update mode, or may be. Control-OFC wrote the new firmware and read "
-    "every byte back, but the board did not restart from it. Its OpenFAN channels should "
-    "still hold the 100 % they were parked at, unless the board has restarted."
+    "every byte back, but the board did not restart from it."
 )
 _WRITTEN_NOT_RESTARTED_STEPS = (
     "Press the board's RESET button, or switch the PC off and on: the board then starts "
@@ -620,9 +748,7 @@ _OUTCOMES: dict[str, OutcomeView] = {
         NEEDS_RECOVERY,
         TONE_CRIT,
         "The board needs recovery",
-        "The board is in update mode, or may be, and no firmware was copied. Its OpenFAN "
-        "channels should still hold the 100 % they were parked at, unless the board has "
-        "restarted.",
+        "The board is in update mode, or may be, and no firmware was copied.",
         _RECOVERY_STEPS,
     ),
     FIRMWARE_COPIED_BOARD_NOT_BACK: OutcomeView(
@@ -670,7 +796,27 @@ def outcome_view(record: OpenFanMaintenanceRecord) -> OutcomeView | None:
         return None
     token = record.outcome or ""
     detail = record.outcome_detail or ""
-    if token == NO_FIRMWARE_CHANGE:
+    if token == NO_FIRMWARE_CHANGE and record.board == BOARD_SILENT:
+        # DEC-484: the board may have been signalled, and was never under fan
+        # control; how the run ended — answering after all, or not moved — is
+        # the daemon's detail.
+        if record.cancelled:
+            view = OutcomeView(
+                token,
+                TONE_INFO,
+                "Update cancelled",
+                "Nothing on the board was changed.",
+                ("Start again whenever you are ready.",),
+            )
+        else:
+            view = OutcomeView(
+                token,
+                TONE_WARN,
+                "No firmware change",
+                "The board was not updated, and nothing on it was changed.",
+                ("The reason is below. Deal with it, then start again.",),
+            )
+    elif token == NO_FIRMWARE_CHANGE:
         if record.cancelled:
             view = OutcomeView(
                 token,
@@ -710,7 +856,12 @@ def outcome_view(record: OpenFanMaintenanceRecord) -> OutcomeView | None:
             summary, steps = _WRITTEN_NOT_RESTARTED_SUMMARY, _WRITTEN_NOT_RESTARTED_STEPS
         else:
             summary, steps = _PARTIAL_WRITE_SUMMARY, _PARTIAL_WRITE_STEPS
-        view = OutcomeView(token, base.tone, base.title, summary, steps)
+        view = OutcomeView(token, base.tone, base.title, f"{summary} {_hold(record)}", steps)
+    elif token == NEEDS_RECOVERY:
+        base = _OUTCOMES[token]
+        view = OutcomeView(
+            token, base.tone, base.title, f"{base.summary} {_hold(record)}", base.steps
+        )
     elif token in _OUTCOMES:
         view = _OUTCOMES[token]
     else:
@@ -940,6 +1091,12 @@ def run_stages(record: OpenFanMaintenanceRecord) -> tuple[tuple[str, str], ...]:
     write = record.firmware_write
     shown = []
     for token, label in STAGES:
+        # DEC-484: a silent board is never parked, and asked for its buttons
+        # only when the signal did not move it.
+        if token == STAGE_PARKING and record.board == BOARD_SILENT:
+            continue
+        if token == STAGE_BOOT_BUTTON and token not in entered:
+            continue
         if token == STAGE_WRITING and write is None:
             continue
         if (
@@ -992,11 +1149,32 @@ def _stage_rows(record: OpenFanMaintenanceRecord) -> tuple[StageRow, ...]:
 def _instruction(record: OpenFanMaintenanceRecord) -> str:
     port = record.usb_port or "unknown"
     stage = record.stage
+    silent = record.board == BOARD_SILENT
     if stage == "preparing":
+        if silent:
+            return (
+                "Checking the board on its USB port. It does not answer, so nothing is "
+                "read from it and nothing is set on it."
+            )
         return "Checking the controller and reading what its firmware reports about itself."
-    if stage == "parking":
+    if stage == STAGE_PARKING:
         return "Setting every OpenFAN channel to 100 %."
+    if stage == STAGE_BOOT_BUTTON:
+        return (
+            "The board did not enter update mode by itself. Hold its BOOT button, press and "
+            f"release its RESET button, then release BOOT — the board on USB port {port}. "
+            "Its RPI-RP2 drive then appears and the update goes on. Cancel stops the update "
+            "without changing anything, unless the board is already restarting into update "
+            "mode — then the update goes on."
+        )
     if stage == "entering_bootloader":
+        if silent:
+            return (
+                "Asking the board once more whether it answers, then sending the 1200-baud "
+                "signal that puts it in update mode. Its RPI-RP2 drive should appear shortly; "
+                "once the board is on its way into update mode, the update goes on even if "
+                "Cancel is pressed."
+            )
         text = "Asking the board to enter update mode. Its RPI-RP2 drive should appear shortly."
         if record.bootloader_trigger == "1200_baud":
             text += (
@@ -1118,10 +1296,43 @@ def firmware_update_alert(summary: OpenFanMaintenanceSummary | None) -> CoolingA
     )
 
 
-def suppresses_fan_staleness(summary: OpenFanMaintenanceSummary | None, fan_id: str) -> bool:
-    """Whether an update's alert stands in for this fan's staleness (DEC-482).
-    Only the OpenFAN channels, and only while the daemon reports an update."""
-    return summary is not None and fan_id.startswith("openfan:")
+UPDATE_ALERT_SILENT = "openfan_update:silent_board"
+
+
+def silent_board_alert(board: OpenFanSilentBoardEntry | None) -> CoolingAlert | None:
+    """One warning naming an OpenFAN board on USB that does not answer (DEC-484).
+
+    The daemon reports one only on evidence — a probe opened the board's serial
+    device and had no answer — and only while no controller answers and no
+    update runs. Keyed on the board, so another board is another alert.
+    """
+    if board is None:
+        return None
+    # The port, never the serial: the event log carries this sentence into the
+    # support bundle, which keeps the board's serial out (DEC-481).
+    where = f" on USB port {board.usb_port}" if board.usb_port else " on USB"
+    return CoolingAlert(
+        key=f"{UPDATE_ALERT_SILENT}:{board.usb_serial}",
+        level="warning",
+        title="OpenFAN board not answering",
+        detail=(
+            f"The OpenFAN board{where} does not answer Control-OFC, so its fans are not "
+            "under fan control and a thermal emergency cannot reach them. Its firmware may "
+            "be one Control-OFC cannot talk to: Hardware → Update OpenFAN Firmware… can "
+            "update it."
+        ),
+    )
+
+
+def suppresses_fan_staleness(
+    summary: OpenFanMaintenanceSummary | None,
+    fan_id: str,
+    silent: OpenFanSilentBoardEntry | None = None,
+) -> bool:
+    """Whether one alert stands in for this fan's staleness: an update's
+    (DEC-482), or a board's that does not answer (DEC-484), the cause of that
+    staleness. Only the OpenFAN channels, and only while the daemon reports it."""
+    return (summary is not None or silent is not None) and fan_id.startswith("openfan:")
 
 
 # ── Support bundle ────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ from control_ofc.api.models import (
     HwmonHeader,
     OpenFanMaintenanceSummary,
     OpenFanRole,
+    OpenFanSilentBoardEntry,
     OperationMode,
     SensorReading,
 )
@@ -31,6 +32,7 @@ from control_ofc.services.cooling_watch import advisory_alert, pump_stall_alert,
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.openfan_firmware_view import (
     firmware_update_alert,
+    silent_board_alert,
     suppresses_fan_staleness,
 )
 from control_ofc.services.session_stats import SessionStatsTracker
@@ -143,6 +145,8 @@ class AppState(QObject):
         # DEC-482: the update the daemon reported in the poll that delivered
         # `fans` — what the stand-in for their staleness reads (`set_fans`).
         self._fans_update: OpenFanMaintenanceSummary | None = None
+        #: DEC-484: the silent OpenFAN board reported with the fans, as above.
+        self._fans_silent: OpenFanSilentBoardEntry | None = None
         self.hwmon_headers: list[HwmonHeader] = []
         # `ROLE-f` (DEC-475): each OpenFan channel's role and pump protection,
         # on the capabilities interval and after a role write. Empty when the
@@ -320,6 +324,7 @@ class AppState(QObject):
         # poll that ended an update, until that poll's fresh readings arrived.
         ds = self.daemon_status
         self._fans_update = ds.openfan_maintenance if ds else None
+        self._fans_silent = ds.openfan_silent_board if ds else None
         # Before the signal, so a `fans_updated` slot reads this poll's answer.
         self._stall_hold.update(fans, self._clock())
         self.fans_updated.emit(fans)
@@ -630,8 +635,14 @@ class AppState(QObject):
         # A reading is judged against the update reported with it (`set_fans`).
         update = ds.openfan_maintenance if ds and not self._thermal_unreachable else None
         fans_update = None if self._thermal_unreachable else self._fans_update
+        # DEC-484: a board that does not answer, the same way: its one alert
+        # stands in for its channels' staleness.
+        silent = ds.openfan_silent_board if ds and not self._thermal_unreachable else None
+        fans_silent = None if self._thermal_unreachable else self._fans_silent
         for f in self.fans:
-            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(fans_update, f.id):
+            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(
+                fans_update, f.id, fans_silent
+            ):
                 conditions.append(
                     AlertCondition(
                         key=f"fan_stale:{f.id}",
@@ -672,6 +683,9 @@ class AppState(QObject):
         update_alert = firmware_update_alert(update)
         if update_alert is not None:
             watch.append((update_alert, "openfan"))
+        silent_alert = silent_board_alert(silent)
+        if silent_alert is not None:
+            watch.append((silent_alert, "openfan"))
         for c, source in watch:
             conditions.append(
                 AlertCondition(

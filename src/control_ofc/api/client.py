@@ -1117,7 +1117,12 @@ class DaemonClient:
         )
 
     def start_openfan_maintenance(
-        self, expected_usb_serial: str, firmware: dict, *, daemon_write: bool = False
+        self,
+        expected_usb_serial: str,
+        firmware: dict,
+        *,
+        daemon_write: bool = False,
+        board: str = "connected",
     ) -> str:
         """POST /fans/openfan/maintenance — start a firmware update; returns its run id.
 
@@ -1125,13 +1130,18 @@ class DaemonClient:
         checked file. With *daemon_write* the daemon writes the file it was last
         given by :meth:`stage_openfan_firmware` itself (DEC-483); without it the
         body carries no ``write`` and the user copies the file, as every daemon
-        reads it. The daemon re-checks every condition atomically and answers
-        ``409`` with ``details.reason`` when one fails; the run then proceeds
+        reads it. *board* ``"silent"`` updates the OpenFAN board on USB that does
+        not answer (DEC-484; gate on ``control.openfan_firmware_silent_update``);
+        the connected board's start carries no ``board``, as every daemon reads
+        it. The daemon re-checks every condition atomically and answers ``409``
+        with ``details.reason`` when one fails; the run then proceeds
         daemon-side and is read back with :meth:`openfan_maintenance_status`.
         """
         body: dict[str, Any] = {"expected_usb_serial": expected_usb_serial, "firmware": firmware}
         if daemon_write:
             body["write"] = "daemon"
+        if board != "connected":
+            body["board"] = board
         data = self._post("/fans/openfan/maintenance", json=body)
         run_id = data.get("run_id")
         return run_id if isinstance(run_id, str) else ""

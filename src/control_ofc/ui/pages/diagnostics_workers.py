@@ -901,11 +901,14 @@ class _OpenFanFirmwareWorker(_SocketWorker):
             lambda category, message: self.stage_failed.emit(category, message, sha256),
         )
 
-    @Slot(str, dict, object)
-    def do_start(self, expected_usb_serial: str, firmware: dict, write_data: object) -> None:
+    @Slot(str, dict, object, str)
+    def do_start(
+        self, expected_usb_serial: str, firmware: dict, write_data: object, board: str
+    ) -> None:
         # Sent only from the window's Start, which is unreachable until the file
         # passed every check and the user ticked the confirmation. *write_data*
-        # is the file's bytes when the daemon is to write it, else None.
+        # is the file's bytes when the daemon is to write it, else None; *board*
+        # is which board the update is for (DEC-484).
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
         from control_ofc.services.openfan_firmware_view import VERDICT_DAEMON_WRITE
 
@@ -943,7 +946,7 @@ class _OpenFanFirmwareWorker(_SocketWorker):
                     return
             try:
                 run_id = client.start_openfan_maintenance(
-                    expected_usb_serial, firmware, daemon_write=daemon_write
+                    expected_usb_serial, firmware, daemon_write=daemon_write, board=board
                 )
             except DaemonError as e:
                 answered = not isinstance(e, (DaemonTimeout, DaemonUnavailable))

@@ -55,6 +55,9 @@ def next_action_for_warning(warning: dict) -> str | None:
             "The daemon ends this by itself once temperatures fall; the System State "
             "page shows the limit it acts on."
         )
+    # DEC-484: a board on USB that does not answer — the window updates it.
+    if key.startswith("openfan_update:silent_board"):
+        return "Open Hardware → Update OpenFAN Firmware… to update the board that does not answer."
     # DEC-482: the one alert that stands in for the OpenFAN fans during an update.
     if key.startswith("openfan_update:"):
         return (

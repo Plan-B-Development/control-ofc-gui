@@ -1,4 +1,4 @@
-"""The "Update OpenFAN Firmware" window (DEC-481, DEC-483).
+"""The "Update OpenFAN Firmware" window (DEC-481, DEC-483, DEC-484).
 
 A thin renderer over ``services.openfan_firmware_view``; the checks on the file
 are ``services.uf2``. Every decision about wording lives there and is unit-tested
@@ -15,7 +15,9 @@ run up again from ``GET /fans/openfan/maintenance``.
 
 The GUI never touches the board: the daemon puts it in update mode, watches it
 and — for a published release it knows, with the opt-in USB access — writes the
-file itself; otherwise the user copies the file.
+file itself; otherwise the user copies the file. The board is the connected
+controller, or one on USB that does not answer (DEC-484), whichever the
+daemon's device answer offers.
 """
 
 from __future__ import annotations
@@ -48,8 +50,11 @@ from control_ofc.api.models import (
     OpenFanFirmwareStaged,
     OpenFanMaintenanceRecord,
     OpenFanMaintenanceSummary,
+    OpenFanSilentBoardEntry,
 )
 from control_ofc.services.openfan_firmware_view import (
+    BOARD_CONNECTED,
+    CANCEL_TOO_LATE,
     CLOSE_NOTE,
     COOLING_WINDOWS,
     INTRO,
@@ -69,6 +74,7 @@ from control_ofc.services.openfan_firmware_view import (
     WritePlan,
     build_run_view,
     confirm_text,
+    cooling_windows,
     device_rows,
     evidence_rows,
     file_findings,
@@ -77,6 +83,8 @@ from control_ofc.services.openfan_firmware_view import (
     outcome_view,
     pump_note,
     start_block_reason,
+    target_usb,
+    update_board,
     write_plan,
     write_rows,
 )
@@ -203,9 +211,9 @@ class OpenFanFirmwareDialog(ModalDialog):
     device_requested = Signal()
     #: The checked file's bytes, for the daemon's verdict on it (DEC-483).
     stage_requested = Signal(object)
-    #: Expected USB serial, firmware claim, and the file's bytes when the
-    #: daemon is to write it (else None).
-    start_requested = Signal(str, dict, object)
+    #: Expected USB serial, firmware claim, the file's bytes when the daemon
+    #: is to write it (else None), and which board (DEC-484).
+    start_requested = Signal(str, dict, object, str)
     poll_requested = Signal()
     cancel_requested = Signal()
 
@@ -230,6 +238,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._device: OpenFanDevice | None = None
         self._live_link: str | None = None
         self._live_update: OpenFanMaintenanceSummary | None = None
+        #: DEC-484: the silent board the poll reports, by its serial.
+        self._live_silent: str | None = None
+        self._channels: list[ChannelLine] = []
         self._external_block = ""
         self._inspection: Uf2Inspection | None = None
         self._prepared: Path | None = None
@@ -252,6 +263,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._unconfirmed = False
         self._unconfirmed_misses = 0
         self._poll_in_flight = False
+        #: Cancel was clicked for the run this window follows: until that run
+        #: ends, the status line says what became of the cancel.
+        self._cancel_sent = False
         self._last_record: OpenFanMaintenanceRecord | None = None
 
         body = self.body_layout()
@@ -299,8 +313,12 @@ class OpenFanFirmwareDialog(ModalDialog):
         setup.addWidget(releases)
 
         setup.addWidget(_heading("Cooling during the update", "OfwDialog_Label_coolingHeading"))
-        for index, text in enumerate(COOLING_WINDOWS):
-            setup.addWidget(_wrapped(f"•  {text}", f"OfwDialog_Label_cooling{index}"))
+        # Worded for the board the update is for (DEC-484): `_render_device`.
+        self._cooling_labels = [
+            _wrapped("", f"OfwDialog_Label_cooling{index}") for index in range(len(COOLING_WINDOWS))
+        ]
+        for label in self._cooling_labels:
+            setup.addWidget(label)
         self._channels_lbl = _wrapped("", "OfwDialog_Label_channels", "CardMeta")
         setup.addWidget(self._channels_lbl)
         self._pump_lbl = _wrapped("", "OfwDialog_Label_pump", "WarningChip")
@@ -436,25 +454,39 @@ class OpenFanFirmwareDialog(ModalDialog):
         return self._run_id
 
     def set_channels(self, channels: list[ChannelLine]) -> None:
+        self._channels = list(channels)
         names = ", ".join(line.text for line in channels)
         self._channels_lbl.setText(
             f"OpenFAN channels: {names}." if names else "No OpenFAN channel is reporting."
         )
-        note = pump_note(channels)
+        self._render_pump_note()
+
+    def _render_pump_note(self) -> None:
+        note = pump_note(self._channels, self._board())
         self._pump_lbl.setText(note)
         self._pump_lbl.setVisible(bool(note))
 
-    def set_live_status(self, link: str | None, update: OpenFanMaintenanceSummary | None) -> None:
+    def set_live_status(
+        self,
+        link: str | None,
+        update: OpenFanMaintenanceSummary | None,
+        silent: OpenFanSilentBoardEntry | None = None,
+    ) -> None:
         """The poll's view of the controller, every second.
 
         A link that comes back connected re-reads the controller, so the
-        refusals shown are current; an update this window is not following —
+        refusals shown are current, and so does a board that does not answer
+        appearing or going (DEC-484); an update this window is not following —
         started elsewhere, or before the window opened — is picked up.
         """
         was = self._live_link
+        was_silent = self._live_silent
         self._live_link = link
         self._live_update = update
-        if self._mode == MODE_SETUP and link == "connected" and was != "connected":
+        self._live_silent = silent.usb_serial if silent is not None else None
+        if self._mode == MODE_SETUP and (
+            (link == "connected" and was != "connected") or self._live_silent != was_silent
+        ):
             self.device_requested.emit()
         if (
             update is not None
@@ -492,12 +524,19 @@ class OpenFanFirmwareDialog(ModalDialog):
     def apply_device_error(self, _category: str, message: str) -> None:
         self._show_status(f"The controller could not be read: {message}")
 
+    def _board(self) -> str:
+        """Which board an update started now is for (DEC-484)."""
+        return BOARD_CONNECTED if self._demo else update_board(self._device)
+
     def _render_device(self) -> None:
         if self._demo:
             rows = [("Controller", "Demo mode has no OpenFAN controller.")]
         else:
             rows = device_rows(self._device)
         self._fill_grid(self._device_grid, rows, "OfwDialog_Device")
+        for label, text in zip(self._cooling_labels, cooling_windows(self._board()), strict=True):
+            label.setText(f"•  {text}")
+        self._render_pump_note()
 
     # ── the file ─────────────────────────────────────────────────────
 
@@ -585,9 +624,9 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._write_lbl.setText(plan.text)
         set_chip_class(self._write_lbl, _TONE_CHIP.get(plan.tone, "CardMeta"))
         self._write_lbl.setVisible(bool(plan.text))
-        # The confirmation names who writes the file, so a change of writer
-        # takes it back.
-        text = confirm_text(plan.method)
+        # The confirmation names who writes the file and what the board's fans
+        # do, so a change of either takes it back.
+        text = confirm_text(plan.method, self._board())
         if self._confirm.text() != text:
             self._confirm.setText(text)
             self._confirm.setChecked(False)
@@ -659,11 +698,13 @@ class OpenFanFirmwareDialog(ModalDialog):
         # because the request it sends is the user's go-ahead.
         if self._mode != MODE_SETUP or self._start_reason():
             return
-        if self._inspection is None or self._device is None or self._device.usb is None:
+        usb = target_usb(self._device)
+        if self._inspection is None or usb is None:
             return
-        serial = self._device.usb.serial
+        serial = usb.serial
         if not serial:
             return
+        board = self._board()
         self._starting = True
         self._stale_run_id = self._last_record.run_id if self._last_record else ""
         self._start_clicked_ms = self._now_ms()
@@ -673,7 +714,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._show_status("Starting…")
         self._refresh_start()
         write = self._data if self._plan().method == WRITE_DAEMON else None
-        self.start_requested.emit(serial, self._inspection.claim(), write)
+        self.start_requested.emit(serial, self._inspection.claim(), write, board)
         self._timer.start()
 
     @Slot(str)
@@ -764,6 +805,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         elif record is None:
             if self._run_id:
                 self._run_id = ""
+                self._cancel_sent = False
                 self._timer.stop()
                 self._set_mode(MODE_SETUP)
                 self._show_status(
@@ -842,6 +884,15 @@ class OpenFanFirmwareDialog(ModalDialog):
             if view.can_cancel
             else "Once the board is asked to enter update mode, the update cannot be cancelled."
         )
+        if self._cancel_sent:
+            if not view.running:
+                # The result says what became of it.
+                self._cancel_sent = False
+                self._show_status("")
+            elif not record.cancellable:
+                # The daemon took the cancel, then the board went on into its
+                # bootloader — where stopping would leave it (DEC-484).
+                self._show_status(CANCEL_TOO_LATE)
         if view.outcome is not None:
             self._render_outcome(record, view)
 
@@ -909,6 +960,7 @@ class OpenFanFirmwareDialog(ModalDialog):
     @Slot()
     def _on_cancel(self) -> None:
         self._cancel_btn.setEnabled(False)
+        self._cancel_sent = True
         self._show_status("Cancelling…")
         self.cancel_requested.emit()
 
@@ -925,6 +977,7 @@ class OpenFanFirmwareDialog(ModalDialog):
     def _on_again(self) -> None:
         """Back to the start page for another update."""
         self._run_id = ""
+        self._cancel_sent = False
         self._confirm.setChecked(False)
         self._show_status("")
         self._render_last()

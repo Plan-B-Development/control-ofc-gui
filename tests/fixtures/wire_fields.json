@@ -1585,14 +1585,16 @@
         "fw_info",
         "update_available",
         "update_refusals",
-        "daemon_write"
+        "daemon_write",
+        "silent_board"
       ],
       "must_be_read": [
         "present",
         "link",
         "update_available",
         "update_refusals",
-        "daemon_write"
+        "daemon_write",
+        "silent_board"
       ],
       "not_assertable": {
         "port": "Shared with another declared struct (UsbDevice), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The Controller section shows the serial device.",
@@ -1606,13 +1608,14 @@
       "unmodelled": {
         "api_version": "The envelope's version. Compatibility is the capability handshake (control.openfan_firmware_maintenance), never a matched version number."
       },
-      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. DEC-483 added daemon_write: whether the daemon may write the firmware itself."
+      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. DEC-483 added daemon_write: whether the daemon may write the firmware itself. DEC-484 added silent_board: an OpenFAN board on USB that does not answer, and whether its update could start."
     },
     {
       "daemon": "UsbDevice",
       "gui": "OpenFanUsbDevice",
       "endpoints": [
         "GET /fans/openfan/device .usb",
+        "GET /fans/openfan/device .silent_board.usb",
         "GET /fans/openfan/maintenance .before.usb, .after.usb"
       ],
       "fields": [
@@ -1678,6 +1681,49 @@
       "note": "Enrolled by DEC-483 (the daemon writes the OpenFAN firmware itself): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. Absent from a daemon without control.openfan_firmware_write."
     },
     {
+      "daemon": "OpenFanSilentBoard",
+      "gui": "OpenFanSilentBoard",
+      "endpoints": [
+        "GET /fans/openfan/device .silent_board"
+      ],
+      "fields": [
+        "usb",
+        "interface_number",
+        "tty",
+        "update_available",
+        "update_refusals"
+      ],
+      "must_be_read": [
+        "update_available",
+        "update_refusals"
+      ],
+      "not_assertable": {
+        "usb": "Shared with another declared struct (OpenFanDeviceResponse, BoardSnapshot), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The Controller section shows the silent board's serial number and port, and the start sends usb.serial as expected_usb_serial."
+      },
+      "inert": {
+        "interface_number": "Not shown: the daemon signals and reopens that interface by itself.",
+        "tty": "Not shown: the window names the USB port instead."
+      },
+      "note": "Enrolled by DEC-484 (updating a silent OpenFAN board): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. Absent from a daemon without control.openfan_firmware_silent_update."
+    },
+    {
+      "daemon": "OpenFanSilentBoardEntry",
+      "gui": "OpenFanSilentBoardEntry",
+      "endpoints": [
+        "GET /status .openfan_silent_board",
+        "GET /poll .status.openfan_silent_board"
+      ],
+      "fields": [
+        "usb_serial",
+        "usb_port"
+      ],
+      "must_be_read": [
+        "usb_serial",
+        "usb_port"
+      ],
+      "note": "Enrolled by DEC-484 (updating a silent OpenFAN board): services/app_state.py raises the silent-board alert on it, and the Hardware page offers the update. Absent from a daemon without control.openfan_firmware_silent_update."
+    },
+    {
       "daemon": "OpenFanFirmwareStagedResponse",
       "gui": "OpenFanFirmwareStaged",
       "endpoints": [
@@ -1740,7 +1786,8 @@
         "before",
         "after",
         "evidence",
-        "firmware_write"
+        "firmware_write",
+        "board"
       ],
       "must_be_read": [
         "stage_deadline_unix_ms",
@@ -1768,7 +1815,8 @@
         "state": "The name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous). OpenFanMaintenanceRecord.is_running reads it.",
         "stage": "Shared with another declared struct (OpenFanMaintenanceSummary, StageTiming), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The stage rows and the current instruction are built from it.",
         "started_unix_ms": "Shared with another declared struct (StageTiming and the diagnostic runs), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. A window that has just clicked Start ignores any run that began before the click.",
-        "outcome": "Shared with another declared struct (OpenFanMaintenanceSummary and the diagnostic runs), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The result's title, tone and steps are chosen on it."
+        "outcome": "Shared with another declared struct (OpenFanMaintenanceSummary and the diagnostic runs), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The result's title, tone and steps are chosen on it.",
+        "board": "Shared with another declared struct (HardwareDiagnosticsResponse), so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule); no read claim is made. The window words a silent board's run on it (DEC-484)."
       },
       "inert": {
         "stage_started_unix_ms": "The stage rows time each stage from stages[]; the countdown uses the deadline.",
@@ -1777,7 +1825,7 @@
         "interface_number": "Not shown: the daemon reopens the interface it used by itself.",
         "tty": "The window names the USB port and the drive instead; the support bundle keeps the record whole."
       },
-      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. expected_usb_serial is read by the support bundle's redaction (openfan_firmware_view.bundle_record). DEC-483 added firmware_write: the daemon's own write, null when the file is copied by hand."
+      "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. expected_usb_serial is read by the support bundle's redaction (openfan_firmware_view.bundle_record). DEC-483 added firmware_write: the daemon's own write, null when the file is copied by hand. DEC-484 added board: connected or silent."
     },
     {
       "daemon": "FirmwareWrite",

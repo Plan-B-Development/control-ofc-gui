@@ -1047,7 +1047,9 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    a published release itself while `daemon_write.available`, and says who writes it; shown where
    `control.openfan_firmware_maintenance` is advertised and a controller is present or an update
    is reported, enabled while the link is `connected` and no PWM Test Report runs — or whenever
-   an update is reported, so it can be followed), **Startup / Lifecycle Recording**, **Thermal
+   an update is reported, so it can be followed; with `control.openfan_firmware_silent_update`
+   (DEC-484) also shown and enabled while `status.openfan_silent_board` names a board that does
+   not answer, which the window then updates without parking), **Startup / Lifecycle Recording**, **Thermal
    Observation** (capability-gated, DEC-335), **AIO Validation**, and **Advanced (System
    State)**, a shortcut to the System State page's verify controls.
 5. **Super-I/O Architecture** (`Hardware_Card_superio`) — per-chip driver detection with

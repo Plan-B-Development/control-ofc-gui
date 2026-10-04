@@ -24,6 +24,14 @@
   it, a progress bar follows the write, and a write that cannot finish falls back to the copy by hand with
   the reason. Any other file is copied by hand as before, and the 2023 FW_01 binary — a pre-production
   debug build that drives no fan — is refused outright (DEC-483).
+- **Update an OpenFAN board that does not answer.** A board on USB running firmware Control-OFC cannot
+  talk to — the 2023 FW_01 build, a firmware with other commands, a hung one, or one an earlier update
+  left it with — is named in one *OpenFAN board not answering* warning, which stands in for its fans'
+  *telemetry stale* warnings, and **Update OpenFAN Firmware…** updates it. Nothing is set to 100 % first —
+  the board takes no commands, and the window and its confirmation say so; when the daemon's signal does
+  not put the board in update mode, the window asks you to hold BOOT and press RESET. A cancel that
+  comes as the board is already restarting into update mode cannot stop it, and the window says so.
+  Needs control-ofc-daemon 3.8.0. Not yet tried on real hardware (DEC-484).
 - **One alert for an OpenFAN firmware update.** While an update runs, a single *OpenFAN firmware update
   in progress* warning — or a *needs recovery* error — stands in for the OpenFAN fans' *telemetry stale*
   warnings, which are expected while the board is away. A stalled fan, every other fan's warnings and the
