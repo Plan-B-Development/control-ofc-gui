@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-10-04
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The OpenFAN firmware update
+needs control-ofc-daemon 4.0.0; with an older daemon **Update OpenFAN Firmware…** does not appear and
+everything else is unchanged. The major version marks the OpenFAN firmware update: nothing is removed, and
+profiles, settings and themes load as before.
+
 ### Added
 
 - **Update OpenFAN Firmware…, on the Hardware page.** Installs a firmware file you downloaded onto the
@@ -14,10 +21,10 @@
   file you copy it cannot prove the exact build, and says so. It follows the run the daemon names for its
   start, and a start the daemon did not answer is checked with the daemon rather than called failed.
   Closing the window never stops an update, and a board left needing recovery is shown with the steps to
-  recover it, after a daemon restart too. Needs control-ofc-daemon 3.8.0; with an older daemon the button
+  recover it, after a daemon restart too. Needs control-ofc-daemon 4.0.0; with an older daemon the button
   does not appear (DEC-481).
 - **Control-OFC can write the OpenFAN firmware itself.** The window hands a checked file to
-  control-ofc-daemon 3.8.0, and when it is a published release the daemon knows and the daemon's opt-in
+  control-ofc-daemon 4.0.0, and when it is a published release the daemon knows and the daemon's opt-in
   `openfan-firmware-write` drop-in is installed, the daemon writes it: it checks the board in update mode
   is yours by its flash id, writes the file, reads every byte back and restarts the board — reported as
   *Update complete — exact build verified*. The window says who writes the file, the confirmation names
@@ -31,7 +38,7 @@
   the board takes no commands, and the window and its confirmation say so; when the daemon's signal does
   not put the board in update mode, the window asks you to hold BOOT and press RESET. A cancel that
   comes as the board is already restarting into update mode cannot stop it, and the window says so.
-  Needs control-ofc-daemon 3.8.0. Not yet tried on real hardware (DEC-484).
+  Needs control-ofc-daemon 4.0.0. Not yet tried on real hardware (DEC-484).
 - **One alert for an OpenFAN firmware update.** While an update runs, a single *OpenFAN firmware update
   in progress* warning — or a *needs recovery* error — stands in for the OpenFAN fans' *telemetry stale*
   warnings, which are expected while the board is away. A stalled fan, every other fan's warnings and the

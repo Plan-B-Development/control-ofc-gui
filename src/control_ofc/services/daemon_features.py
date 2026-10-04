@@ -83,15 +83,15 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # (stall and restart duties). `/ofc:release` confirms the version.
         "openfan_calibration": "3.1.0",
         # DEC-481, control.openfan_firmware_maintenance. The firmware update
-        # from a local file, Phase 1. `/ofc:release` confirms the version.
-        "openfan_firmware_maintenance": "3.8.0",
+        # from a local file, Phase 1. Shipped in daemon 4.0.0.
+        "openfan_firmware_maintenance": "4.0.0",
         # DEC-483, control.openfan_firmware_write. The daemon writes a published
-        # OpenFAN release itself, Phase 2. `/ofc:release` confirms the version.
-        "openfan_firmware_write": "3.8.0",
+        # OpenFAN release itself, Phase 2. Shipped in daemon 4.0.0.
+        "openfan_firmware_write": "4.0.0",
         # DEC-484, control.openfan_firmware_silent_update. An OpenFAN board on
-        # USB that does not answer can be updated, Phase 2b. `/ofc:release`
-        # confirms the version.
-        "openfan_firmware_silent_update": "3.8.0",
+        # USB that does not answer can be updated, Phase 2b. Shipped in daemon
+        # 4.0.0.
+        "openfan_firmware_silent_update": "4.0.0",
         # DEC-442, control.canonical_chip_names. Chip names and ids survive the
         # it87 v2.0 board-suffix rename. Shipped in daemon 3.0.0.
         "canonical_chip_names": "3.0.0",

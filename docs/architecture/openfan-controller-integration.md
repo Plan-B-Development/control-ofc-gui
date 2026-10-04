@@ -190,7 +190,7 @@ put the link one frame behind and cached `SetPwm` acknowledgements as tachometer
 
 The poll loop and the engine send **three** commands, and only these
 (`serial/protocol.rs::Command`): `ReadAllRpm`, `ReadRpm` and `SetPwm`. The firmware update
-(DEC-481, daemon ≥ 3.8.0) adds three more, sent only by the update or the controller-detail
+(DEC-481, daemon ≥ 4.0.0) adds three more, sent only by the update or the controller-detail
 read behind it — see [Commands the firmware update sends](#commands-the-firmware-update-sends-dec-481). The firmware also implements `0x03` SetAllPwm
 (one duty on every channel) and `0x04` SetTargetRpm (closed-loop RPM through its EMC2305);
 the daemon has sent neither since `5d8847c` (first released in daemon 2.5.1), and a
