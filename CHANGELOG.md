@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [3.6.1] — 2026-10-04
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Judging a second AMD GPU by its
+own card and the fanless-chip wording need control-ofc-daemon 3.7.0; with an older daemon the chip wording is
+unchanged and a second card's control method reads "unknown".
+
 ### Fixed
 
 - **A missing chip that carries no fan header no longer reads "missing PWM headers".** On a B450 AORUS
