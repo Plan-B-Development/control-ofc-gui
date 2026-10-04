@@ -1322,8 +1322,8 @@ def format_bound_driver_status(
     NCT6687D the read-only in-kernel nct6683 bound, which needs nct6687d for
     fan control. Never the reverse: an nct6683 chip the out-of-tree nct6687
     bound must not be told to load the in-kernel driver. The daemon's
-    name-keyed guess is not printed, because for nct6686 it disagrees with this
-    table (`BRD-ac`).
+    name-keyed guess is not printed: the observed driver supersedes it. (Since
+    `BRD-ac` the two agree that an unbound nct6686 belongs to nct6683.)
     """
     where = "mainline kernel" if in_mainline else "out-of-tree"
     text = f"{bound_driver} bound ({where})"

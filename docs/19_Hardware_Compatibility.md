@@ -567,6 +567,18 @@ every board except Mitac OEM systems, and has no `pwmN_enable`. So writes are
 refused, not accepted and ignored — this section used to say the opposite. Which
 chip carries which header is per board: see the per-generation tables above.
 
+**An NCT6686D with no driver bound is pointed at the in-kernel `nct6683`** — by
+the daemon's load recommendation and by the GUI's chip guidance alike (until
+`BRD-ac` the daemon named the out-of-tree `nct6687`). That gets you monitoring
+without an out-of-tree module; for fan control, pick one of the drivers below for
+your board. In-kernel PWM writes on ASRock boards await upstream work: Johan
+Dahlin's series
+["hwmon: (nct6683) Fan control for ASRock B850 Steel Legend WiFi"](https://ratatoskr.run/lkml/2026/08/17457921/t)
+(posted 2026-08-25: write retries, `pwmN_enable`, restore on unload, and write
+enable for that one board) drew a request for a rework from the hwmon maintainer
+on 2026-09-17 and is not merged (checked 2026-10-04). Even once merged it enables
+writes per board, not for every NCT6686D.
+
 **Alternative drivers for ASRock NCT668x boards:**
 
 | Driver | Repository | Supported boards |
