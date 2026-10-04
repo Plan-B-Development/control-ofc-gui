@@ -35,6 +35,7 @@ from control_ofc.services.control_path_view import (
     build_control_path_view,
 )
 from control_ofc.services.preflight_view import PreflightView, build_preflight_view
+from control_ofc.services.run_contact_view import live_run_error_text
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
@@ -71,6 +72,10 @@ class ControlPathDiscoveryDialog(ModalDialog):
         self._started = False
         # P8-e, see `_on_poll_tick`.
         self._poll_in_flight = False
+        # PTA-v: a run the daemon has answered for as ours and running. Only
+        # then does a failed request leave polling and Cancel alone.
+        self._run_live = False
+        self._failures = 0
         self._preflight = build_preflight_view(None)
 
         body = self.body_layout()
@@ -198,6 +203,8 @@ class ControlPathDiscoveryDialog(ModalDialog):
     def _on_start(self) -> None:
         self._started = True
         self._poll_in_flight = False
+        self._run_live = False
+        self._failures = 0
         self._start_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._status_lbl.setText("Starting…")
@@ -326,10 +333,12 @@ class ControlPathDiscoveryDialog(ModalDialog):
     def apply_run(self, status) -> None:
         """Render a status snapshot. Safe to call with ``None``."""
         self._poll_in_flight = False
+        self._failures = 0
         run = getattr(status, "run", None) if status is not None else None
         if run is not None and not self._is_ours(run):
             return
         if run is None and self._started:
+            self._run_live = False
             # A run we started that the daemon no longer knows about — it
             # restarted mid-sweep. Terminal, not "not started yet"; without this
             # the timer polls forever against a dialog reading "Ready to start."
@@ -344,6 +353,7 @@ class ControlPathDiscoveryDialog(ModalDialog):
             return
         view = build_control_path_view(run, header_label=self._header_label)
         self._render(view)
+        self._run_live = run is not None and view.running and self._started
         if run is not None and not view.running and self._started:
             self._timer.stop()
             self._cancel_btn.setEnabled(False)
@@ -352,15 +362,29 @@ class ControlPathDiscoveryDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_error(self, category: str, message: str) -> None:
+        """Show a failed request — and end the run only if it was never live.
+
+        Once a snapshot has shown our run running, the daemon owns it: a poll
+        that timed out, or a cancel that lost the race with the run's own end,
+        says nothing about whether it is still going. So polling and Cancel stay
+        (`PTA-v`, `U11`) and only the wording escalates; the next snapshot, or a
+        ``None`` (the run is gone), decides. A refused start ends here as before.
+        """
         self._poll_in_flight = False
+        # A safety refusal is protection, not failure — show the daemon's own
+        # words rather than dressing them as an error.
+        detail = (
+            message if category == "unavailable" else f"Control-path discovery error: {message}"
+        )
+        if self._run_live:
+            self._failures += 1
+            self._cancel_btn.setEnabled(True)
+            self._status_lbl.setText(live_run_error_text(self._failures, detail))
+            return
         self._timer.stop()
         self._cancel_btn.setEnabled(False)
         self._start_btn.setEnabled(True)
-        # A safety refusal is protection, not failure — show the daemon's own
-        # words rather than dressing them as an error.
-        self._status_lbl.setText(
-            message if category == "unavailable" else f"Control-path discovery error: {message}"
-        )
+        self._status_lbl.setText(detail)
 
     def _render(self, view: ControlPathView) -> None:
         rows = len(view.candidates) + len(view.quiet)

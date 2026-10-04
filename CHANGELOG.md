@@ -17,6 +17,11 @@
 - **Verify All's messages no longer keep the last sweep's colour.** "No writable headers to test.",
   "Cannot verify: no daemon connection" and the other messages shown before or instead of a sweep's
   result were painted green or red when they followed one; they are now neutral (`PTA-t`).
+- **One failed poll no longer abandons a running characterisation or control-path run.** The dialog
+  stopped polling and disabled *Cancel run* on any failed request, while the daemon carried on with the
+  sweep. Once a run is known to be live, the dialog now keeps polling and keeps *Cancel run* (a failed
+  cancel can be retried), shows a connection problem, and says it has lost contact after three failures
+  in a row. A refused start ends the run as before (`PTA-v`).
 
 ## [3.6.0] — 2026-10-03
 

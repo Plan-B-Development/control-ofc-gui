@@ -753,8 +753,10 @@ class TestSystemStatePageCharacterizationCallSite:
         )
         assert built[0]._table.rowCount() == 1
 
+        # The run is live, so the error is reported inside the live-run wording
+        # (PTA-v) — the routing is what is under test, so assert the words arrive.
         page._on_char_error("unavailable", "Cannot run while hot: Tctl at 91.0°C")
-        assert built[0]._status_lbl.text() == "Cannot run while hot: Tctl at 91.0°C"
+        assert "Cannot run while hot: Tctl at 91.0°C" in built[0]._status_lbl.text()
 
     def test_no_dialog_opens_without_the_capability(self, qtbot, monkeypatch):
         page, _ = self._page(qtbot, _header(), characterization=False)

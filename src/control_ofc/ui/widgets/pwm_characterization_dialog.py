@@ -35,6 +35,7 @@ from control_ofc.services.characterization_view import (
 )
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.preflight_view import PreflightView, build_preflight_view
+from control_ofc.services.run_contact_view import live_run_error_text
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.dialog import ModalDialog
 from control_ofc.ui.components.tables import apply_dense_table
@@ -149,6 +150,10 @@ class PwmCharacterizationDialog(ModalDialog):
         # outstanding one. On a busy socket that turns a slow reply into an
         # unbounded backlog, and every queued reply then renders in turn.
         self._poll_in_flight = False
+        # PTA-v: a run the daemon has answered for as ours and running. Only
+        # then does a failed request leave polling and Cancel alone.
+        self._run_live = False
+        self._failures = 0
         # Through the registry, never a raw `getattr` chain: one capability flag
         # gets ONE gating shape. The two shapes that used to coexist here and in
         # `hardware_page._supported_session_diagnostics` are what let DEC-334
@@ -328,6 +333,8 @@ class PwmCharacterizationDialog(ModalDialog):
         bidirectional = True if self._behaviour_supported else None
         stability = None
         self._poll_in_flight = False
+        self._run_live = False
+        self._failures = 0
         self.start_requested.emit(self._header_id, None, None, bidirectional, stability)
         self._timer.start()
 
@@ -438,6 +445,7 @@ class PwmCharacterizationDialog(ModalDialog):
     def apply_run(self, run) -> None:
         """Render a run snapshot. Safe to call with ``None`` (nothing started)."""
         self._poll_in_flight = False
+        self._failures = 0
         if run is not None and not self._is_ours(run):
             return
         # A run we started that the daemon no longer knows about (it restarted
@@ -445,6 +453,7 @@ class PwmCharacterizationDialog(ModalDialog):
         # Without this the poll timer runs forever against a dialog that reads
         # "Ready to start." — a silent stall rather than an answer.
         if run is None and self._started:
+            self._run_live = False
             self._timer.stop()
             self._cancel_btn.setEnabled(False)
             self._start_btn.setEnabled(True)
@@ -456,6 +465,7 @@ class PwmCharacterizationDialog(ModalDialog):
             return
         view = build_characterization_view(run, header_label=self._header_label)
         self._render(view)
+        self._run_live = run is not None and view.running and self._started
         if run is not None and not view.running and self._started:
             self._finished = True
             self._timer.stop()
@@ -465,16 +475,27 @@ class PwmCharacterizationDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_error(self, category: str, message: str) -> None:
+        """Show a failed request — and end the run only if it was never live.
+
+        Same rule as the control-path dialog (`PTA-v`, `U11`): once a snapshot
+        has shown our sweep running, a failed poll or cancel says nothing about
+        whether it is still going, so polling and Cancel stay and only the
+        wording escalates. A refused start ends here as before.
+        """
         self._poll_in_flight = False
-        self._timer.stop()
-        self._cancel_btn.setEnabled(False)
-        self._start_btn.setEnabled(True)
         # A safety refusal is protection, not failure — show the daemon's own
         # words rather than dressing them as an error (the shared taxonomy in
         # `diagnostics_workers._is_soft_safety_refusal`).
-        self._status_lbl.setText(
-            message if category == "unavailable" else f"Characterisation error: {message}"
-        )
+        detail = message if category == "unavailable" else f"Characterisation error: {message}"
+        if self._run_live:
+            self._failures += 1
+            self._cancel_btn.setEnabled(True)
+            self._status_lbl.setText(live_run_error_text(self._failures, detail))
+            return
+        self._timer.stop()
+        self._cancel_btn.setEnabled(False)
+        self._start_btn.setEnabled(True)
+        self._status_lbl.setText(detail)
 
     def _render(self, view: CharacterizationView) -> None:
         self._table.setRowCount(len(view.rows))
