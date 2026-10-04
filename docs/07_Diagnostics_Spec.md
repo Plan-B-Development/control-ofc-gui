@@ -1040,7 +1040,12 @@ Off-thread via `_HardwareReadinessWorker`; on a pre-v2.11.0 daemon the route
    (`Hardware_Btn_openfanCalibration`, DEC-453: the DEC-452 stall/restart walk on one OpenFan
    channel, gated on `control.openfan_calibration` and a reporting channel; the dialog's Start
    needs a per-channel "does not power a pump" confirmation, and demo mode opens it with Start
-   refused), **Startup / Lifecycle Recording**, **Thermal
+   refused), **Update OpenFAN Firmware…** (`Hardware_Btn_openfanFirmware`, DEC-481: a modeless
+   window over `services/openfan_firmware_view.py`; it checks the `.uf2` with `services/uf2.py`,
+   prepares a private copy and follows the daemon's run; shown where
+   `control.openfan_firmware_maintenance` is advertised and a controller is present or an update
+   is reported, enabled while the link is `connected` and no PWM Test Report runs — or whenever
+   an update is reported, so it can be followed), **Startup / Lifecycle Recording**, **Thermal
    Observation** (capability-gated, DEC-335), **AIO Validation**, and **Advanced (System
    State)**, a shortcut to the System State page's verify controls.
 5. **Super-I/O Architecture** (`Hardware_Card_superio`) — per-chip driver detection with

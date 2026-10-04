@@ -483,9 +483,9 @@ class PwmCharacterizationDialog(ModalDialog):
         wording escalates. A refused start ends here as before.
         """
         self._poll_in_flight = False
-        # A safety refusal is protection, not failure — show the daemon's own
-        # words rather than dressing them as an error (the shared taxonomy in
-        # `diagnostics_workers._is_soft_safety_refusal`).
+        # A refusal is protection or a busy controller, not failure — show the
+        # daemon's own words rather than dressing them as an error (the shared
+        # taxonomy in `diagnostics_workers._is_soft_refusal`).
         detail = message if category == "unavailable" else f"Characterisation error: {message}"
         if self._run_live:
             self._failures += 1

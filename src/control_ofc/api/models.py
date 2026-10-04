@@ -369,6 +369,11 @@ class ControlCapability:
     #: daemon has only the deprecated synchronous ``/calibrate``, which this GUI
     #: never calls.
     openfan_calibration: bool = False
+    #: DEC-481: the OpenFan firmware update — ``status.openfan_link``,
+    #: ``status.openfan_maintenance``, ``GET /fans/openfan/device`` and the
+    #: ``POST|GET|DELETE /fans/openfan/maintenance`` run. Describes the build;
+    #: whether a controller is attached is the device answer's ``present``.
+    openfan_firmware_maintenance: bool = False
     #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
     #: suffix is stripped where the daemon reads it and in the state it saved
     #: before — so a driver rebuild no longer changes any fan header's id. Gates
@@ -763,6 +768,25 @@ class CoolingAdvisory:
 
 
 @dataclass
+class OpenFanMaintenanceSummary:
+    """``status.openfan_maintenance`` (DEC-481): a firmware update in miniature.
+
+    ``state`` is ``running`` (``stage`` is the stage token) or
+    ``needs_recovery`` (``stage`` is ``finished`` and ``outcome`` says how it
+    ended). Tokens are opaque: an unknown one is rendered, not dropped.
+    """
+
+    run_id: str = ""
+    stage: str = ""
+    state: str = ""
+    outcome: str | None = None
+
+    @property
+    def needs_recovery(self) -> bool:
+        return self.state == "needs_recovery"
+
+
+@dataclass
 class DaemonStatus:
     api_version: int = 1
     daemon_version: str = ""
@@ -853,6 +877,16 @@ class DaemonStatus:
     # when empty and absent before daemon 3.0.0 → [] either way.
     pump_stalls: list[PumpStall] = field(default_factory=list)
     advisories: list[CoolingAdvisory] = field(default_factory=list)
+    # DEC-481: the OpenFan controller's connection — "connected",
+    # "unresponsive", "reconnecting", or "maintenance" while a firmware update
+    # holds it — separate from presence. `None` when no controller is adopted
+    # or the daemon predates the field. An unrecognised token is rendered, not
+    # dropped.
+    openfan_link: str | None = None
+    # DEC-481: a firmware update running, or one that left the board needing
+    # recovery. `None` otherwise, and on an older daemon. The full run is
+    # `GET /fans/openfan/maintenance`.
+    openfan_maintenance: OpenFanMaintenanceSummary | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -2475,6 +2509,10 @@ def parse_status(data: dict) -> DaemonStatus:
             for e in _wire_list(data, "advisories")
             if isinstance(e, dict)
         ],
+        # DEC-481: both omitted when there is nothing to say, and absent on an
+        # older daemon → None.
+        openfan_link=_opt_str(data.get("openfan_link")),
+        openfan_maintenance=_parse_openfan_maintenance_summary(data.get("openfan_maintenance")),
     )
 
 
@@ -2483,6 +2521,40 @@ def _wire_list(data: dict, key: str) -> list:
     string would iterate as characters) reads as absent."""
     value = data.get(key)
     return value if isinstance(value, list) else []
+
+
+def _opt_str(value: object) -> str | None:
+    """*value* when it is a string, else ``None``."""
+    return value if isinstance(value, str) else None
+
+
+def _opt_int(value: object) -> int | None:
+    """*value* when it is an integer (never a bool), else ``None``."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _opt_bool(value: object) -> bool | None:
+    """*value* when it is a bool, else ``None`` — unknown, never a guessed False."""
+    return value if isinstance(value, bool) else None
+
+
+def _str_map(value: object) -> dict[str, str] | None:
+    """A JSON object of strings, keeping only its string-to-string entries."""
+    if not isinstance(value, dict):
+        return None
+    return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, str)}
+
+
+def _parse_openfan_maintenance_summary(raw: object) -> OpenFanMaintenanceSummary | None:
+    """``status.openfan_maintenance``, or ``None`` when absent or malformed."""
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanMaintenanceSummary(
+        run_id=_opt_str(raw.get("run_id")) or "",
+        stage=_opt_str(raw.get("stage")) or "",
+        state=_opt_str(raw.get("state")) or "",
+        outcome=_opt_str(raw.get("outcome")),
+    )
 
 
 def _parse_readiness_rollup(raw: object) -> ReadinessRollup | None:
@@ -2664,6 +2736,251 @@ def parse_openfan_calibration_run(data: dict) -> OpenFanCalibrationRun:
         if isinstance(p, dict)
     ]
     return run
+
+
+@dataclass
+class OpenFanUsbDevice:
+    """The USB device behind the OpenFan controller's port, read from sysfs by
+    the daemon (DEC-481). ``port`` is its physical USB port path (``8-8``)."""
+
+    port: str = ""
+    vendor_id: str = ""
+    product_id: str = ""
+    manufacturer: str | None = None
+    product: str | None = None
+    serial: str | None = None
+    bcd_device: str | None = None
+    #: The configuration descriptor the kernel cached at enumeration, hex.
+    config_descriptor_hex: str | None = None
+
+
+@dataclass
+class OpenFanUpdateRefusal:
+    """One reason an update could not start now: its ``409``'s ``details.reason``
+    and the daemon's own message."""
+
+    reason: str = ""
+    message: str = ""
+
+
+@dataclass
+class OpenFanDevice:
+    """``GET /fans/openfan/device`` (DEC-481)."""
+
+    present: bool = False
+    link: str | None = None
+    port: str | None = None
+    usb: OpenFanUsbDevice | None = None
+    interface_number: int | None = None
+    #: The firmware's own ``>05``/``>06`` answers; ``None`` when it did not
+    #: answer, or an update holds the port.
+    hw_info: dict[str, str] | None = None
+    fw_info: dict[str, str] | None = None
+    #: Whether the start would pass its checks now — informational; the start
+    #: decides again, atomically.
+    update_available: bool = False
+    update_refusals: list[OpenFanUpdateRefusal] = field(default_factory=list)
+
+
+@dataclass
+class OpenFanBoardSnapshot:
+    """What the board looked like on one side of an update."""
+
+    usb: OpenFanUsbDevice | None = None
+    hw_info: dict[str, str] | None = None
+    fw_info: dict[str, str] | None = None
+
+
+@dataclass
+class OpenFanUpdateEvidence:
+    """The daemon's comparison of the board before, after, and with the file.
+    Each ``None`` is "unknown", never "no"."""
+
+    descriptor_changed: bool | None = None
+    descriptor_matches_file: bool | None = None
+    info_matches_file: bool | None = None
+    info_changed: bool | None = None
+    #: ``consistent_with_file`` | ``previous_firmware`` | ``inconclusive``.
+    verdict: str = ""
+
+
+@dataclass
+class OpenFanStageTiming:
+    stage: str = ""
+    started_unix_ms: int = 0
+    ended_unix_ms: int | None = None
+
+
+@dataclass
+class OpenFanFirmwareClaim:
+    """What the GUI said about the file it prepared. Never a path."""
+
+    sha256: str = ""
+    size: int = 0
+    usb_config_descriptor_hex: str | None = None
+    info: dict[str, str] | None = None
+
+
+@dataclass
+class OpenFanMaintenanceRecord:
+    """One firmware update run — ``GET /fans/openfan/maintenance`` (DEC-481).
+
+    ``state`` is ``running`` or ``finished``; ``stage`` the stage token, or the
+    one it ended in. ``outcome`` is set once finished. Every token is opaque:
+    an unknown one is rendered, not dropped. ``raw`` keeps the body as sent, for
+    the support bundle.
+    """
+
+    run_id: str = ""
+    state: str = ""
+    stage: str = ""
+    stage_started_unix_ms: int = 0
+    stage_deadline_unix_ms: int | None = None
+    cancellable: bool = False
+    started_unix_ms: int = 0
+    finished_unix_ms: int | None = None
+    outcome: str | None = None
+    outcome_detail: str | None = None
+    interrupted: bool = False
+    cancelled: bool = False
+    bootloader_requested: bool = False
+    bootloader_seen: bool = False
+    board_answered: bool = False
+    bootloader_trigger: str | None = None
+    bootloader_drive: str | None = None
+    other_bootloader_drives: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    stages: list[OpenFanStageTiming] = field(default_factory=list)
+    expected_usb_serial: str = ""
+    usb_port: str | None = None
+    interface_number: int | None = None
+    tty: str | None = None
+    firmware: OpenFanFirmwareClaim = field(default_factory=OpenFanFirmwareClaim)
+    before: OpenFanBoardSnapshot = field(default_factory=OpenFanBoardSnapshot)
+    after: OpenFanBoardSnapshot | None = None
+    evidence: OpenFanUpdateEvidence | None = None
+    raw: dict = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def is_running(self) -> bool:
+        return self.state == "running"
+
+
+@dataclass
+class OpenFanMaintenanceCancel:
+    """``DELETE /fans/openfan/maintenance`` → ``202``."""
+
+    run_id: str = ""
+    cancel_requested: bool = False
+
+
+def _parse_openfan_usb(raw: object) -> OpenFanUsbDevice | None:
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanUsbDevice(
+        port=_opt_str(raw.get("port")) or "",
+        vendor_id=_opt_str(raw.get("vendor_id")) or "",
+        product_id=_opt_str(raw.get("product_id")) or "",
+        manufacturer=_opt_str(raw.get("manufacturer")),
+        product=_opt_str(raw.get("product")),
+        serial=_opt_str(raw.get("serial")),
+        bcd_device=_opt_str(raw.get("bcd_device")),
+        config_descriptor_hex=_opt_str(raw.get("config_descriptor_hex")),
+    )
+
+
+def parse_openfan_device(data: dict) -> OpenFanDevice:
+    """Parse ``GET /fans/openfan/device``, tolerating new fields and bad types."""
+    return OpenFanDevice(
+        present=data.get("present") is True,
+        link=_opt_str(data.get("link")),
+        port=_opt_str(data.get("port")),
+        usb=_parse_openfan_usb(data.get("usb")),
+        interface_number=_opt_int(data.get("interface_number")),
+        hw_info=_str_map(data.get("hw_info")),
+        fw_info=_str_map(data.get("fw_info")),
+        update_available=data.get("update_available") is True,
+        update_refusals=[
+            OpenFanUpdateRefusal(
+                reason=_opt_str(r.get("reason")) or "",
+                message=_opt_str(r.get("message")) or "",
+            )
+            for r in _wire_list(data, "update_refusals")
+            if isinstance(r, dict)
+        ],
+    )
+
+
+def _parse_openfan_snapshot(raw: object) -> OpenFanBoardSnapshot | None:
+    if not isinstance(raw, dict):
+        return None
+    return OpenFanBoardSnapshot(
+        usb=_parse_openfan_usb(raw.get("usb")),
+        hw_info=_str_map(raw.get("hw_info")),
+        fw_info=_str_map(raw.get("fw_info")),
+    )
+
+
+def parse_openfan_maintenance_record(data: dict) -> OpenFanMaintenanceRecord:
+    """Parse one firmware update run, tolerating new fields and bad types."""
+    firmware = data.get("firmware") if isinstance(data.get("firmware"), dict) else {}
+    evidence = data.get("evidence")
+    return OpenFanMaintenanceRecord(
+        run_id=_opt_str(data.get("run_id")) or "",
+        state=_opt_str(data.get("state")) or "",
+        stage=_opt_str(data.get("stage")) or "",
+        stage_started_unix_ms=_opt_int(data.get("stage_started_unix_ms")) or 0,
+        stage_deadline_unix_ms=_opt_int(data.get("stage_deadline_unix_ms")),
+        cancellable=data.get("cancellable") is True,
+        started_unix_ms=_opt_int(data.get("started_unix_ms")) or 0,
+        finished_unix_ms=_opt_int(data.get("finished_unix_ms")),
+        outcome=_opt_str(data.get("outcome")),
+        outcome_detail=_opt_str(data.get("outcome_detail")),
+        interrupted=data.get("interrupted") is True,
+        cancelled=data.get("cancelled") is True,
+        bootloader_requested=data.get("bootloader_requested") is True,
+        bootloader_seen=data.get("bootloader_seen") is True,
+        board_answered=data.get("board_answered") is True,
+        bootloader_trigger=_opt_str(data.get("bootloader_trigger")),
+        bootloader_drive=_opt_str(data.get("bootloader_drive")),
+        other_bootloader_drives=[
+            d for d in _wire_list(data, "other_bootloader_drives") if isinstance(d, str)
+        ],
+        notes=[n for n in _wire_list(data, "notes") if isinstance(n, str)],
+        stages=[
+            OpenFanStageTiming(
+                stage=_opt_str(t.get("stage")) or "",
+                started_unix_ms=_opt_int(t.get("started_unix_ms")) or 0,
+                ended_unix_ms=_opt_int(t.get("ended_unix_ms")),
+            )
+            for t in _wire_list(data, "stages")
+            if isinstance(t, dict)
+        ],
+        expected_usb_serial=_opt_str(data.get("expected_usb_serial")) or "",
+        usb_port=_opt_str(data.get("usb_port")),
+        interface_number=_opt_int(data.get("interface_number")),
+        tty=_opt_str(data.get("tty")),
+        firmware=OpenFanFirmwareClaim(
+            sha256=_opt_str(firmware.get("sha256")) or "",
+            size=_opt_int(firmware.get("size")) or 0,
+            usb_config_descriptor_hex=_opt_str(firmware.get("usb_config_descriptor_hex")),
+            info=_str_map(firmware.get("info")),
+        ),
+        before=_parse_openfan_snapshot(data.get("before")) or OpenFanBoardSnapshot(),
+        after=_parse_openfan_snapshot(data.get("after")),
+        evidence=(
+            OpenFanUpdateEvidence(
+                descriptor_changed=_opt_bool(evidence.get("descriptor_changed")),
+                descriptor_matches_file=_opt_bool(evidence.get("descriptor_matches_file")),
+                info_matches_file=_opt_bool(evidence.get("info_matches_file")),
+                info_changed=_opt_bool(evidence.get("info_changed")),
+                verdict=_opt_str(evidence.get("verdict")) or "",
+            )
+            if isinstance(evidence, dict)
+            else None
+        ),
+        raw=dict(data),
+    )
 
 
 def parse_sensor_history(data: dict) -> SensorHistory:

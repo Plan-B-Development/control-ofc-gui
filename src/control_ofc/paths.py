@@ -157,6 +157,16 @@ def ensure_dirs() -> None:
 
 
 def atomic_write(filepath: Path, content: str) -> None:
+    """Write text *content* to *filepath* atomically; see :func:`_atomic_replace`."""
+    _atomic_replace(filepath, content, "w")
+
+
+def atomic_write_bytes(filepath: Path, content: bytes) -> None:
+    """Write *content* to *filepath* atomically, as :func:`atomic_write` does text."""
+    _atomic_replace(filepath, content, "wb")
+
+
+def _atomic_replace(filepath: Path, content: str | bytes, mode: str) -> None:
     """Write *content* to *filepath* atomically.
 
     Uses the standard temp-file + fsync + os.replace + dir-fsync pattern:
@@ -183,7 +193,7 @@ def atomic_write(filepath: Path, content: str) -> None:
 
     fd, tmp_path = tempfile.mkstemp(suffix=".tmp", prefix=".", dir=dirpath)
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, mode) as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())

@@ -188,8 +188,10 @@ put the link one frame behind and cached `SetPwm` acknowledgements as tachometer
 
 ## 4. Command Reference
 
-The daemon sends **three** commands, and only these (`serial/protocol.rs::Command`):
-`ReadAllRpm`, `ReadRpm` and `SetPwm`. The firmware also implements `0x03` SetAllPwm
+The poll loop and the engine send **three** commands, and only these
+(`serial/protocol.rs::Command`): `ReadAllRpm`, `ReadRpm` and `SetPwm`. The firmware update
+(DEC-481, daemon ≥ 3.8.0) adds three more, sent only by the update or the controller-detail
+read behind it — see [Commands the firmware update sends](#commands-the-firmware-update-sends-dec-481). The firmware also implements `0x03` SetAllPwm
 (one duty on every channel) and `0x04` SetTargetRpm (closed-loop RPM through its EMC2305);
 the daemon has sent neither since `5d8847c` (first released in daemon 2.5.1), and a
 thermal emergency writes each channel with its own `SetPwm`. They are listed at the end of
@@ -241,6 +243,42 @@ percent_to_raw(pct) = (pct * 255 + 50) / 100
 
 The daemon's API has no route that reaches either: the `target_rpm` route was retired at
 2.0.0 and `SetAllPwm` was removed from the daemon with `5d8847c`.
+
+The firmware also has three debug commands the daemon never sends — `0x08` (dump fan-chip
+registers), `0x09` (read one) and `0x0A` (write one) — which its source marks for removal from
+release builds. A write to the fan chips' registers bypasses everything the daemon tracks.
+
+### Commands the firmware update sends (DEC-481)
+
+| Opcode | Command | Wire | Reply |
+|---|---|---|---|
+| `0x05` | Hardware information | `>05\n` | `<05|` then one `KEY:VALUE` per line, ending with a blank line |
+| `0x06` | Firmware information | `>06\n` | `<06|` with the first `KEY:VALUE` after the `|`, one more per line, then a blank line |
+| `0x07` | Jump to the bootloader | `>07\n` | **none** — the board restarts into its USB bootloader (`2e8a:0003`, the `RPI-RP2` drive) |
+
+- **The information blocks span several lines**, so `send_command` cannot read them;
+  `serial/transport.rs::read_info_block` does. It skips lines before the `<05|` / `<06|` header
+  as debug output, keeps lines that are a `KEY:VALUE` pair (key `[A-Z0-9_]{1,32}`, a printable
+  value of at most 64 characters, trimmed; at most 16 pairs) and ignores any other line, and
+  stops at the blank line or the deadline. A firmware that does not know the command answers
+  the header alone, which reads as an empty block. What the published builds answer: the 2023-09-29 build reports
+  `HW_REV:01`, `MCU:STM32F411CE`, `USB:NATIVE`, `FAN_CHANNELS_TOTAL:10`, `FAN_CHANNELS_ARCH:5+5`,
+  `FAN_CHANNELS_DRIVER:EMC2305` and `FW_REV:01`, `PROTOCOL_VERSION:1`; the 2026 releases report
+  `HW_REV:03`, `MCU:PICO2040` and `PROTOCOL_VERSION:01` with the rest unchanged. They describe
+  the build's strings, not the board: no field identifies the exact build.
+- **Information only.** Nothing the daemon decides depends on these strings; the update shows
+  them before and after and compares them with the strings the chosen file contains.
+- **`>07` is never answered.** The update journals the request before sending it and then
+  watches sysfs, not the serial line: the board's USB device must leave normal mode within 5 s.
+- **The 1200-baud signal.** If the board is still in normal mode after `>07`, the update sets the
+  **same, already-open** port to 1200 baud. The firmware's CDC line-coding callback calls
+  `reset_usb_boot` when the host sets 1200 baud; the published source ignores which of the board's
+  two CDC interfaces it arrives on, and the update uses only the one the daemon was polling. Normal communication stays at 115 200.
+  It is also the manual route: `stty -F <port> 1200` with the daemon stopped.
+- **Log lines share the serial line.** The firmware's logger writes to the same CDC buffer as its
+  replies, so a debug line can arrive before a reply or between an information block's lines;
+  both readers skip it. After a restart the firmware prints start-up lines before it answers, so
+  the update's first `>00` on the returned board retries until a reply arrives or 10 s pass.
 
 ---
 
@@ -369,6 +407,9 @@ or release, and not given back after an emergency.
 6. **Channel numbers in response are decimal** (not hex) — `05:04B0` means channel 5
 7. **Firmware handles PWM 0–255 internally** — daemon converts percent→raw
 8. **Device is exclusively owned** — no other process should access the serial port
+9. **`>07` and 1200 baud restart into the bootloader** (DEC-481) — both are used only by the
+   firmware update, on the port it holds; a firmware that drops both leaves that update with
+   `no_firmware_change` and the upstream BOOT-button procedure
 
 ---
 

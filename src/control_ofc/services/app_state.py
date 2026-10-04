@@ -28,6 +28,10 @@ from control_ofc.knowledge.sensor_knowledge import SensorClassification, classif
 from control_ofc.services.alerts import AlertCondition, AlertLedger
 from control_ofc.services.cooling_watch import advisory_alert, pump_stall_alert, thermal_alert
 from control_ofc.services.daemon_features import daemon_supports
+from control_ofc.services.openfan_firmware_view import (
+    firmware_update_alert,
+    suppresses_fan_staleness,
+)
 from control_ofc.services.session_stats import SessionStatsTracker
 from control_ofc.services.stall_hold import StallHold
 from control_ofc.ui.hwmon_guidance import set_daemon_canonicalises_chip_names
@@ -607,8 +611,15 @@ class AppState(QObject):
                     )
                 )
 
+        ds = self.daemon_status
+        # DEC-482: while the daemon reports an OpenFAN firmware update — running, or
+        # one that left the board needing recovery — one alert stands in for the
+        # OpenFAN fans' staleness warnings, whose cause is that update. Every other
+        # alert stands, a stall on those same fans included. Not once the daemon has
+        # been unreachable long enough that nothing current is known (DEC-459).
+        update = ds.openfan_maintenance if ds and not self._thermal_unreachable else None
         for f in self.fans:
-            if f.freshness != Freshness.FRESH:
+            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(update, f.id):
                 conditions.append(
                     AlertCondition(
                         key=f"fan_stale:{f.id}",
@@ -633,7 +644,6 @@ class AppState(QObject):
 
         # DEC-443: the daemon's cooling watch. Read off the last status, which the
         # poll delivers before the sensors and fans whose setters reconcile here.
-        ds = self.daemon_status
         cooling = (
             [pump_stall_alert(self.fan_display_name(p.header_id), p) for p in ds.pump_stalls]
             if ds
@@ -647,6 +657,9 @@ class AppState(QObject):
             thermal = thermal_alert(ds.thermal_state, ds.emergency_causes)
             if thermal is not None:
                 watch.append((thermal, "thermal"))
+        update_alert = firmware_update_alert(update)
+        if update_alert is not None:
+            watch.append((update_alert, "openfan"))
         for c, source in watch:
             conditions.append(
                 AlertCondition(

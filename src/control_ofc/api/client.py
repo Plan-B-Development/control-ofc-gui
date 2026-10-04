@@ -31,6 +31,9 @@ from control_ofc.api.models import (
     HwmonVerifyResult,
     IdentifyResult,
     OpenFanCalibrationRun,
+    OpenFanDevice,
+    OpenFanMaintenanceCancel,
+    OpenFanMaintenanceRecord,
     OpenFanRole,
     OverrideGrant,
     OverrideReleaseResult,
@@ -65,6 +68,8 @@ from control_ofc.api.models import (
     parse_hwmon_verify_result,
     parse_identify_result,
     parse_openfan_calibration_run,
+    parse_openfan_device,
+    parse_openfan_maintenance_record,
     parse_openfan_roles,
     parse_override_grant,
     parse_override_release,
@@ -85,6 +90,7 @@ from control_ofc.api.models import (
 from control_ofc.constants import (
     API_TIMEOUT_S,
     DEFAULT_SOCKET_PATH,
+    OPENFAN_DEVICE_TIMEOUT_S,
     OPENFAN_RESCAN_TIMEOUT_S,
     VERIFY_TIMEOUT_S,
 )
@@ -1077,6 +1083,60 @@ class DaemonClient:
         too. ``409`` when none is running.
         """
         return parse_openfan_calibration_run(self._delete("/diagnostics/openfan-calibration"))
+
+    # ── DEC-481: the OpenFan firmware update, 202 + poll ─────────────────
+
+    def openfan_device(self) -> OpenFanDevice:
+        """GET /fans/openfan/device — the controller's identity, the firmware's
+        own information blocks, and whether an update could start now.
+
+        Gate on ``capabilities.control.openfan_firmware_maintenance``. The
+        daemon reads the information blocks from the board (reusing a recent
+        answer), so this carries its own timeout.
+        """
+        return parse_openfan_device(
+            self._get("/fans/openfan/device", timeout=OPENFAN_DEVICE_TIMEOUT_S)
+        )
+
+    def start_openfan_maintenance(self, expected_usb_serial: str, firmware: dict) -> str:
+        """POST /fans/openfan/maintenance — start a firmware update; returns its run id.
+
+        *firmware* is :meth:`control_ofc.services.uf2.Uf2Inspection.claim` of the
+        checked file. The daemon re-checks every condition atomically and
+        answers ``409`` with ``details.reason`` when one fails; the run then
+        proceeds daemon-side and is read back with
+        :meth:`openfan_maintenance_status`.
+        """
+        data = self._post(
+            "/fans/openfan/maintenance",
+            json={"expected_usb_serial": expected_usb_serial, "firmware": firmware},
+        )
+        run_id = data.get("run_id")
+        return run_id if isinstance(run_id, str) else ""
+
+    def openfan_maintenance_status(self) -> OpenFanMaintenanceRecord | None:
+        """GET /fans/openfan/maintenance — the current or most recent run.
+
+        ``None`` when the daemon has never run one (``404``). The daemon keeps
+        the last run in its journal, so a restart does not lose it.
+        """
+        try:
+            return parse_openfan_maintenance_record(self._get("/fans/openfan/maintenance"))
+        except DaemonError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def cancel_openfan_maintenance(self) -> OpenFanMaintenanceCancel:
+        """DELETE /fans/openfan/maintenance — cancel before the board is asked to
+        enter update mode. ``409`` (``details.reason: not_cancellable``) after
+        that; ``404`` when nothing is running."""
+        data = self._delete("/fans/openfan/maintenance")
+        run_id = data.get("run_id")
+        return OpenFanMaintenanceCancel(
+            run_id=run_id if isinstance(run_id, str) else "",
+            cancel_requested=data.get("cancel_requested") is True,
+        )
 
     def active_profile(self) -> ActiveProfileInfo | None:
         """GET /profile/active — query the daemon's currently active profile."""

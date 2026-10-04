@@ -37,6 +37,12 @@ VERIFY_TIMEOUT_S = 12.0
 # client should not be provoking that path once per rescan.
 OPENFAN_RESCAN_TIMEOUT_S = 25.0
 
+# Per-call timeout for GET /fans/openfan/device (DEC-481). The daemon asks the
+# board for its two information blocks under the controller lock, each bounded by
+# the serial timeout (up to 1000 ms), after any engine exchange already holding
+# that lock — more than API_TIMEOUT_S can allow on a slow link.
+OPENFAN_DEVICE_TIMEOUT_S = 10.0
+
 # Contract version this GUI is built against. Compared on the first
 # /capabilities response against the daemon's reported ``api_version``; a
 # mismatch surfaces a non-fatal warning banner (the AUR ``depends>=`` floor only

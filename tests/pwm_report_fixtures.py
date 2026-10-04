@@ -211,7 +211,14 @@ def ok(body: object, status: int = 200) -> CallOutcome:
     return CallOutcome(ok=True, status=status, body=body)
 
 
-def refused(status: int, code: str, message: str = "no", *, retryable: bool = False) -> CallOutcome:
+def refused(
+    status: int,
+    code: str,
+    message: str = "no",
+    *,
+    retryable: bool = False,
+    details: object = None,
+) -> CallOutcome:
     return CallOutcome(
         ok=False,
         status=status,
@@ -219,6 +226,7 @@ def refused(status: int, code: str, message: str = "no", *, retryable: bool = Fa
         error_message=message,
         retryable=retryable,
         category="error",
+        details=details,
     )
 
 

@@ -172,6 +172,11 @@ control_ofc/
                                # and the §8.6 provenance rows
     openfan_calibration_view.py # OpenFan calibration dialog VM: channel picker, restart-duty
                                #   advice, end keyed on completed_unix_ms — DEC-453.
+    openfan_firmware_view.py   # OpenFAN firmware update VM — DEC-481: stages, outcomes, file
+                               #   findings, the start gate, and the DEC-482 alert that
+                               #   stands in for the OpenFAN fans' staleness warnings.
+    uf2.py                     # Qt-free .uf2 checker + private prepared copy — DEC-481.
+                               #   Reads at most 1 MiB + 1 of a regular file; never a device.
     control_path_view.py       # PWM-to-tach control-path discovery VM — DEC-333
                                #   (AIO Phase 8 Batch 1). Renders what the daemon
                                #   measured; derives no relationship or confidence.
@@ -358,6 +363,8 @@ control_ofc/
       aio_config_dialog.py
       openfan_calibration_dialog.py   # "Calibrate OpenFan Channel" — DEC-453. Thin renderer
                                #   over openfan_calibration_view; per-channel pump consent.
+      openfan_firmware_dialog.py      # "Update OpenFAN Firmware" — DEC-481. Modeless; thin
+                               #   renderer over openfan_firmware_view; never cancels on close.
       pwm_characterization_dialog.py  # "Characterise PWM Response" — DEC-313/315/334.
                                #   Thin renderer over characterization_view
       pwm_response_chart.py    # DEC-334 §8.3. pyqtgraph rising/falling series with

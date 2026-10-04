@@ -82,6 +82,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # DEC-452, control.openfan_calibration. The 202 + poll calibration walk
         # (stall and restart duties). `/ofc:release` confirms the version.
         "openfan_calibration": "3.1.0",
+        # DEC-481, control.openfan_firmware_maintenance. The firmware update
+        # from a local file, Phase 1. `/ofc:release` confirms the version.
+        "openfan_firmware_maintenance": "3.8.0",
         # DEC-442, control.canonical_chip_names. Chip names and ids survive the
         # it87 v2.0 board-suffix rename. Shipped in daemon 3.0.0.
         "canonical_chip_names": "3.0.0",
@@ -153,6 +156,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "duty_reconciliation": "duty_reconciliation",
         "stall_probe": "stall_probe",
         "openfan_calibration": "openfan_calibration",
+        "openfan_firmware_maintenance": "openfan_firmware_maintenance",
         "canonical_chip_names": "canonical_chip_names",
         "cooling_failure_detection": "cooling_failure_detection",
         "pwm_verification_records": "pwm_verification_records",
@@ -184,6 +188,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "duty_reconciliation": "correcting a fan duty something else changed",
         "stall_probe": "the stall/restart probe below 20 %",
         "openfan_calibration": "OpenFan channel calibration",
+        "openfan_firmware_maintenance": "updating the OpenFAN firmware",
         "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
         "cooling_failure_detection": "the coolant limit and pump stall protection",

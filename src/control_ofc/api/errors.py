@@ -68,7 +68,23 @@ class DaemonTimeout(DaemonError):
     source: str = field(default="connection")
 
 
-def is_soft_safety_refusal(code: str, retryable: bool) -> bool:
+#: ``details.reason`` of a ``409`` refused because an OpenFAN firmware update
+#: holds the controller (DEC-481).
+OPENFAN_MAINTENANCE_REASON = "openfan_maintenance"
+
+
+def is_openfan_maintenance_refusal(details: object) -> bool:
+    """True for a refusal because an OpenFAN firmware update holds the controller.
+
+    Busy, not protection: the daemon sends it as a retryable ``409
+    validation_error`` — the shape :func:`is_soft_safety_refusal` keys on — told
+    apart only by ``details.reason``. The daemon accepts the same request once
+    the update has finished (DEC-481).
+    """
+    return isinstance(details, dict) and details.get("reason") == OPENFAN_MAINTENANCE_REASON
+
+
+def is_soft_safety_refusal(code: str, retryable: bool, details: object) -> bool:
     """True for a daemon refusal that is protection, not failure (DEC-201/297).
 
     Two codes mean the same thing to a user: the daemon declined to disturb a fan
@@ -88,7 +104,10 @@ def is_soft_safety_refusal(code: str, retryable: bool) -> bool:
 
     The daemon sends all three as ``409`` — and a busy diagnostic slot as ``409``
     too (``validation_error``, not retryable) — so the HTTP status cannot tell
-    protection from a busy slot; this predicate can (``DC-cl``).
+    protection from a busy slot; this predicate can (``DC-cl``). An OpenFAN
+    firmware update holding the controller is a retryable ``409
+    validation_error`` as well, and is not protection: ``details`` tells it apart
+    (:func:`is_openfan_maintenance_refusal`), which is why every caller passes it.
 
     Keyed on ``retryable`` rather than on the message text, which is daemon prose
     and not part of the contract. Shared by the verify workers and the PWM Test
@@ -96,4 +115,6 @@ def is_soft_safety_refusal(code: str, retryable: bool) -> bool:
     """
     if code == "thermal_abort":
         return True
+    if is_openfan_maintenance_refusal(details):
+        return False
     return code == "validation_error" and bool(retryable)

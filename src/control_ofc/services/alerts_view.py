@@ -55,6 +55,12 @@ def next_action_for_warning(warning: dict) -> str | None:
             "The daemon ends this by itself once temperatures fall; the System State "
             "page shows the limit it acts on."
         )
+    # DEC-482: the one alert that stands in for the OpenFAN fans during an update.
+    if key.startswith("openfan_update:"):
+        return (
+            "Open Hardware → Update OpenFAN Firmware… to follow the update, or for the "
+            "recovery steps if it needs them."
+        )
     if key.startswith("sensor_stale") or source == "sensor":
         return (
             "Sensor data is stale. Check the daemon connection, then the Hardware page — "

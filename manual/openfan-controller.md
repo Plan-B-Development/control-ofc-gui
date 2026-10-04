@@ -10,7 +10,7 @@ The **OpenFan Controller** (branded **OpenFAN**) is a USB fan controller that dr
 - Store: <https://shop.sasakaranovic.com/products/openfan-pc-fan-controller>
 - Source and hardware design (GitHub): <https://github.com/SasaKaranovic/OpenFanController>
 
-**What this means:** the OpenFan Controller is **not** hardware made or sold by Control-OFC. Control-OFC is an independent, third-party way to drive it from Linux. For the device itself — firmware updates, the on-device web UI, warranty, where to buy — use the official links above.
+**What this means:** the OpenFan Controller is **not** hardware made or sold by Control-OFC. Control-OFC is an independent, third-party way to drive it from Linux. For the device itself — its firmware releases, the on-device web UI, warranty, where to buy — use the official links above. Control-OFC can install a firmware release you have downloaded from there: see [Updating the OpenFAN firmware](#updating-the-openfan-firmware).
 
 ## How Control-OFC talks to it
 
@@ -80,6 +80,50 @@ If a pump is plugged into an OpenFan channel, set that channel's role to **Pump*
 
 To find the lowest speed a particular fan will reliably run at, use **Calibrate OpenFan Channel…** on the Hardware page (control-ofc-daemon 3.1.0 or newer): it measures where the fan stops and where it starts again, and tells you the minimum to use. See [Hardware Troubleshooting § Calibrate OpenFan Channel](hardware-troubleshooting.md#calibrate-openfan-channel).
 
+## Updating the OpenFAN firmware
+
+**Update OpenFAN Firmware…**, in the Hardware page's **Hardware Diagnostics** section, installs a firmware file you have downloaded onto the controller without opening the case. It appears with control-ofc-daemon 3.8.0 or newer while an OpenFAN controller is present, and is disabled, with the reason in its tooltip, while the controller is not connected or a PWM Test Report runs. The firmware is the upstream project's: download it from the official releases page, <https://github.com/SasaKaranovic/OpenFanController/releases>. Control-OFC never downloads firmware, and neither the GUI nor the daemon writes it to the board — the daemon puts the board in update mode and back, and **you** copy the file onto the drive that appears.
+
+**Before you start**
+
+- Leave the computer idle — no game, render or compile — for the few minutes it takes.
+- Every OpenFAN channel, **pumps included**, goes to 100 % when the update starts. Expect it to be loud.
+- While the board is in update mode, Control-OFC cannot change its channels. Its fan chips should hold that 100 % — the board's design says so, though it has not yet been measured. Fans on motherboard headers stay under normal control, and the daemon's thermal emergency still forces them.
+- When the new firmware starts, it runs every channel at its own default for a few seconds — in the published firmware about 1000 RPM, never below 40 % — until Control-OFC takes over again. **A pump on the board slows down for those seconds.** If your cooling cannot take that, move the pump to a motherboard header first, or use the upstream procedure below, which is done with the board unpowered.
+- The window lists the board's channels and marks the ones the daemon protects as pumps.
+
+**Steps**
+
+1. Click **Update OpenFAN Firmware…**. The window shows the controller: its connection, USB serial number and port, and the hardware and firmware reports it gives.
+2. **Choose firmware file…** The window checks the file before anything else happens: a UF2 file for the RP2040 chip the OpenFAN uses, complete and in order, carrying the OpenFAN's USB names. A file that fails is refused with the reason. The window also shows the file's hardware revision beside the board's (shown, never enforced) and says when the file is byte-for-byte a published release.
+3. The checked file is copied to `~/.cache/control-ofc/firmware/`, as `OpenFAN-` and the first eight characters of its SHA-256 fingerprint. That private copy is the one you drag across later, so the file cannot change between the check and the copy.
+4. Tick the confirmation and click **Start update**. The daemon checks that the board is the one you chose (by its USB serial number) and that nothing else is using it — a calibration, a PWM test, a validation recording, a thermal emergency, or another board already in update mode each refuse the start, with the reason. It then sets every channel to 100 % and asks the board to restart in update mode; if the board does not respond, it tries the standard 1200-baud signal on the same port.
+5. A drive called **RPI-RP2** appears, and the window names it (for example `sdb`). Open it in your file manager — most desktops mount it by themselves — and drag the prepared file onto it, from the window's file handle or from **Open folder**. You have 15 minutes. If another board is also in update mode, the window names its drive too: do not copy to that one.
+6. The board takes the file and restarts by itself, and the drive disappears. The daemon waits for the board to come back on the same USB port, checks that it answers, compares what it reports with the file and with what it reported before, and gives the fans back to your profile. If the board comes back in update mode instead, the window says so and waits for a file again, within what is left of the 15 minutes; after the third time the update stops and the board needs recovery.
+
+If the daemon does not answer **Start update** — it timed out, or the connection dropped — the window says the update may have started and asks the daemon. It follows the update if one began, and says it did not start only once the daemon has answered with none.
+
+**Cancel** works only while the daemon is checking the board and parking the fans. Once it has asked the board to restart, the update can only be finished. **Closing the window does not stop an update**: reopen it from the same button, which stays available while an update runs or needs recovery. While it runs, the Dashboard shows one *OpenFAN firmware update in progress* warning in place of each OpenFAN fan's *telemetry stale* warning; a stalled fan, every other fan's warnings and the thermal banner are unaffected.
+
+**The result**
+
+| Result | What it means |
+|---|---|
+| **Update complete** | Control is back, and the board's reports are consistent with the file. No check can prove the exact build: the firmware carries no build number, and two releases can report the same things. |
+| **Update complete — firmware not confirmed** | Control is back, but its reports cannot tell the old firmware from the new — for example because the file reports exactly what the firmware it replaced did. |
+| **The update was not applied** | Control is back, but the board reports the firmware it had before. Check that the right file went onto the right drive, then start again. |
+| **No firmware change** / **Update cancelled** | Nothing changed, and the fans are back under your profile. The window says why. |
+| **Board back, fan control not confirmed** | The board answers, but its fan settings had not all landed in time. The daemon keeps trying: watch the OpenFAN fans on the Dashboard, and restart the daemon if they do not follow your profile within a few seconds. |
+| **Firmware copied, board not back** | The drive went away, but the board did not come back answering. Wait a minute — the daemon keeps watching. If the board is back on USB but never answers, the new firmware may not understand Control-OFC's commands: a future firmware can change them. That is not a failed copy. Copy back the firmware you had before (see *Updating by hand* below), or wait for a Control-OFC update. |
+| **The board needs recovery** | The board is in update mode, or may be, and no firmware was copied. See below. |
+
+**If the board needs recovery.** A board in update mode leaves it in one of three ways: a firmware file is copied onto its **RPI-RP2** drive (the prepared file, or the firmware you had before), its **RESET** button is pressed, or the PC is switched off and on. Control-OFC cannot take it out by itself. Until the board answers again the daemon leaves its channels alone, the window and an error alert say so, and the daemon keeps watching — after a daemon restart too — and takes the board back as soon as it answers. If no RPI-RP2 drive appears at all, use the upstream BOOT-button procedure below.
+
+**Updating by hand.** Two ways that do not use the window:
+
+- **The upstream procedure** (from the [firmware README](https://github.com/SasaKaranovic/OpenFanController/tree/master/Firmware)): disconnect all fans and power from the board, hold its **BOOT** button while connecting the USB cable, copy the firmware onto the drive that appears, and power-cycle the board afterwards.
+- **From a terminal, with the board in place.** Stop the daemon first — it holds the serial port — with `sudo systemctl stop control-ofc-daemon`. While it is stopped, motherboard headers go back to the mode the daemon found them in — normally your BIOS's own control — and the OpenFAN keeps the speeds it was last given. List the board's serial interfaces with `ls /dev/serial/by-id/`: there are two, named `usb-Karanovic_Research_OpenFan_<serial>-if00` and `-if02`. Run `stty -F /dev/serial/by-id/usb-Karanovic_Research_OpenFan_<serial>-if00 1200`, with your board's serial. The board restarts in update mode and the RPI-RP2 drive appears; copy the firmware onto it, wait for the drive to disappear, and start the daemon again with `sudo systemctl start control-ofc-daemon`.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | What to do |
@@ -90,7 +134,7 @@ To find the lowest speed a particular fan will reliably run at, use **Calibrate 
 | Permission denied on the serial port | The service is not in the serial group (most likely on non-Arch distros) | Add the serial group via a systemd drop-in (see permissions above), then restart the daemon |
 | A fan briefly stops, then restarts on its own | The controller will not hold a fan at 0% for more than a few seconds (a built-in safety) | Expected. Set a small non-zero minimum if you want the fan to keep spinning |
 
-If the controller itself behaves oddly (firmware, the on-device web UI, the hardware), that is a question for the upstream project — see the official links above.
+If the controller itself behaves oddly (the firmware's own behaviour, the on-device web UI, the hardware), that is a question for the upstream project — see the official links above. Installing a firmware release is covered in [Updating the OpenFAN firmware](#updating-the-openfan-firmware).
 
 ## Reference / Advanced
 

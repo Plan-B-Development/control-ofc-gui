@@ -82,6 +82,7 @@ from control_ofc.services.header_role_view import (
 )
 from control_ofc.services.header_role_writes import WRITE_ERRORS, apply_role_writes
 from control_ofc.services.openfan_calibration_view import build_channel_options
+from control_ofc.services.openfan_firmware_view import channel_lines
 from control_ofc.services.openfan_role_view import (
     OPENFAN_ROLE_INTRO,
     OpenFanRoleRow,
@@ -110,6 +111,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     _HardwareReadinessWorker,
     _HwDiagWorker,
     _OpenFanCalibrationWorker,
+    _OpenFanFirmwareWorker,
     _ValidationWorker,
     _VerifyWorker,
 )
@@ -126,6 +128,7 @@ from control_ofc.ui.widgets.header_role_dialog import (
     confirm_remove_pump_protection,
 )
 from control_ofc.ui.widgets.openfan_calibration_dialog import OpenFanCalibrationDialog
+from control_ofc.ui.widgets.openfan_firmware_dialog import OpenFanFirmwareDialog
 from control_ofc.ui.widgets.pwm_characterization_dialog import PwmCharacterizationDialog
 from control_ofc.ui.widgets.pwm_header_card import PwmHeaderCard
 from control_ofc.ui.widgets.pwm_report_window import PwmReportWindow
@@ -218,6 +221,11 @@ class HardwarePage(QWidget):
     _ofancal_start_request = Signal(int)
     _ofancal_poll_request = Signal()
     _ofancal_cancel_request = Signal()
+    #: DEC-481, the OpenFAN firmware update window.
+    _ofw_device_request = Signal()
+    _ofw_start_request = Signal(str, dict)
+    _ofw_poll_request = Signal()
+    _ofw_cancel_request = Signal()
     _validation_start_request = Signal(str, str, list, list, dict, bool)
     _validation_poll_request = Signal()
     _validation_stop_request = Signal()
@@ -312,6 +320,13 @@ class HardwarePage(QWidget):
         self._ofancal_thread: QThread | None = None
         self._ofancal_worker: _OpenFanCalibrationWorker | None = None
         self._ofancal_dialog: OpenFanCalibrationDialog | None = None
+        # DEC-481.
+        self._ofw_thread: QThread | None = None
+        self._ofw_worker: _OpenFanFirmwareWorker | None = None
+        self._ofw_dialog: OpenFanFirmwareDialog | None = None
+        #: The (link, update) the firmware button was last synced to, so the
+        #: 1 Hz status only re-syncs it on a change.
+        self._ofw_status_key: tuple | None = None
         #: Persisted PWM to tach relationships, keyed by header id (§6.3). The
         #: DAEMON owns these and their invalidation; this is a render cache.
         self._control_paths: dict[str, ControlPathRecord] = {}
@@ -347,6 +362,8 @@ class HardwarePage(QWidget):
             self._state.capabilities_updated.connect(self._refresh_cooling_section)
             self._state.cooling_devices_updated.connect(self._refresh_cooling_section)
             self._state.openfan_roles_updated.connect(self._refresh_openfan_roles)
+            # DEC-481: the firmware button follows the OpenFAN link and any update.
+            self._state.status_updated.connect(self._on_status_for_firmware)
             # §6.3's "Last validated" row is daemon-persisted, so it must be
             # fetched once the capability handshake says the route exists. Keyed
             # to `capabilities_updated` rather than the 1 Hz poll deliberately:
@@ -678,6 +695,15 @@ class HardwarePage(QWidget):
         )
         self._ofancal_btn.clicked.connect(self._open_openfan_calibration)
         actions.addWidget(self._ofancal_btn)
+        # DEC-481. Shown and gated in `_sync_firmware_button`.
+        self._ofw_btn = make_button(
+            "Update OpenFAN Firmware…",
+            "secondary",
+            object_name="Hardware_Btn_openfanFirmware",
+            accessible_name="Update the OpenFAN controller's firmware from a file",
+        )
+        self._ofw_btn.clicked.connect(self._open_openfan_firmware)
+        actions.addWidget(self._ofw_btn)
         self._lifecycle_btn = make_button(
             "Startup / Lifecycle Recording",
             "secondary",
@@ -855,6 +881,9 @@ class HardwarePage(QWidget):
         if rows == self._openfan_row_views:
             return
         self._openfan_row_views = rows
+        # DEC-481: an open update window lists the channels with their pump marks.
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.set_channels(self._firmware_channels())
         layout = self._openfan_rows_layout
         while layout.count():
             item = layout.takeAt(0)
@@ -1098,6 +1127,41 @@ class HardwarePage(QWidget):
             self._ofancal_btn.setToolTip("No OpenFan channel is reporting.")
         else:
             self._ofancal_btn.setToolTip("")
+        self._sync_firmware_button()
+
+    def _sync_firmware_button(self) -> None:
+        """Show the firmware update only where it can exist, and say why not (DEC-481).
+
+        Shown when the daemon advertises it and an OpenFAN controller is
+        present, or an update is reported, never in demo mode. Enabled when the
+        link is connected and no PWM Test Report runs — or whenever an update is
+        running or needs recovery, so the window can always be reopened to
+        follow it. A board left in its bootloader across a daemon restart is
+        not adopted, so presence alone would hide its recovery steps.
+        """
+        if not hasattr(self, "_ofw_btn"):
+            return
+        caps = self._capabilities()
+        status = self._state.daemon_status if self._state else None
+        link = status.openfan_link if status else None
+        update = status.openfan_maintenance if status else None
+        present = link is not None or update is not None or bool(caps and caps.openfan.present)
+        supported = daemon_supports("openfan_firmware_maintenance", caps) is True
+        visible = supported and present and not self._is_demo()
+        self._ofw_btn.setVisible(visible)
+        if update is not None:
+            enabled, tip = True, "Follow the OpenFAN firmware update."
+        elif self._report_active:
+            enabled, tip = False, RUN_ACTIVE_REASON
+        elif link != "connected":
+            from control_ofc.services.openfan_firmware_view import link_text
+
+            enabled = False
+            tip = f"The OpenFAN controller is not connected ({link_text(link).lower()})."
+        else:
+            enabled, tip = True, ""
+        self._ofw_btn.setEnabled(visible and enabled)
+        self._ofw_btn.setToolTip(tip)
 
     # ── Fetch + render ───────────────────────────────────────────────
 
@@ -1848,6 +1912,116 @@ class HardwarePage(QWidget):
         if self._ofancal_dialog is not None:
             self._ofancal_dialog.apply_error(category, message)
 
+    # ── OpenFAN firmware update (DEC-481) ────────────────────────────
+
+    def _firmware_channels(self):
+        if self._state is None:
+            return []
+        state = self._state
+        return channel_lines(
+            (f.id for f in state.fans),
+            state.fan_display_name,
+            # The daemon's union rule for an OpenFan channel, never the role name.
+            lambda fan_id: openfan_channel_is_pump_protected(state.openfan_role(fan_id)),
+        )
+
+    def _open_openfan_firmware(self) -> None:
+        """Open the update window, or raise the one already open.
+
+        One at a time, for the reason `_open_validation` gives: the daemon has
+        one update slot, and replies route only to `self._ofw_dialog`.
+        """
+        existing = self._ofw_dialog
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
+            return
+        if self._state is None:
+            return
+        if not self._ensure_ofw_worker():
+            self._show_diag_message("Cannot update the firmware: no daemon connection.")
+            return
+        from control_ofc.paths import cache_dir
+
+        dialog = OpenFanFirmwareDialog(
+            channels=self._firmware_channels(),
+            prepared_dir=cache_dir() / "firmware",
+            parent=self,
+        )
+        dialog.device_requested.connect(self._ofw_device_request.emit)
+        dialog.start_requested.connect(self._ofw_start_request.emit)
+        dialog.poll_requested.connect(self._ofw_poll_request.emit)
+        dialog.cancel_requested.connect(self._ofw_cancel_request.emit)
+        self._ofw_dialog = dialog
+        status = self._state.daemon_status
+        dialog.set_live_status(
+            status.openfan_link if status else None,
+            status.openfan_maintenance if status else None,
+        )
+        dialog.set_external_block(RUN_ACTIVE_REASON if self._report_active else "")
+        dialog.request_initial()
+        # Modeless (`P8-bd`): the user works in a file manager meanwhile.
+        dialog.finished.connect(lambda _result, d=dialog: self._on_ofw_closed(d))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _on_ofw_closed(self, dialog: OpenFanFirmwareDialog) -> None:
+        """Tear down a closed window — fenced on identity, `deleteLater`, as
+        `_on_validation_closed` explains."""
+        dialog.stop_polling()
+        if self._ofw_dialog is dialog:
+            self._ofw_dialog = None
+        dialog.deleteLater()
+
+    @Slot(object)
+    def _on_status_for_firmware(self, status) -> None:
+        key = (status.openfan_link, status.openfan_maintenance)
+        if key != self._ofw_status_key:
+            self._ofw_status_key = key
+            self._sync_firmware_button()
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.set_live_status(status.openfan_link, status.openfan_maintenance)
+
+    @Slot(object)
+    def _on_ofw_device(self, device) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_device(device)
+
+    @Slot(str, str)
+    def _on_ofw_device_error(self, category: str, message: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_device_error(category, message)
+
+    @Slot(object)
+    def _on_ofw_run(self, record) -> None:
+        # The support bundle carries the last run this GUI saw.
+        if record is not None:
+            self._diag.set_openfan_update_record(record.raw)
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_run(record)
+
+    @Slot(str, str)
+    def _on_ofw_run_error(self, category: str, message: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_run_error(category, message)
+
+    @Slot(str)
+    def _on_ofw_started(self, run_id: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_started(run_id)
+
+    @Slot(str, str)
+    def _on_ofw_start_failed(self, category: str, message: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_start_error(category, message)
+
+    @Slot(str, str)
+    def _on_ofw_start_unconfirmed(self, category: str, message: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_start_unconfirmed(category, message)
+
     # ── Control-path discovery (AIO Phase 8 Batch 1) ─────────────────
 
     def _open_control_path_discovery(self, header_id: str) -> None:
@@ -2502,6 +2676,27 @@ class HardwarePage(QWidget):
         )
         return ok
 
+    def _ensure_ofw_worker(self) -> bool:
+        def connect(w: _OpenFanFirmwareWorker) -> None:
+            self._ofw_device_request.connect(w.do_device, Qt.ConnectionType.QueuedConnection)
+            self._ofw_start_request.connect(w.do_start, Qt.ConnectionType.QueuedConnection)
+            self._ofw_poll_request.connect(w.do_poll, Qt.ConnectionType.QueuedConnection)
+            self._ofw_cancel_request.connect(w.do_cancel, Qt.ConnectionType.QueuedConnection)
+            w.device_ready.connect(self._on_ofw_device, Qt.ConnectionType.QueuedConnection)
+            w.device_error.connect(self._on_ofw_device_error, Qt.ConnectionType.QueuedConnection)
+            w.run_updated.connect(self._on_ofw_run, Qt.ConnectionType.QueuedConnection)
+            w.run_error.connect(self._on_ofw_run_error, Qt.ConnectionType.QueuedConnection)
+            w.started.connect(self._on_ofw_started, Qt.ConnectionType.QueuedConnection)
+            w.start_failed.connect(self._on_ofw_start_failed, Qt.ConnectionType.QueuedConnection)
+            w.start_unconfirmed.connect(
+                self._on_ofw_start_unconfirmed, Qt.ConnectionType.QueuedConnection
+            )
+
+        self._ofw_worker, self._ofw_thread, ok = self._ensure_worker(
+            self._ofw_worker, self._ofw_thread, _OpenFanFirmwareWorker, connect
+        )
+        return ok
+
     def _ensure_discover_worker(self) -> bool:
         def connect(w: _ControlPathWorker) -> None:
             self._discover_preflight_request.connect(
@@ -2635,6 +2830,8 @@ class HardwarePage(QWidget):
         for device_card in self._device_cards.values():
             device_card.set_diagnostics_blocked(reason)
         self._sync_diagnostic_enablement()
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.set_external_block(reason)
         self.pwm_report_active_changed.emit(active)
 
     def cleanup(self) -> None:
@@ -2655,6 +2852,7 @@ class HardwarePage(QWidget):
             (self._char_worker, self._char_thread, "Characterization"),
             (self._discover_worker, self._discover_thread, "ControlPath"),
             (self._ofancal_worker, self._ofancal_thread, "OpenFanCalibration"),
+            (self._ofw_worker, self._ofw_thread, "OpenFanFirmware"),
             (self._validation_worker, self._validation_thread, "Validation"),
         ):
             self._teardown_worker(worker, thread, label)
@@ -2666,7 +2864,11 @@ class HardwarePage(QWidget):
         self._char_worker = self._char_thread = None
         self._discover_worker = self._discover_thread = None
         self._ofancal_worker = self._ofancal_thread = None
+        self._ofw_worker = self._ofw_thread = None
         self._validation_worker = self._validation_thread = None
+        # The update itself runs daemon-side; only this window's poll stops.
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.stop_polling()
 
     def set_theme(self, tokens) -> None:
         if self._last_report is not None:

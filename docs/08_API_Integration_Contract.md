@@ -400,6 +400,17 @@ GUI treats every flag as false / old behaviour (AIP-180):
   `floor_role_header_roles` (hwmon headers and, from `GET /fans/openfan/roles`, OpenFan channels; the
   Min badge and the Dashboard fan-card floor) and selects the
   role picker's CPU-fan text and outcome message (`header_role_view.choices_for_daemon`).
+- `openfan_firmware_maintenance` (bool, DEC-481, daemon ≥ 3.8.0) — the daemon coordinates an
+  OpenFAN firmware update from a local `.uf2` file: `GET /fans/openfan/device` plus
+  `POST`/`GET`/`DELETE /fans/openfan/maintenance` (§ OpenFan firmware update), and `/status`
+  carries `openfan_link` and `openfan_maintenance`. Hardcoded `true` like `openfan_calibration`: it
+  describes the build, not whether a controller is attached (the device answer's `present` and
+  `update_refusals` say that). Absent → `false`; an older daemon `404`s the routes.
+  **GUI use (DEC-481):** registered in `daemon_features` as `openfan_firmware_maintenance`; the
+  Hardware page shows **Update OpenFAN Firmware…** only where
+  `daemon_supports("openfan_firmware_maintenance", caps) is True`, outside demo mode, and while a
+  controller is present (`status.openfan_link` present or `devices.openfan.present`) or an update
+  is reported (`status.openfan_maintenance`).
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -548,6 +559,12 @@ Endpoints with known long upper bounds:
   early is merely slow, not lossy — the daemon performs the adoption in a
   detached task, so a client that gives up does not discard a controller that was
   found (DEC-266).
+- `openfan_device` — the daemon may ask the board for its `>05` and `>06` reports, two
+  serial exchanges at `serial.timeout_ms`, queued behind whatever exchange holds the controller
+  (a poll or an engine write; the answers are reused for 10 s); client timeout is **10 s**
+  (`OPENFAN_DEVICE_TIMEOUT_S`). The
+  other three firmware-update calls keep the default: the `POST` answers once the run has
+  claimed the controller, not when it ends.
 
 `DaemonTimeout` is a distinct subclass of `DaemonError` (separate from
 `DaemonUnavailable`) so callers can distinguish "the daemon is slow" from
@@ -1206,6 +1223,40 @@ by `GET /inventory/hardware-readiness?refresh=true`; `GET /inventory/hardware-re
 than 3 s old. The **full** item list stays on `GET /inventory/readiness` — this rollup is a summary,
 not a replacement. The GUI parses an absent key to `None` and hides the chip (older daemon, demo, or
 before the daemon's startup seed runs); `top_summary` is a daemon string, rendered as plain text.
+
+#### OpenFAN link and firmware update (DEC-481, daemon ≥ 3.8.0)
+
+Two additive fields, capability `control.openfan_firmware_maintenance`, on `/status` and `/poll`:
+
+- **`openfan_link`** (string; omitted when no OpenFan controller has been adopted) — what the
+  OpenFan poll loop last observed of its serial link, kept apart from presence: `"connected"` (the
+  last poll succeeded, or a verified adoption has just happened), `"unresponsive"` (polls are
+  failing, short of the reconnect threshold; the loop still holds the port), `"reconnecting"` (the
+  loop has given up on the port and is searching), or `"maintenance"` while a firmware update holds
+  the controller. An update starts only from `"connected"`. Render an unrecognised token as sent.
+- **`openfan_maintenance`** (object; omitted unless an update is running or the last one left its
+  board needing recovery) — `{run_id,
+  stage, state, outcome?}`. While a run holds the controller, `state` is `"running"` and `stage` is
+  the run's stage (§ OpenFan firmware update). After a run that left the board outside normal
+  control — outcome `needs_recovery` or `firmware_copied_board_not_back` — it stays as `{run_id,
+  stage: "finished", state: "needs_recovery", outcome}`, with OpenFan writes still suspended, until
+  the poll loop next reports the link `connected`. Every other outcome clears it at once. The full
+  record is `GET /fans/openfan/maintenance`.
+
+**The `openfan` subsystem entry** reports the update in place of the poll's freshness: `warn`
+naming the stage while a run holds the controller, `crit` once a stage has overrun its time limit
+by 10 s (the update is stuck), and `crit` naming the outcome while a run's board needs recovery.
+Only that entry changes; `overall_status` is still the worst of all, so a genuine `crit` elsewhere
+still shows. The overlay applies whatever the presence, because a board left in its bootloader
+across a daemon restart is not adopted and "no OpenFanController connected" would hide it; at
+startup it is restored only while that board is still on its USB port.
+
+**GUI use (DEC-482, narrowing DEC-282):** while `openfan_maintenance` is present the GUI raises no
+per-channel `fan_stale:openfan:*` warning — those channels cannot be polled while the board is
+away — and one alert stands in for them: `openfan_update:running` (warning, naming the stage) or
+`openfan_update:needs_recovery` (error, naming the outcome). A stall on any fan, the staleness of
+every other fan, the thermal banner and every other alert are unchanged. The tray is unchanged: it
+shows `thermal_state`, which an update does not move.
 
 ### GET /sensors
 Use as the primary sensor snapshot source.
@@ -2816,6 +2867,142 @@ the **restart** duty as the minimum that keeps the fan running.
   end (up to the kick's window, 10 s at the default poll), and a kick owed after the cancel
   runs too, then the restore.
 
+### OpenFan firmware update (DEC-481)
+`[SAFETY]` Takes an OpenFAN controller through its USB bootloader and back while the user copies a
+firmware file onto the bootloader's `RPI-RP2` drive. **Daemon ≥ 3.8.0, capability-gated on
+`control.openfan_firmware_maintenance`.** The daemon never writes the firmware, never reads a file,
+never mounts a drive and never opens any device but the board's own serial interface; no client
+touches the board. Phase 1 cannot prove which exact build the board runs afterwards — the firmware
+carries no build identifier — so a run reports evidence, never an identity.
+
+**GUI use (DEC-481):** the Hardware page's **Update OpenFAN Firmware…** window. The GUI checks the
+chosen `.uf2` itself (`services/uf2.py`: at most 1 MiB of whole 512-byte blocks, the RP2040 family
+id, main flash from `0x10000000` with no gap or repeat, the first boot stage's checksum, the
+OpenFAN USB names), copies it to `$XDG_CACHE_HOME/control-ofc/firmware/OpenFAN-<first 8 hex of the
+SHA-256>.uf2` (directory 0700, file 0600, read back and re-hashed) and sends only its fingerprint.
+It shows the board's hardware revision beside the file's and never gates on either; a file whose
+SHA-256 matches a published release says so. Closing the window never sends `DELETE` — the run
+goes on and the window can be reopened.
+
+- `GET /fans/openfan/device` — `{api_version, present, link?, port?, usb?, interface_number?,
+  hw_info?, fw_info?, update_available, update_refusals[]}`. `present`: a controller is adopted.
+  `link`: `status.openfan_link`'s token. `port`: the serial device it was adopted on. `usb`: the
+  board's USB device as sysfs describes it — `{port, vendor_id, product_id, manufacturer?, product?,
+  serial?, bcd_device?, config_descriptor_hex?}`, where `port` is the USB port path (`8-8`) and
+  `config_descriptor_hex` the configuration descriptor the kernel cached at enumeration — and
+  `interface_number` the USB interface the serial device belongs to. `hw_info` / `fw_info`: the
+  board's `>05` / `>06` reports as `KEY → VALUE` maps (keys `[A-Z0-9_]{1,32}`, printable values up
+  to 64 characters; absent when the board did not answer), read through the controller — queued
+  behind a poll or an engine write holding it — and reused for 10 s; nothing is asked of the board
+  while an update holds it. `update_available` is
+  `update_refusals` being empty; each refusal is `{reason, message}` with the reasons of the `POST`
+  below, previewed without claiming anything — the `POST` decides again.
+- `POST /fans/openfan/maintenance` — body `{expected_usb_serial, firmware: {sha256, size,
+  usb_config_descriptor_hex?, info?}}`: the board's USB serial number as the device answer reported
+  it, and what the client found in the file (never a path). `400 validation_error` unless the serial
+  is 1–64 letters and digits, `sha256` 64 hex digits, `size` a positive multiple of 512 no larger
+  than 1 MiB, the descriptor 9–512 bytes of hex and `info` at most 16 entries under the board
+  reports' key and value rules. Unknown fields are ignored; a missing or mistyped field is the
+  framework's plain-text `422`, and a body that is not JSON its plain-text `400`.
+  - **`202`** `{api_version, run_id, stage}` once the run has claimed the controller; the run is
+    detached. Poll `GET /fans/openfan/maintenance`. The GUI follows the run this `run_id` names.
+    When the `POST` gets no answer — a timeout or a lost connection — the request may still have
+    started a run: the GUI says so and asks the daemon, and calls the start failed only once two
+    answers show no run newer than the click.
+  - **Refusals**, all before anything is touched: `503 hardware_unavailable` while the daemon is
+    shutting down; the `400`s above; otherwise `409 validation_error`, `retryable: true`, with
+    `details.reason` one of `openfan_not_connected`, `maintenance_active` (another run holds the
+    controller, or its task is still alive), `calibration_active`, `openfan_link_not_ready` (the
+    link is not `connected`, or the last update left the board needing recovery and the controller
+    has not answered since — the link can still read `connected` until the poll loop has handled
+    that update's end), `bootloader_present` (a board is already in its bootloader — one
+    `RPI-RP2` drive at a time), `usb_identity_unavailable`, `identity_mismatch` (the connected
+    board's serial is not `expected_usb_serial`), `diagnostic_active` (a diagnostic holds the write
+    pause — even one whose deadman lapsed), `thermal_emergency`, `validation_recording`. `message`
+    is the daemon's sentence: render it.
+  - **The claim** is one decision under the lock the diagnostic pause uses. From then until the run
+    ends, every diagnostic that takes the write pause (the verifies, characterisation, control-path
+    discovery, the stall probe, the OpenFan calibration on either route), a validation session
+    start, an OpenFan rescan, and an override or identify on an OpenFan channel answer `409
+    validation_error`, `retryable: true`, `details.reason: "openfan_maintenance"`. Overrides on
+    controls that drive an OpenFan channel, and identify holds on one, are released as the run
+    starts (logged). Everything else — reads, profile CRUD and activation, config writes, override
+    release and renew, an hwmon rescan, a GPU fan reset — answers as usual. Every route the daemon
+    serves is classified, and a test fails on one that is not.
+- **The run**, seven stages, each ended by the run itself at its time limit:
+  1. `preparing` (10 s) — read the board's USB identity and its `>05` / `>06` reports (`before`).
+  2. `parking` (15 s) — suspend OpenFan writes, then set every channel to **100 %**. A failed write
+     ends the run with nothing changed. The last stage a cancel reaches.
+  3. `entering_bootloader` (30 s in all) — borrow the serial port from the poll loop (the only code
+     that swaps the port) and send `>07`, which gets no reply. If the board is still in normal mode
+     after 5 s, open the same port at **1200 baud** (`bootloader_trigger: "1200_baud"`) and wait
+     5 s more. The bootloader must then appear on the **same USB port** within 10 s.
+  4. `waiting_for_file` (15 min) — the user copies the file onto the `RPI-RP2` drive
+     (`bootloader_drive`, a block-device name such as `sdb`). A drive belonging to another board in
+     its bootloader is listed in `other_bootloader_drives`, never to be used.
+  5. `waiting_for_return` (20 s) — the drive goes away, and the board must come back with the same
+     serial on the same USB port. If it comes back in its bootloader instead, the run notes it and
+     returns to `waiting_for_file` with what is left of the 15 minutes — one file wait per run —
+     and the third such return ends the run `needs_recovery`.
+  6. `checking` (10 s) — open only the interface the daemon used, `>00` with retries, then `>05` /
+     `>06` (`after`) and the evidence.
+  7. `restoring_control` (10 s) — hand the port back, lift the suspension, and wait for a fresh
+     poll of every channel and for the settings of the active profile's OpenFan channels (every
+     channel while the thermal force is active) to land.
+
+  **While the board is in its bootloader the daemon cannot command the OpenFAN channels**, and from
+  the bootloader's appearance until control is restored it treats their settings as unknown. The
+  board's two fan chips should hold the parked 100 % meanwhile — they run from the SATA 12 V supply,
+  have no reset pin and are not touched by the boot ROM — but that comes from the schematic and
+  datasheet and has not been measured. When new firmware starts it runs every channel at its own
+  default (in the published source, about 1000 RPM and never below 40 %) for the few seconds
+  before control is restored, so a pump on the board slows down then.
+- **Writes during the run.** From `parking` until the hand-back — and after a run whose board needs
+  recovery, until the link reports `connected` — the engine, the thermal force and every give-back
+  **skip** OpenFan writes rather than fail them; hwmon and GPU writes are untouched, so the thermal
+  ladder still drives every other output. An emergency at the start refuses the run
+  (`thermal_emergency`); one raised mid-run cannot reach the OpenFAN channels.
+- `GET /fans/openfan/maintenance` — the current or most recent run (`200`, the record flattened
+  beside `api_version`); `404 not_found` before any run. Kept in memory and in the journal
+  `{state_dir}/openfan-maintenance.json` (default `/var/lib/control-ofc/`; owner-only, written
+  before each action), so it survives a daemon restart. Fields: `run_id`, `state` (`running` |
+  `finished`), `stage`, `stage_started_unix_ms`, `stage_deadline_unix_ms` (`null` before the
+  first stage starts and once finished), `stages[]` (`{stage, started_unix_ms, ended_unix_ms}`),
+  `started_unix_ms`, `finished_unix_ms`, `cancellable`, `outcome`, `outcome_detail`, `interrupted`,
+  `cancelled`, `bootloader_requested`, `bootloader_seen`, `board_answered`, `bootloader_trigger`
+  (`">07"` | `"1200_baud"`), `bootloader_drive`, `other_bootloader_drives[]`, `notes[]`,
+  `expected_usb_serial`, `usb_port`, `interface_number`, `tty`, `firmware` (the claim as sent),
+  `before` / `after` (`{usb, hw_info, fw_info}`; `after` once checked) and `evidence`
+  (`{descriptor_changed, descriptor_matches_file, info_matches_file, info_changed, verdict}`; each
+  boolean is `null` when a side is unknown, and `info_matches_file` compares only the keys the file
+  carries). `verdict` is `consistent_with_file` | `previous_firmware` | `inconclusive`. Neither
+  signal proves the exact build — the 2026-09-13 and 2026-09-27 releases share both — and a file
+  identical to the running firmware can only be `inconclusive`.
+- `outcome` — `no_firmware_change` (refused, cancelled, or the board never left normal mode or
+  restarted into its firmware instead; the fans are back under profile control) ·
+  `needs_recovery` (the board is, or may be, in its bootloader with no firmware copied: copy the
+  file, press RESET or power-cycle the board) · `firmware_copied_board_not_back` (the drive went
+  away but the board did not come back answering) · `board_back_control_not_restored` (the board
+  answers but the fan settings did not land in time; writes resume, the engine keeps retrying, and
+  there is **no** `crit` overlay) · `completed_build_not_confirmed` (control restored; the evidence
+  is shown) · `back_on_previous_firmware` (control restored, but the evidence shows the previous
+  firmware) · `exact_build_verified` (reserved; Phase 1 never produces it). Render an unrecognised
+  token. `needs_recovery` and `firmware_copied_board_not_back` keep OpenFan writes suspended and
+  the `openfan` entry `crit` until the link reports `connected`.
+- **A daemon stop never resumes a run and repeats nothing.** At the next start an unfinished run
+  in the journal is marked `interrupted: true` and finished by how far it got: before the
+  bootloader request → `no_firmware_change`; after it, before the board answered →
+  `needs_recovery`; after the board answered → `board_back_control_not_restored`. When that leaves
+  a board needing recovery and no controller was adopted at boot, the daemon watches its USB port,
+  read-only, and adopts the board through the rescan path once it has been back running firmware
+  for two checks in a row (2 s apart) — one attempt per return, because a rescan opens every
+  serial candidate; `POST /fans/openfan/rescan` is there for another.
+- `DELETE /fans/openfan/maintenance` — `202 {api_version, run_id, cancel_requested: true}` while
+  the record says `cancellable` (`preparing` and `parking`); `409 validation_error`
+  (`retryable: false`) with `details.reason: "not_cancellable"` once parking has finished and the
+  bootloader request is next; `404 not_found` when no run is running. A cancel lands before the
+  next channel or at the end of the stage, and the fans return to profile control.
+
 ### OpenFan calibrate (deprecated)
 - `POST /fans/openfan/{ch}/calibrate` — **deprecated since DEC-452.** **No GUI caller.** Starts
   the same run as the route above and holds the request open until it ends, so a client needs a
@@ -3391,7 +3578,7 @@ Error codes and HTTP statuses:
   Distinct from `hardware_unavailable` (transient / retryable) and `validation_error` (malformed request). Permanent for this device — clients must not retry.
 - 403 `lease_required` (source: `"validation"`, retryable: false) — **retired** with the bare hwmon PWM-write and the GUI-held lease (DEC-165); **fully removed at DEC-170**, when the verify path's internal-lease lapse was re-mapped to retryable `503 hardware_unavailable`. No route emits this code any more. Listed for historical context.
 - 404 `not_found` (source: `"validation"`, retryable: false) — an **unknown route** (the fallback; message `endpoint not found: <path>`), **and** a missing resource on these routes: no validation session started or recording (`GET`/`DELETE /validation/session`, `POST /validation/session/stop`, `/event`, `/measurement`), an unknown session id (`GET /validation/sessions/{id}`), an unknown cooling device (`POST /validation/session`, `DELETE /config/cooling-device/{id}`), and no run yet (`GET /diagnostics/control-path`, `GET /diagnostics/stall-probe`,
-`GET /diagnostics/openfan-calibration`). Those send the handler's own message; before daemon 2.56.2 each was prefixed "endpoint not found:" as well (DEC-426, `DC-n`). Every other unknown *resource* on a known route (profile, control, fan, hwmon header, GPU id) returns 404 with code `validation_error`. **The code therefore cannot distinguish a missing route from a missing resource**: gate a feature on its capability flag, never on a probe.
+`GET /diagnostics/openfan-calibration`, and `GET`/`DELETE /fans/openfan/maintenance` on daemon ≥ 3.8.0). Those send the handler's own message; before daemon 2.56.2 each was prefixed "endpoint not found:" as well (DEC-426, `DC-n`). Every other unknown *resource* on a known route (profile, control, fan, hwmon header, GPU id) returns 404 with code `validation_error`. **The code therefore cannot distinguish a missing route from a missing resource**: gate a feature on its capability flag, never on a probe.
 - 404 `override_expired` (source: `"validation"`, retryable: false) — **renew** of a manual override (DEC-163) that already lapsed on the daemon's deadman, or was never taken; re-take rather than renew. A **release** of such an override is not an error: it answers `200 {"released": false}`.
 - 409 `lease_already_held` (source: `"validation"`, retryable: false) — **retired** with the GUI-held lease (DEC-165); **fully removed at DEC-170** (the verify mapper no longer emits it). No route emits this code any more. Listed for historical context.
 - 409 `already_exists` (source: `"validation"`, retryable: false) — `POST /profiles` with an `id` that already exists (DEC-160). Rename or `PUT` the existing profile instead.
@@ -3406,6 +3593,15 @@ Two things distinguish the cooldown 409 from the single-flight 409, and a client
 **But the set-change exemption is not reserved for the client, and the daemon can consume it (`OFN-u`, corrected 2026-09-12 — this paragraph previously claimed such a retry is "*not* refused", which is false).** The daemon's own post-boot adoption loop probes on this same guard, and `RescanGuard`'s drop re-stamps the cooldown with the **new** candidate set. So if the loop reaches a newly attached controller first, a user clicking *Rescan Hardware* within the 10-second cooldown meets `elapsed < COOLDOWN && same_port_set(new)` and **is** refused, on the one endpoint whose purpose is recovery without a restart. The collision is confined to the post-boot adoption window (60 s auto-detect, 180 s when a serial port is configured) and needs the two probes inside 10 s of each other, so it is uncommon rather than impossible; outside that window no daemon-side probe runs and the exemption is the client's alone. Residual impact is small — the refusal is `retryable: true` and names the wait, and inside the window the loop keeps probing on its own — but a client must not present this 409 as "you already did that". Treat it as "a probe just happened" and retry when the message says to.
 
 **Since DEC-291 (daemon ≥ 2.23.5) the cooldown is checked FIRST**, ahead of the already-connected no-op, so a successful rescan followed by another within the window answers `409`, not `200 already_connected`. It still never re-probes or re-adopts — idempotent in effect, not in status code. The reason for the change is that the port list the cooldown compares used to be built by *opening* every candidate, so the boards were reset before the cooldown could refuse anything; enumeration no longer opens, and the check now runs before any other branch can step in front of it.
+- 409 `validation_error` with `details.reason: "openfan_maintenance"` (retryable: true, daemon ≥
+  3.8.0, DEC-481) — a route that would drive the OpenFan controller or claim the diagnostic pause,
+  called while a firmware update holds the controller; retry once it has finished. Busy, not
+  protection: it shares the code and `retryable` of the thermal refusals, so a client telling the
+  two apart reads `details.reason` (the GUI's `is_openfan_maintenance_refusal`; its PWM Test Report
+  words it as an update holding the fans, never as a safety refusal). The update's own
+  start refusals use the same shape with their own `details.reason`, and its cancel past the
+  cancellable stages answers `details.reason: "not_cancellable"`, retryable: false
+  (§ OpenFan firmware update).
 - 409 `session_full` (source: `"validation"`, retryable: false, daemon ≥ 2.56.2) — `POST /validation/session/event` or `/measurement` while the recording session already holds its cap of that kind (4096 events, 512 measurements). Nothing was appended; `details.limit` is the cap. A new session is the only way to record more (DEC-426, `DC-m`).
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
 - 500 `internal_error` (source: `"internal"`, retryable: true)
@@ -3456,6 +3652,11 @@ According to the provided daemon notes:
   anything from it. An identify stop is bounded by its own deadman (DEC-166); a pump is never
   stopped (the 30% floor, DEC-162, and DEC-311 for identify). The GUI's Fan Wizard capped its
   spin-down at this value from DEC-329 until DEC-426 removed the cap.
+- **A firmware update suspends OpenFan writes** (DEC-481, daemon ≥ 3.8.0): from `parking` until
+  the hand-back, and after a run whose board needs recovery until the link reports `connected`.
+  The engine, the thermal force and every give-back skip them meanwhile rather than fail; the
+  thermal emergency still forces every hwmon output. The channels are parked at 100 % before the
+  port is lent (§ OpenFan firmware update).
 - PWM 0–100 passed through — no clamping in the daemon. Role-aware floors are
   baked into the profile by the GUI and enforced by the daemon engine
   (DEC-162; see `docs/09_State_Model_and_Control_Behaviour.md`).

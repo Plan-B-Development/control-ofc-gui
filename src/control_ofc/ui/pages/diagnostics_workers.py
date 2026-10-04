@@ -39,15 +39,22 @@ def unexpected_error_message(subject: str) -> str:
 UNEXPECTED_VERIFY_ERROR = unexpected_error_message("the test")
 
 
-def _is_soft_safety_refusal(err: object) -> bool:
-    """:func:`control_ofc.api.errors.is_soft_safety_refusal` for a raised error.
+def _is_soft_refusal(err: object) -> bool:
+    """A raised refusal to show softly, in the daemon's words — not a failure.
 
-    The rule lives in ``api.errors`` so the PWM Test Report runner, which sees an
-    outcome rather than an exception, applies the same one (``DC-cl``).
+    Protection (:func:`control_ofc.api.errors.is_soft_safety_refusal`), or an
+    OpenFAN firmware update holding the controller
+    (:func:`~control_ofc.api.errors.is_openfan_maintenance_refusal`): both are
+    retryable, and the daemon accepts the same request later. The rules live in
+    ``api.errors`` so the PWM Test Report runner, which sees an outcome rather
+    than an exception, applies the same ones (``DC-cl``) and words them apart.
     """
-    from control_ofc.api.errors import is_soft_safety_refusal
+    from control_ofc.api.errors import is_openfan_maintenance_refusal, is_soft_safety_refusal
 
-    return is_soft_safety_refusal(getattr(err, "code", ""), bool(getattr(err, "retryable", False)))
+    details = getattr(err, "details", None)
+    return is_soft_safety_refusal(
+        getattr(err, "code", ""), bool(getattr(err, "retryable", False)), details
+    ) or is_openfan_maintenance_refusal(details)
 
 
 class _SocketWorker(QObject):
@@ -154,9 +161,9 @@ class _VerifyWorker(_SocketWorker):
         except DaemonUnavailable:
             self.verify_error.emit("unavailable", "Daemon unavailable during verify", header_id)
         except DaemonError as e:
-            # A safety refusal is not a failure — show the daemon's message
-            # verbatim (soft), not as an error. See `_is_soft_safety_refusal`.
-            if _is_soft_safety_refusal(e):
+            # A refusal is not a failure — show the daemon's message verbatim
+            # (soft), not as an error. See `_is_soft_refusal`.
+            if _is_soft_refusal(e):
                 self.verify_error.emit("unavailable", e.message, header_id)
             else:
                 self.verify_error.emit("error", e.message, header_id)
@@ -211,9 +218,9 @@ class _GpuVerifyWorker(_SocketWorker):
                     "unsupported",
                     unsupported_feature_message("gpu_fan_verify"),
                 )
-            elif _is_soft_safety_refusal(e):
-                # Safety refusal — show the daemon's message verbatim, not as an
-                # error. See `_is_soft_safety_refusal`.
+            elif _is_soft_refusal(e):
+                # A refusal — show the daemon's message verbatim, not as an
+                # error. See `_is_soft_refusal`.
                 self.verify_error.emit("unavailable", e.message)
             else:
                 self.verify_error.emit("error", e.message)
@@ -597,10 +604,11 @@ class _CharacterizationWorker(_SocketWorker):
         except DaemonUnavailable:
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
-            # Reuses the shared refusal taxonomy: `thermal_abort` and a retryable
-            # `validation_error` are protection, not failure, and this endpoint
-            # returns exactly those two for the same reasons a verify does.
-            if _is_soft_safety_refusal(e):
+            # Reuses the shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort`
+            # and a retryable `validation_error` are protection, or a controller busy
+            # with an OpenFAN firmware update, not failure, and this endpoint returns
+            # exactly those two codes for the same reasons a verify does.
+            if _is_soft_refusal(e):
                 self.run_error.emit("unavailable", e.message)
             else:
                 self.run_error.emit("error", e.message)
@@ -683,10 +691,11 @@ class _ControlPathWorker(_SocketWorker):
         except DaemonUnavailable:
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
-            # The shared refusal taxonomy: `thermal_abort` and a retryable
-            # `validation_error` are protection, not failure. This endpoint
-            # returns exactly those two, for the same reasons a verify does.
-            if _is_soft_safety_refusal(e):
+            # The shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort` and a
+            # retryable `validation_error` are protection, or a controller busy with
+            # an OpenFAN firmware update, not failure. This endpoint returns exactly
+            # those two codes, for the same reasons a verify does.
+            if _is_soft_refusal(e):
                 self.run_error.emit("unavailable", e.message)
             else:
                 self.run_error.emit("error", e.message)
@@ -768,11 +777,12 @@ class _OpenFanCalibrationWorker(_SocketWorker):
         except DaemonUnavailable:
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
-            # The shared refusal taxonomy: `thermal_abort` and a retryable
-            # `validation_error` are protection, not failure. This route returns
-            # both — the retryable 400 with no fresh CPU reading included, since
-            # the predicate keys on `retryable`, not on the status.
-            if _is_soft_safety_refusal(e):
+            # The shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort` and a
+            # retryable `validation_error` are protection, or a controller busy with
+            # an OpenFAN firmware update, not failure. This route returns both — the
+            # retryable 400 with no fresh CPU reading included, since the predicate
+            # keys on `retryable`, not on the status.
+            if _is_soft_refusal(e):
                 self.run_error.emit("unavailable", e.message)
             else:
                 self.run_error.emit("error", e.message)
@@ -805,6 +815,135 @@ class _OpenFanCalibrationWorker(_SocketWorker):
     @Slot()
     def do_cancel(self) -> None:
         self._guard(lambda: self._ensure_client().cancel_openfan_calibration(), "cancellation")
+
+
+class _OpenFanFirmwareWorker(_SocketWorker):
+    """Runs the OpenFAN firmware update calls off the UI thread (DEC-481).
+
+    Every call is short: the daemon answers ``202`` and runs the update itself,
+    so a GUI that closes or dies mid-run strands nothing — the run carries on,
+    and a reopened window picks it up from ``GET /fans/openfan/maintenance``.
+    The device read waits on the board's own answers and carries its own
+    timeout.
+
+    A start ends one of three ways, each on its own signal, so the window never
+    says more than it knows: ``started`` with the run id the daemon's ``202``
+    named; ``start_failed`` when the daemon answered and refused, so nothing
+    began; ``start_unconfirmed`` when no answer came — a timeout or a lost
+    connection — and the request may have started a run all the same. A failed
+    read after a ``202`` is ``run_error``: the run is the daemon's, and the next
+    poll finds it.
+    """
+
+    device_ready = Signal(object)  # OpenFanDevice
+    device_error = Signal(str, str)  # category ('unavailable'|'error'), message
+    run_updated = Signal(object)  # OpenFanMaintenanceRecord | None
+    run_error = Signal(str, str)  # category, message
+    started = Signal(str)  # the run id the daemon's 202 named
+    start_failed = Signal(str, str)  # category, message
+    start_unconfirmed = Signal(str, str)  # category, message
+
+    def _guard(self, call, what: str, emit_error) -> None:
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        try:
+            call()
+        except DaemonTimeout:
+            emit_error(
+                "unavailable",
+                f"The daemon did not answer the {what} in time. An update that has "
+                "started carries on daemon-side.",
+            )
+        except DaemonUnavailable:
+            emit_error("unavailable", f"Daemon unavailable during the {what}.")
+        except DaemonError as e:
+            # A refused start is a 409 `validation_error` with `retryable` and a
+            # `details.reason`: protection, not failure — the daemon's own words.
+            if _is_soft_refusal(e):
+                emit_error("unavailable", e.message)
+            else:
+                emit_error("error", e.message)
+        except (ConnectionError, OSError) as e:
+            log.warning("OpenFAN firmware worker connection error: %s", e)
+            with contextlib.suppress(Exception):
+                if self._client is not None:
+                    self._client.close()
+            self._client = None
+            emit_error("unavailable", f"Connection lost during the {what}.")
+        except Exception as e:
+            self._backstop(e, f"the {what}", emit_error)
+
+    @Slot()
+    def do_device(self) -> None:
+        self._guard(
+            lambda: self.device_ready.emit(self._ensure_client().openfan_device()),
+            "controller read",
+            self.device_error.emit,
+        )
+
+    @Slot(str, dict)
+    def do_start(self, expected_usb_serial: str, firmware: dict) -> None:
+        # Sent only from the window's Start, which is unreachable until the file
+        # passed every check and the user ticked the confirmation.
+        from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+
+        started = False
+
+        def call() -> None:
+            nonlocal started
+            client = self._ensure_client()
+            try:
+                run_id = client.start_openfan_maintenance(expected_usb_serial, firmware)
+            except DaemonError as e:
+                answered = not isinstance(e, (DaemonTimeout, DaemonUnavailable))
+                if answered and not 200 <= e.status < 300:
+                    raise  # the daemon refused: `_guard` words it, nothing began
+                if isinstance(e, DaemonTimeout):
+                    why = "The daemon did not answer the start in time."
+                elif isinstance(e, DaemonUnavailable):
+                    why = "The daemon could not be reached during the start."
+                else:
+                    why = "The daemon's answer to the start could not be read."
+                self.start_unconfirmed.emit("unavailable", why)
+                return
+            except (ConnectionError, OSError) as e:
+                log.warning("OpenFAN firmware worker connection error: %s", e)
+                with contextlib.suppress(Exception):
+                    if self._client is not None:
+                        self._client.close()
+                self._client = None
+                self.start_unconfirmed.emit(
+                    "unavailable", "The connection was lost during the start."
+                )
+                return
+            except Exception as e:
+                self._backstop(e, "the update start", self.start_unconfirmed.emit)
+                return
+            started = True
+            self.started.emit(run_id)
+            self.run_updated.emit(client.openfan_maintenance_status())
+
+        def failed(category: str, message: str) -> None:
+            (self.run_error if started else self.start_failed).emit(category, message)
+
+        self._guard(call, "update start", failed)
+
+    @Slot()
+    def do_poll(self) -> None:
+        self._guard(
+            lambda: self.run_updated.emit(self._ensure_client().openfan_maintenance_status()),
+            "status read",
+            self.run_error.emit,
+        )
+
+    @Slot()
+    def do_cancel(self) -> None:
+        def call() -> None:
+            client = self._ensure_client()
+            client.cancel_openfan_maintenance()
+            self.run_updated.emit(client.openfan_maintenance_status())
+
+        self._guard(call, "cancellation", self.run_error.emit)
 
 
 class _ValidationWorker(_SocketWorker):
@@ -840,7 +979,7 @@ class _ValidationWorker(_SocketWorker):
         except DaemonUnavailable:
             self.session_error.emit("unavailable", f"Daemon unavailable during {label.lower()}.")
         except DaemonError as e:
-            if _is_soft_safety_refusal(e):
+            if _is_soft_refusal(e):
                 self.session_error.emit("unavailable", e.message)
             else:
                 self.session_error.emit("error", e.message)

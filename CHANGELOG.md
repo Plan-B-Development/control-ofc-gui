@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Update OpenFAN Firmware…, on the Hardware page.** Installs a firmware file you downloaded onto the
+  OpenFAN controller without opening the case. The window checks the `.uf2` — the RP2040 family, complete
+  and in order, the first boot stage's checksum, the OpenFAN USB names — keeps a private checked copy, and
+  follows the daemon as it sets the OpenFAN channels to 100 %, puts the board in update mode, waits while
+  you copy the file onto its `RPI-RP2` drive, and gives the fans back to your profile. It shows the
+  board's and the file's hardware revision side by side without enforcing either, recognises the three
+  published firmware files by their fingerprint, and reports what the board says before and after; it
+  cannot prove the exact build, and says so. It follows the run the daemon names for its start, and a
+  start the daemon did not answer is checked with the daemon rather than called failed. Closing the window
+  never stops an update, and a board left needing recovery is shown with the steps to recover it, after a
+  daemon restart too. Needs
+  control-ofc-daemon 3.8.0; with an older daemon the button does not appear (DEC-481).
+- **One alert for an OpenFAN firmware update.** While an update runs, a single *OpenFAN firmware update
+  in progress* warning — or a *needs recovery* error — stands in for the OpenFAN fans' *telemetry stale*
+  warnings, which are expected while the board is away. A stalled fan, every other fan's warnings and the
+  thermal banner are unchanged (DEC-482).
+- **The support bundle records the last firmware update** (its USB serial number removed) and the
+  daemon's `openfan_link` and `openfan_maintenance` status.
+- **A test refused because a firmware update holds the fans says so.** The PWM Test Report records it as
+  an OpenFAN update holding the fans, not as a safety refusal; the other diagnostics show the daemon's own
+  words, as for any refusal (DEC-481).
+
 ## [3.6.1] — 2026-10-04
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. Judging a second AMD GPU by its

@@ -36,7 +36,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
-from control_ofc.api.errors import is_soft_safety_refusal
+from control_ofc.api.errors import is_openfan_maintenance_refusal, is_soft_safety_refusal
 from control_ofc.services.pwm_report import document as d
 from control_ofc.services.pwm_report.catalog import (
     SPECS,
@@ -587,10 +587,12 @@ class ReportRunner:
         """Record a start the daemon did not run. Returns whether it may have
         written anything (a timeout may have), which decides the hand-back wait.
 
-        A refusal is never a hardware verdict: a thermal or retryable refusal is
-        protection, any other 409 is a busy slot, and an ineligible header is the
-        daemon's envelope doing its job. Protection is tested first because the
-        daemon sends it as 409 too (``DC-cl``).
+        A refusal is never a hardware verdict: an OpenFAN firmware update holding
+        the controller is busy, a thermal or retryable refusal is protection, any
+        other 409 is a busy slot, and an ineligible header is the daemon's envelope
+        doing its job. The update is tested first because it is a retryable 409 too,
+        and protection before the busy slot because the daemon sends it as 409 too
+        (``DC-cl``).
         """
         step["error"] = {
             "status": outcome.status,
@@ -607,7 +609,9 @@ class ReportRunner:
                 "restores the header itself when it ends.",
             )
             return True
-        if is_soft_safety_refusal(outcome.error_code, outcome.retryable):
+        if is_openfan_maintenance_refusal(outcome.details):
+            reason = "An OpenFAN firmware update held the fans. Test again once it has finished."
+        elif is_soft_safety_refusal(outcome.error_code, outcome.retryable, outcome.details):
             reason = f"The daemon declined for safety: {outcome.error_message}"
         elif outcome.status == 409:
             reason = "Another diagnostic was already running on the daemon."

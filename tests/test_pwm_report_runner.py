@@ -245,6 +245,22 @@ def test_a_safety_refusal_is_protection_not_a_busy_slot(code, message, retryable
     assert step["reason"] == f"The daemon declined for safety: {message}"
 
 
+def test_an_openfan_update_is_busy_not_protection():
+    # A retryable 409 `validation_error` like the forcing refusal above, told
+    # apart only by `details.reason` (DEC-481): the fans were never at risk.
+    runner = runner_for({CPU: {TEST_VERIFY}}, [channel(CPU)])
+    verify = one(_through_preflight(runner, _start(runner), 0.0), CALL_VERIFY)
+    message = "an OpenFan firmware update is running — try again once it has finished"
+    refusal = refused(
+        409, "validation_error", message, retryable=True, details={"reason": "openfan_maintenance"}
+    )
+    runner.on_outcome(verify.req_id, refusal, 0.0)
+    step = runner.doc["steps"][0]
+    assert step["status"] == d.STEP_NOT_TESTED
+    assert "firmware update" in step["reason"]
+    assert "safety" not in step["reason"]
+
+
 def test_a_verify_timeout_waits_for_the_handback_before_moving_on():
     runner = runner_for({CPU: {TEST_VERIFY}}, [channel(CPU)])
     verify = one(_through_preflight(runner, _start(runner), 0.0), CALL_VERIFY)

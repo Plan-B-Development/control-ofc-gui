@@ -11,7 +11,7 @@ import sys
 import time
 from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -162,6 +162,9 @@ class DiagnosticsService(QObject):
         #: ``set_hw_diagnostics``; a direct assignment to the cache leaves it
         #: unset, and a consumer must then say nothing about the reading's age.
         self.last_hw_diagnostics_at: float | None = None
+        #: DEC-481: the last OpenFAN firmware update run this GUI saw, as the
+        #: daemon sent it; ``None`` until one is seen. The bundle redacts it.
+        self.last_openfan_update: dict | None = None
 
     @property
     def events(self) -> list[DiagEvent]:
@@ -192,6 +195,10 @@ class DiagnosticsService(QObject):
         for tr in transitions:
             level, source, message = transition_to_log(tr)
             self.log_event(level, source, message, fields=transition_to_fields(tr))
+
+    def set_openfan_update_record(self, raw: dict) -> None:
+        """Keep the last firmware update run for the support bundle (DEC-481)."""
+        self.last_openfan_update = dict(raw)
 
     def set_hw_diagnostics(self, result: HardwareDiagnosticsResult) -> None:
         """Record a ``GET /diagnostics/hardware`` result — the **only** writer.
@@ -706,12 +713,19 @@ class DiagnosticsService(QObject):
             else:
                 missing.append("capabilities: daemon not connected or not yet polled")
             if self._state.daemon_status:
+                ds = self._state.daemon_status
                 bundle["daemon_status"] = {
-                    "overall": self._state.daemon_status.overall_status,
+                    "overall": ds.overall_status,
                     "subsystems": [
                         {"name": s.name, "status": s.status, "age_ms": s.age_ms}
-                        for s in self._state.daemon_status.subsystems
+                        for s in ds.subsystems
                     ],
+                    # DEC-481: the OpenFAN link, and any update running or
+                    # needing recovery.
+                    "openfan_link": ds.openfan_link,
+                    "openfan_maintenance": (
+                        asdict(ds.openfan_maintenance) if ds.openfan_maintenance else None
+                    ),
                 }
             else:
                 missing.append("daemon_status: daemon not connected or not yet polled")
@@ -778,6 +792,12 @@ class DiagnosticsService(QObject):
                     "pmfw_supported": gpu.pmfw_supported,
                     "overdrive_enabled": gpu.overdrive_enabled,
                 }
+
+        # DEC-481: the last firmware update this GUI saw, without the board's serial.
+        if self.last_openfan_update is not None:
+            from control_ofc.services.openfan_firmware_view import bundle_record
+
+            bundle["openfan_firmware_update"] = bundle_record(self.last_openfan_update)
 
         # Hardware diagnostics (if previously fetched)
         if self.last_hw_diagnostics:
