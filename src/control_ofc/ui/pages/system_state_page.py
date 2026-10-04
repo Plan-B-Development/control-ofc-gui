@@ -1335,23 +1335,27 @@ class SystemStatePage(QWidget):
 
     def _run_pwm_verify_all(self) -> None:
         if not self._state:
-            self._verify_all_progress_label.setText("Cannot verify: no app state")
-            self._verify_all_progress_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_all_progress_label, "Cannot verify: no app state"
+            )
             return
         if not self._client:
-            self._verify_all_progress_label.setText("Cannot verify: no daemon connection")
-            self._verify_all_progress_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_all_progress_label, "Cannot verify: no daemon connection"
+            )
             return
         if self._verify_all_total > 0:
             return  # already running
         writable = [h.id for h in self._state.hwmon_headers if h.is_writable]
         if not writable:
-            self._verify_all_progress_label.setText("No writable headers to test.")
-            self._verify_all_progress_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_all_progress_label, "No writable headers to test."
+            )
             return
         if not self._ensure_verify_worker():
-            self._verify_all_progress_label.setText("Verify unavailable: no socket path")
-            self._verify_all_progress_label.setVisible(True)
+            self._show_verify_message(
+                self._verify_all_progress_label, "Verify unavailable: no socket path"
+            )
             return
         self._verify_all_queue = list(writable)
         self._verify_all_results = []
@@ -1388,7 +1392,7 @@ class SystemStatePage(QWidget):
 
     def _show_verify_all_summary(self) -> None:
         if not self._verify_all_results:
-            self._verify_all_progress_label.setText("Verify all: no results.")
+            self._show_verify_message(self._verify_all_progress_label, "Verify all: no results.")
             return
         self._record_verify_outcome(self._verify_all_results)
         # Chip class and per-header wording both come from `verify_view`, which

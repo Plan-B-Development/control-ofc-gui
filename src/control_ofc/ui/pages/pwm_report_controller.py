@@ -225,9 +225,14 @@ class PwmReportController(QObject):
         # same reason: a verify blocks for seconds, and closing the client is
         # the only interrupt that lets the join complete (CLAUDE.md: do not
         # re-attempt the worker-teardown reorder).
+        #
+        # `PTA-u`: this controller's requests to the worker go first, as on the
+        # two pages (`ROLE-g`), so no new call is queued against a client about
+        # to close.
         worker, thread = self._worker, self._thread
         self._worker = self._thread = None
         if worker is not None:
+            QObject.disconnect(self, None, worker, None)
             QObject.disconnect(worker, None, None, None)
             shutdown = getattr(worker, "shutdown", None)
             if callable(shutdown):

@@ -19,7 +19,8 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtWidgets import QApplication
 
 from control_ofc.services.app_state import AppState
 from control_ofc.ui.pages.diagnostics_workers import (
@@ -36,6 +37,7 @@ from control_ofc.ui.pages.diagnostics_workers import (
     unexpected_error_message,
 )
 from control_ofc.ui.pages.hardware_page import HardwarePage
+from control_ofc.ui.pages.pwm_report_controller import PwmReportController
 from control_ofc.ui.pages.system_state_page import SystemStatePage
 
 CLOSED = RuntimeError("Cannot send a request, as the client has been closed.")
@@ -292,6 +294,55 @@ def test_teardown_drops_the_pages_requests_before_closing_the_client(
     signal.emit(*args)
     assert order == ["shutdown", "quit", "wait"], "a request reached the worker after teardown"
     assert len(other) == 3, "teardown must drop only the page's links to this worker"
+
+
+class _CallWorker(QObject):
+    """The PWM report worker's shape: a ``do_call`` slot and ``call_done``."""
+
+    call_done = Signal(int, object)
+
+    def __init__(self, order: list[str], controller_signal) -> None:
+        super().__init__()
+        self._order = order
+        self._controller_signal = controller_signal
+
+    @Slot(int, str, object)
+    def do_call(self, req: int, method: str, payload: object) -> None:
+        self._order.append("call")
+
+    def shutdown(self) -> None:
+        self._order.append("shutdown")
+        # Still connected here would queue a call against a closing client.
+        self._controller_signal.emit(3, "poll", {})
+
+
+def test_the_report_controllers_teardown_drops_its_requests_first(qtbot, tmp_path):
+    """`PTA-u`: the PWM Test Report controller follows the pages' rule."""
+    order: list[str] = []
+    controller = PwmReportController(
+        None,
+        "/tmp/fake.sock",
+        directory=tmp_path,
+        worker_factory=lambda _path: _CallWorker(order, controller._call_request),
+    )
+    assert controller._ensure_worker(), "precondition: the worker was built"
+    worker = controller._worker
+    thread = controller._thread
+    other: list[str] = []
+    controller._call_request.connect(lambda *_: other.append("other"))
+    controller._call_request.emit(1, "poll", {})
+    qtbot.waitUntil(lambda: order == ["call"])
+    order.clear()
+
+    controller._teardown_worker()
+
+    assert order[0] == "shutdown", order
+    assert thread.wait(1000)
+    controller._call_request.emit(2, "poll", {})
+    QApplication.processEvents()
+    assert "call" not in order, "a request reached the worker after teardown"
+    assert len(other) == 3, "teardown must drop only the controller's links"
+    del worker
 
 
 def test_every_worker_slot_is_covered_by_this_file():

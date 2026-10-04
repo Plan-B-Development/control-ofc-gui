@@ -1,6 +1,7 @@
 """DEC-472: System State's verify surfaces, the GPU Fan Control row, demo chips.
 
-`PTA-r` — a verify message that is not a result sets its own colour.
+`PTA-r` — a verify message that is not a result sets its own colour (`PTA-t`: on
+Verify All's label too).
 `PTA-s` — a sweep names the headers whose restore failed.
 `GPU-d` — a legacy card's method says "verify only", as the Overview does.
 `VOLT-e` — the demo's chip list and counts derive from its headers.
@@ -35,6 +36,7 @@ from control_ofc.services.verify_view import (
     verify_sweep_chip_class,
 )
 from control_ofc.ui.pages.system_state_page import SystemStatePage
+from control_ofc.ui.qt_util import set_chip_class
 
 
 def _page(qtbot, headers=()):
@@ -96,6 +98,54 @@ def test_a_refusal_before_the_call_resets_the_colour_too(qtbot):
     page._run_pwm_verify()  # the combo is empty, so it refuses
 
     assert label.text() == "No writable header selected"
+    assert label.property("class") == ""
+    _flush(page)
+
+
+def _after_a_green_sweep(qtbot, headers=()):
+    page = _page(qtbot, headers=headers)
+    label = page._verify_all_progress_label
+    set_chip_class(label, "SuccessChip")  # the previous sweep's verdict
+    return page, label
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected_text"),
+    [
+        (lambda page: setattr(page, "_state", None), "Cannot verify: no app state"),
+        (lambda page: setattr(page, "_client", None), "Cannot verify: no daemon connection"),
+        (lambda page: None, "No writable headers to test."),
+    ],
+)
+def test_verify_alls_early_messages_reset_the_last_sweeps_colour(qtbot, setup, expected_text):
+    """`PTA-t`: `PTA-r`'s rule on the third verify label."""
+    page, label = _after_a_green_sweep(qtbot)
+    setup(page)
+
+    page._verify_all_btn.click()
+
+    assert label.text() == expected_text
+    assert label.property("class") == ""
+    _flush(page)
+
+
+def test_verify_all_without_a_socket_resets_the_colour(qtbot):
+    page, label = _after_a_green_sweep(qtbot, headers=[HwmonHeader(id="pwm1", is_writable=True)])
+    page._ensure_verify_worker = lambda: False  # type: ignore[method-assign]
+
+    page._verify_all_btn.click()
+
+    assert label.text() == "Verify unavailable: no socket path"
+    assert label.property("class") == ""
+    _flush(page)
+
+
+def test_a_sweep_with_no_results_resets_the_colour(qtbot):
+    page, label = _after_a_green_sweep(qtbot)
+
+    page._show_verify_all_summary()  # reached only when every result was dropped
+
+    assert label.text() == "Verify all: no results."
     assert label.property("class") == ""
     _flush(page)
 

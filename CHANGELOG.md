@@ -14,6 +14,9 @@
   an alarm showed a red *Needs attention* status in its Cooling Hardware card while the Dashboard fan card
   called it an amber *Driver alarm*. The header card now shows an amber *Driver alarm* too; a stalled fan
   still shows a red *Needs attention* (`ALERT-a`).
+- **Verify All's messages no longer keep the last sweep's colour.** "No writable headers to test.",
+  "Cannot verify: no daemon connection" and the other messages shown before or instead of a sweep's
+  result were painted green or red when they followed one; they are now neutral (`PTA-t`).
 
 ## [3.6.0] — 2026-10-03
 
