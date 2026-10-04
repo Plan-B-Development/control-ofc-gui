@@ -224,6 +224,13 @@ class TestRunView:
         assert view.build_run_view(_record(stage="parking", cancellable=True), NOW).can_cancel
         assert not view.build_run_view(_record(), NOW).can_cancel
 
+    def test_the_headline_lowers_only_the_first_letter_of_the_stage(self):
+        # The parking label names the board; lowering the whole label printed
+        # "openfan" in the running headline.
+        assert "OpenFAN" in view.stage_label("parking")
+        v = view.build_run_view(_record(stage="parking"), NOW)
+        assert "set every OpenFAN channel" in v.headline
+
     def test_time_up(self):
         assert "is up" in view.time_left(NOW - 1, NOW)
         assert view.time_left(None, NOW) == ""
@@ -328,6 +335,10 @@ class TestAlert:
         )
         assert (a.key, a.level) == (view.UPDATE_ALERT_RUNNING, "warning")
         assert "copy the firmware file" in a.detail
+
+    def test_the_stage_in_the_alert_keeps_the_boards_name(self):
+        a = view.firmware_update_alert(OpenFanMaintenanceSummary("r1", "parking", "running"))
+        assert "Stage: set every OpenFAN channel" in a.detail
 
     def test_recovery_is_an_error_naming_the_outcome(self):
         a = view.firmware_update_alert(

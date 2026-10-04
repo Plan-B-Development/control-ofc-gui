@@ -56,6 +56,12 @@ def stage_label(token: str) -> str:
     return _STAGE_LABELS.get(token, token or "unknown stage")
 
 
+def _mid_sentence(label: str) -> str:
+    """A label placed inside a sentence: only its first letter is lowered, so a
+    name in it keeps its capitals (``OpenFAN``)."""
+    return label[:1].lower() + label[1:]
+
+
 # ── Connection ────────────────────────────────────────────────────────
 
 _LINK_TEXT = {
@@ -715,7 +721,7 @@ def build_run_view(record: OpenFanMaintenanceRecord, now_unix_ms: int) -> RunVie
         running=running,
         can_cancel=running and record.cancellable,
         headline=(
-            f"Update running — {stage_label(record.stage).lower()}."
+            f"Update running — {_mid_sentence(stage_label(record.stage))}."
             if running
             else (outcome.title if outcome else "")
         ),
@@ -760,7 +766,7 @@ def firmware_update_alert(summary: OpenFanMaintenanceSummary | None) -> CoolingA
         level="warning",
         title="OpenFAN firmware update in progress",
         detail=(
-            f"Stage: {stage_label(summary.stage).lower()}. OpenFAN fan readings pause while "
+            f"Stage: {_mid_sentence(stage_label(summary.stage))}. OpenFAN fan readings pause while "
             "the board is updated, so this alert stands in for their staleness warnings."
         ),
     )
