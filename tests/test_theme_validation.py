@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -70,6 +71,72 @@ def test_load_theme_coerces_corrupt_file(tmp_path):
     assert t.app_bg == ThemeTokens().app_bg  # invalid colour dropped
     assert t.base_font_size_pt == 16  # clamped
     assert t.name == "Bad"  # non-colour string kept
+
+
+# ---------------------------------------------------------------------------
+# GSA-b — a file in the themes folder that is not a theme must be skipped, not
+# stop the GUI. These shapes raised TypeError (or RecursionError), which neither
+# the startup scan nor the Theme page's list caught.
+# ---------------------------------------------------------------------------
+
+_NOT_A_THEME = {
+    "list": "[1]",
+    "number": "5",
+    "null": "null",
+    "string_version": json.dumps({"name": "pkg", "version": "1.0.0"}),
+    "null_version": json.dumps({"name": "pkg", "version": None}),
+    "bool_version": json.dumps({"name": "pkg", "version": True}),
+    "nested": "[" * 200_000,
+}
+
+
+@pytest.mark.parametrize("content", list(_NOT_A_THEME.values()), ids=list(_NOT_A_THEME))
+def test_load_theme_rejects_a_file_that_is_not_a_theme_with_valueerror(content, tmp_path):
+    p = tmp_path / "x.json"
+    p.write_text(content)
+    with pytest.raises(ValueError):
+        load_theme(p)
+
+
+@pytest.mark.parametrize("version", [1, 2, 2.0])
+def test_load_theme_still_accepts_a_numeric_version(version, tmp_path):
+    p = tmp_path / "ok.json"
+    p.write_text(json.dumps({"name": "Fine", "version": version}))
+    assert load_theme(p).name == "Fine"
+
+
+def _write_bad_themes_beside(themes: Path, good_name: str) -> None:
+    themes.mkdir(parents=True, exist_ok=True)
+    for stem, content in _NOT_A_THEME.items():
+        (themes / f"{stem}.json").write_text(content)
+    (themes / "zz_good.json").write_text(json.dumps({"name": good_name, "app_bg": "#123456"}))
+
+
+def test_startup_skips_files_that_are_not_themes_and_still_finds_the_chosen_one(settings_service):
+    """`main._resolve_startup_theme` runs before the window exists: a TypeError
+    there ended the process. The bad files sort before the good one, so the scan
+    must get past every one of them to find it."""
+    from control_ofc import main as main_module
+    from control_ofc.paths import themes_dir
+
+    _write_bad_themes_beside(themes_dir(), "Chosen")
+
+    assert main_module._resolve_startup_theme("Chosen").app_bg == "#123456"
+
+
+def test_theme_page_lists_the_good_theme_past_files_that_are_not_themes(qtbot, settings_service):
+    """`ThemePage.__init__` builds the list unconditionally, so a TypeError
+    there escaped `MainWindow(...)` whatever theme was selected."""
+    from control_ofc.paths import themes_dir
+    from control_ofc.ui.pages.theme_page import ThemePage
+
+    _write_bad_themes_beside(themes_dir(), "Listed")
+
+    page = ThemePage(settings_service=settings_service)
+    qtbot.addWidget(page)
+    names = [page._theme_combo.itemText(i) for i in range(page._theme_combo.count())]
+    assert "Listed" in names
+    assert "pkg" not in names
 
 
 # ---------------------------------------------------------------------------

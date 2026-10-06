@@ -378,12 +378,23 @@ def load_theme(path: Path) -> ThemeTokens:
     return tokens
 
 
-def _migrate_tokens(data: dict) -> dict:
+def _migrate_tokens(data: object) -> dict:
     """Migrate old token names to new spec names.
 
     Bumps the schema version to v2 when an old file is loaded so the GUI
     can later detect themes that predate DEC-109's WCAG-AA pass.
+
+    Raises ``ValueError`` when *data* is not a theme at all — not a JSON object,
+    or a ``version`` that is not a number. Every caller skips a theme on
+    ``ValueError``; the ``TypeError`` these shapes used to raise escaped the
+    startup scan and stopped the GUI from starting (GSA-b). A ``2.0`` written by
+    some other tool still loads, as it always did.
     """
+    if not isinstance(data, dict):
+        raise ValueError(f"theme JSON is {type(data).__name__}, expected an object")
+    version = data.get("version", 1)
+    if not isinstance(version, (int, float)) or isinstance(version, bool):
+        raise ValueError(f"theme version must be a number, got {version!r}")
     result = dict(data)
     for old_name, new_name in _TOKEN_MIGRATION.items():
         if old_name in result and new_name not in result:

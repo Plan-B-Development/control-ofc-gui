@@ -61,11 +61,9 @@ def save_report(doc: dict, directory: Path | None = None) -> Path:
 
 def _read(path: Path) -> dict:
     """Read and schema-check one report file. A document nested too deeply for
-    the JSON parser is a malformed file (``ValueError``), not a crash."""
-    try:
-        raw = load_json_capped(path, max_bytes=REPORT_MAX_BYTES)
-    except RecursionError as exc:
-        raise ValueError("nested too deeply to be a report") from exc
+    the JSON parser is a malformed file (``ValueError`` from
+    :func:`~control_ofc.paths.load_json_capped`), not a crash."""
+    raw = load_json_capped(path, max_bytes=REPORT_MAX_BYTES)
     return d.validate_document(raw)
 
 

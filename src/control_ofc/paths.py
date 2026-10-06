@@ -231,13 +231,19 @@ def load_json_capped(path: Path, *, max_bytes: int = MAX_IMPORT_BYTES) -> object
     Bounded read — never pulls more than ``max_bytes + 1`` into memory — so a
     crafted oversized file cannot exhaust RAM, plus ``parse_constant`` rejection
     of the non-standard ``NaN``/``Infinity`` literals. Raises ``ValueError`` when
-    the file exceeds the cap or carries a non-finite constant (``json.JSONDecodeError``
-    is itself a ``ValueError``), and ``OSError`` for read failures — callers
-    handle both. For external/import paths only; internal trusted reads (e.g.
-    ``/proc/cmdline``) need no cap.
+    the file exceeds the cap, carries a non-finite constant or is nested too
+    deeply to parse (``json.JSONDecodeError`` is itself a ``ValueError``), and
+    ``OSError`` for read failures — callers handle both. For external/import
+    paths only; internal trusted reads (e.g. ``/proc/cmdline``) need no cap.
     """
     with path.open("rb") as f:
         raw = f.read(max_bytes + 1)
     if len(raw) > max_bytes:
         raise ValueError(f"import file exceeds {max_bytes} bytes: {path}")
-    return json.loads(raw, parse_constant=_reject_nonfinite)
+    try:
+        return json.loads(raw, parse_constant=_reject_nonfinite)
+    except RecursionError as exc:
+        # Deep nesting well under the cap (a few hundred KiB of `[`) exhausts
+        # the parser's recursion limit. RecursionError is not a ValueError, so without this every
+        # caller's `except ValueError` lets a malformed file escape (GSA-b).
+        raise ValueError(f"JSON nested too deeply to parse: {path}") from exc

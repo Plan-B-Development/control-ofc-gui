@@ -281,6 +281,25 @@ def test_valid_json_of_the_wrong_shape_is_quarantined_too(tmp_path, monkeypatch)
     assert json.loads(path.read_text())["theme_name"] == "Fresh Start"
 
 
+def test_a_file_nested_too_deeply_to_parse_is_quarantined(tmp_path, monkeypatch):
+    """GSA-b: a few hundred KiB of `[` is under the size cap but raises
+    RecursionError in the parser, which is not a ValueError. It escaped `load()`
+    and stopped the GUI from starting instead of being quarantined."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    path = _settings_file(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    nested = "[" * 200_000
+    path.write_text(nested)
+
+    svc = AppSettingsService()
+    svc.load()
+    svc.update(theme_name="Fresh Start")
+
+    quarantined = tmp_path / "control-ofc" / "app_settings.json.corrupt"
+    assert quarantined.read_text() == nested
+    assert json.loads(path.read_text())["theme_name"] == "Fresh Start"
+
+
 def test_a_file_that_cannot_be_quarantined_is_not_overwritten(tmp_path, monkeypatch):
     """If the rename fails the bad file is still sitting there, so arming the
     service would destroy the only copy. Save nothing this session instead."""

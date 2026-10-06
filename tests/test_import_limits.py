@@ -64,6 +64,17 @@ class TestLoadJsonCapped:
         with pytest.raises(ValueError):
             load_json_capped(p)
 
+    @pytest.mark.parametrize("opener", ["[", '{"a":'])
+    def test_nesting_too_deep_to_parse_raises_valueerror(self, opener, tmp_path):
+        """GSA-b: deep nesting makes the parser raise RecursionError, which is
+        not a ValueError — every caller's `except ValueError` let it escape. The
+        file is well under the size cap, so only this conversion catches it."""
+        p = tmp_path / "deep.json"
+        p.write_text(opener * 200_000)
+        assert p.stat().st_size < MAX_IMPORT_BYTES
+        with pytest.raises(ValueError, match="nested too deeply"):
+            load_json_capped(p)
+
 
 class TestOversizedImportIntegration:
     """Oversized files at the real load sites are handled, not fatal."""

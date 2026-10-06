@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **One bad file in the themes folder no longer stops the GUI from starting.** A `.json` there that is not
+  a theme — a list, a number, a `version` that is not a number (a `package.json` has one), or a file
+  nested too deeply to parse — is now skipped with a warning, at startup and in the Theme page's list. A
+  settings file nested that deeply is now set aside as unreadable, like any other corrupt one, instead of
+  stopping startup; an import of such a file reports *Import failed*.
+
 ## [4.0.0] — 2026-10-04
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires. The OpenFAN firmware update
