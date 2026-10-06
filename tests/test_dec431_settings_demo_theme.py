@@ -218,7 +218,7 @@ class TestDirectoryRowsUnavailableInDemo:
             return QMessageBox.StandardButton.Yes
 
         monkeypatch.setattr("control_ofc.ui.pages.settings_page.QMessageBox.question", _yes)
-        page._handle_dir_change("profiles", page._profiles_dir_label, str(new_dir), profiles_dir())
+        page._handle_dir_change("profiles", str(new_dir))
         return asked
 
     def _seed_profile(self) -> Path:

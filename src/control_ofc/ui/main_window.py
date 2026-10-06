@@ -1302,14 +1302,21 @@ class MainWindow(QWidget):
         """Persist window geometry and last page on close, then clean up timers."""
         if getattr(self, "_geometry_timer", None) is not None:
             self._geometry_timer.stop()
-        self._persist_window_state()
-        # Flush any pane drag still inside the debounce window, before the widgets
-        # go away and their sizes become unreadable (DEC-245). Guarded like the
-        # geometry timer beside it: both are created in the same block, so a
-        # partially built window must still close cleanly rather than raising
-        # AttributeError out of closeEvent.
-        if getattr(self, "_splitter_persistence", None) is not None:
-            self._splitter_persistence.stop()
+        # Persisting is best-effort; teardown is not (`GSA-e`). A save that raised
+        # here used to skip every cleanup() below, leaving timers and workers
+        # running into a half-destroyed window. `save()` no longer raises for a
+        # failed write, but anything else that escapes must not cost the teardown.
+        try:
+            self._persist_window_state()
+            # Flush any pane drag still inside the debounce window, before the
+            # widgets go away and their sizes become unreadable (DEC-245). Guarded
+            # like the geometry timer beside it: both are created in the same
+            # block, so a partially built window must still close cleanly rather
+            # than raising AttributeError out of closeEvent.
+            if getattr(self, "_splitter_persistence", None) is not None:
+                self._splitter_persistence.stop()
+        except Exception:
+            log.exception("Could not persist window state on close — continuing teardown")
         # Stop the poll-age ticker before the pages tear down: it writes into the
         # footer every second, and a tick landing mid-teardown would touch an
         # already-deleted widget (DEC-222).

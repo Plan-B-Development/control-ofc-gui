@@ -272,3 +272,15 @@ class SeriesSelectionModel(QObject):
     def load_hidden(self, hidden: list[str]) -> None:
         """Restore hidden keys from persisted data."""
         self._hidden_keys = set(hidden)
+
+    def replace_hidden(self, hidden: list[str]) -> None:
+        """Replace the hidden set wholesale (a settings import) and announce it.
+
+        Unlike ``load_hidden`` — the startup restore, before anything renders —
+        this emits ``selection_changed`` so the chart redraws and MainWindow
+        persists the new set.
+        """
+        new = set(hidden)
+        if new != self._hidden_keys:
+            self._hidden_keys = new
+            self.selection_changed.emit()

@@ -17,8 +17,13 @@ belong in Controls.
 **Defaults, ranges and when each setting takes effect are in the user manual,
 [`manual/settings.md`](../manual/settings.md)** (D6) — this spec does not repeat them, so
 there is one copy to keep true. In short: the application's own preferences are batched and
-written by the page header's **Save Changes** to `~/.config/control-ofc/app_settings.json`;
-the Daemon Configuration and Preferred Sensors cards write to the daemon as you change them.
+written by the page header's **Save Changes** to `~/.config/control-ofc/app_settings.json`
+— only the fields edited on the page, so a second writer (a popup's *don't show again*,
+the Dashboard's Range combo) is not overwritten with the page's stale copy (`GSA-d`). The
+profiles and themes folders are not batched: a change moves the files, saves the override,
+puts it in force and (for profiles) moves the daemon search-path entry in one step
+(`GSA-c`). The Daemon Configuration and Preferred Sensors cards write to the daemon as you
+change them.
 
 ## Page sections
 

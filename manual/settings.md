@@ -1,6 +1,6 @@
 # Settings
 
-The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. The switches, choices and folder paths are batched: change as many as you like, then click **Save Changes** in the page header to persist them all at once, to `~/.config/control-ofc/app_settings.json`. Everything else acts the moment you use it, with no Save step: **Daemon Configuration** and **Preferred Sensors**, because their values live on the daemon; a name edited in **Fan Names**; and every reset, clear and restore button on the maintenance cards (see [Resets & Maintenance](#resets--maintenance)). The switches on the **Prompts & Dismissals** card are switches like any other and wait for **Save Changes**.
+The Settings page collects the application's own preferences — startup, behaviour, file locations, preferred sensors, and backup. It is a single scrolling surface of **cards** laid out in two columns; boolean options are shown as iOS-style **toggle switches**. The switches, choices and the default export folder are batched: change as many as you like, then click **Save Changes** in the page header to persist them all at once, to `~/.config/control-ofc/app_settings.json`. Save writes only what you changed on the page, so a popup you turned off with *don't show again* stays off; if the settings file cannot be written, the status line says so and your changes stay pending for another Save. Everything else acts the moment you use it, with no Save step: **Daemon Configuration** and **Preferred Sensors**, because their values live on the daemon; a name edited in **Fan Names**; the **Profiles** and **Themes** folders; and every reset, clear and restore button on the maintenance cards (see [Resets & Maintenance](#resets--maintenance)). The switches on the **Prompts & Dismissals** card are switches like any other and wait for **Save Changes**.
 
 Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-page)**, and export, import and the automatic settings backup live in the **Sync & Backup** card below.
 
@@ -38,13 +38,15 @@ Visual appearance (themes, fonts, colours) has its own **[Theme page](#theme-pag
 
 ## Path Management
 
-These let you override where the application stores its data. Each row has a **Browse…** button and a **Reset** button (which returns it to the default XDG location). Leave blank to use the defaults (`~/.config/control-ofc/`).
+These let you override where the application stores its data. Each row has a **Browse…** button and a **Reset** button (which returns it to the default XDG location, `~/.config/control-ofc/`).
 
 | Directory | Default | Description |
 |-----------|---------|-------------|
-| **Profiles** | `~/.config/control-ofc/profiles/` | Where fan profile JSON files are saved. If you change this, the GUI can optionally move existing profiles to the new location. Not changeable in demo mode |
-| **Themes** | `~/.config/control-ofc/themes/` | Where custom theme files are stored. If you change this, the GUI can optionally move existing themes to the new location. Not changeable in demo mode |
-| **Default export** | Home directory | The default save location when exporting settings or support bundles |
+| **Profiles** | `~/.config/control-ofc/profiles/` | Where fan profile JSON files are saved. Not changeable in demo mode |
+| **Themes** | `~/.config/control-ofc/themes/` | Where custom theme files are stored. Not changeable in demo mode |
+| **Default export** | Home directory | The default save location when exporting settings or support bundles. Saved with **Save Changes** |
+
+A Profiles or Themes change — **Browse…** or **Reset** — applies at once and is saved immediately; there is nothing to Save. The GUI offers to move the existing files to the new folder: **Yes** moves them, **No** changes the folder and leaves them where they are, **Cancel** changes nothing. If a file of the same name is already in the new folder you are asked before it is replaced; **No** keeps the copy already there and leaves the old one in the old folder. If the settings file cannot be written, the folder is not changed and nothing is moved.
 
 When you change the Profiles directory, the GUI registers the new path with the daemon so it can find profiles for headless activation — and, on `control-ofc-daemon` ≥ v2.23.0, retires the old one in the same step so the daemon's search path does not collect a dead entry every time you move the directory. The daemon's full search path is shown and editable under **Daemon Configuration** below.
 
@@ -141,11 +143,11 @@ Machine-specific state is deliberately **excluded** so the file is safe to share
 
 1. The file is validated; a malformed or unsupported file is rejected with a clear message and nothing changes. A file with no settings, profiles or themes in it — a settings backup is one — is refused with **Nothing imported**, and no backup is made
 2. A timestamped **backup** of your current settings file is created automatically
-3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides are applied immediately. An import never changes your daemon's own configuration: daemon settings live on the daemon and are edited in the **Daemon Configuration** card, so a config shared with you cannot reconfigure your daemon
+3. Imported preferences are **merged** onto your current settings — your local machine-specific state (window size, data-directory overrides) is preserved, and directory overrides are applied immediately. Fan names and hidden chart series take effect at once. If the settings file cannot be written, the result says *imported for this session but not saved*. An import never changes your daemon's own configuration: daemon settings live on the daemon and are edited in the **Daemon Configuration** card, so a config shared with you cannot reconfigure your daemon
 4. Profiles from the export are written to your local profile folder (you are asked before overwriting existing ones); invalid profiles are skipped and counted
 5. Custom themes are copied to your themes directory, **replacing a theme file of the same name without asking**; a theme containing an invalid colour is skipped
 
-Some preferences (theme, chart range, aliases) take effect on the next launch.
+Some preferences (theme, chart range) take effect on the next launch.
 
 **Imported profiles are not in the daemon yet.** The daemon owns the profiles it runs, and an import only writes your local copies. Run **Sync Local Profiles to Daemon** (below) after importing, or the imported profiles will not appear in the daemon and cannot be activated. A profile whose id the daemon already holds is skipped by Sync unless you choose *import as copies*, and the daemon's own copy replaces your imported one on the next launch.
 

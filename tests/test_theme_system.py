@@ -2538,29 +2538,38 @@ class TestAccessibleNames:
         page.findChild(QPushButton, "Settings_Btn_resetExportDir").click()
         assert page._export_dir_label.text() == "", "Reset lost its connection"
 
-    def test_each_dir_picker_row_acts_on_its_own_path(self, qtbot):
+    def test_each_dir_picker_row_acts_on_its_own_path(self, qtbot, monkeypatch):
         """`_dir_picker_row` takes the label, the callback, the objectName slug
         and the spoken noun as four independent arguments, so a call site can
         pair ``key="themesDir"`` with the *profiles* label and nothing visible
         breaks — the button would simply reset the wrong path under the wrong
-        name. Clicking one Reset must clear exactly one label.
+        name. Clicking one Reset must act on exactly one path.
+
+        The profiles and themes rows reset by moving that folder back to its
+        default at once (`GSA-c`); the export row clears its label for Save.
         """
         from control_ofc.ui.pages.settings_page import SettingsPage
 
         page = SettingsPage()
         qtbot.addWidget(page)
+        changed: list[tuple[str, str]] = []
+        monkeypatch.setattr(page, "_handle_dir_change", lambda *a: changed.append(a))
 
         labels = {
             "profilesDir": page._profiles_dir_label,
             "themesDir": page._themes_dir_label,
             "exportDir": page._export_dir_label,
         }
+        moved = {"profilesDir": [("profiles", "")], "themesDir": [("themes", "")], "exportDir": []}
         for key, target in labels.items():
+            changed.clear()
             for label in labels.values():
                 label.setText(f"/sentinel/{label.objectName()}")
             page.findChild(QPushButton, f"Settings_Btn_reset{key[0].upper()}{key[1:]}").click()
 
-            assert target.text() == "", f"Reset for {key} did not clear its own label"
+            assert changed == moved[key], f"Reset for {key} acted on {changed}"
+            if key == "exportDir":
+                assert target.text() == "", f"Reset for {key} did not clear its own label"
             others = {k: v.text() for k, v in labels.items() if k != key}
             assert all(others.values()), (
                 f"Reset for {key} also cleared another row's path — the helper's "

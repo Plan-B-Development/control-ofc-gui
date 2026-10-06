@@ -4,6 +4,23 @@
 
 ### Fixed
 
+- **Moving the Profiles or Themes folder now sticks without Save Changes.** The files were moved and the
+  daemon updated at once, but the new folder was saved only by **Save Changes** — leave the page without
+  saving and the next launch looked in the old, empty folder. A folder change is now saved and applied in
+  the same step. Choosing a folder twice no longer leaves the first one registered with the daemon,
+  **Reset** now moves the folder back (and updates the daemon) instead of only clearing the label, a file
+  of the same name in the new folder is no longer replaced without asking, and the move prompt has a
+  **Cancel**.
+- **Save Changes no longer brings back a popup you dismissed.** It wrote every setting on the page as the
+  page last showed it, so turning off the GPU zero-RPM or AIO pump popup with *don't show again* was
+  undone by the next Save. Save now writes only what you changed on the page, and the page shows the
+  current value when you return to it.
+- **An imported config is no longer overwritten by the next rename.** Import Config saved the imported
+  fan names and hidden chart series but left the running app on the old ones, so the next rename or series
+  toggle wrote the old set back. They now take effect at once.
+- **A settings file that cannot be written is reported, not "saved".** Save Changes said *Application
+  settings saved* even when nothing was written; it now says *Settings not saved* with the reason and keeps
+  your changes pending. A failed write while closing the window no longer skips the rest of shutdown.
 - **One bad file in the themes folder no longer stops the GUI from starting.** A `.json` there that is not
   a theme — a list, a number, a `version` that is not a number (a `package.json` has one), or a file
   nested too deeply to parse — is now skipped with a warning, at startup and in the Theme page's list. A

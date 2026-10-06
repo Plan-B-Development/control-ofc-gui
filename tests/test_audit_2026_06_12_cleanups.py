@@ -79,6 +79,8 @@ def test_save_app_settings_writes_nothing_to_the_daemon(tmp_path, qtbot, monkeyp
     svc.load()
     page = SettingsPage(settings_service=svc, client=client)
     qtbot.addWidget(page)
+    # An edit, so Save really writes (an unedited Save writes nothing, GSA-d).
+    page._restore_page_cb.setChecked(not page._restore_page_cb.isChecked())
 
     page._save_app_settings()
 

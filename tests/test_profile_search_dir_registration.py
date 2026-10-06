@@ -222,7 +222,7 @@ class TestSettingsPageSearchDirError:
     def test_confinement_error_surfaces_in_dialog(
         self, qapp, app_state, settings_service, monkeypatch, tmp_path
     ):
-        from PySide6.QtWidgets import QLabel, QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         from control_ofc.ui.pages.settings_page import SettingsPage
 
@@ -258,9 +258,8 @@ class TestSettingsPageSearchDirError:
             raising=False,
         )
 
-        label = QLabel()
-        old_dir = tmp_path / "nonexistent-old"  # absent → no file-migration branch
-        page._handle_dir_change("profiles", label, "/tmp/new-profiles", old_dir)
+        # The profiles folder in force is absent → no file-migration branch.
+        page._handle_dir_change("profiles", "/tmp/new-profiles")
 
         assert captured, "the daemon refusal must surface as a warning dialog"
         _title, text = captured[-1]
@@ -292,12 +291,14 @@ class TestDirectoryChangeRetiresTheOldEntry:
     def test_the_picker_sends_add_and_remove_together(
         self, qapp, app_state, settings_service, tmp_path
     ):
+        from control_ofc.paths import profiles_dir
+
         client = MagicMock()
         page = self._page(app_state, settings_service, client)
-        old_dir = tmp_path / "absent-old"
+        old_dir = profiles_dir()  # the folder in force is the one retired
         new_dir = tmp_path / "elsewhere"
 
-        page._handle_dir_change("profiles", page._profiles_dir_label, str(new_dir), old_dir)
+        page._handle_dir_change("profiles", str(new_dir))
 
         client.update_profile_search_dirs.assert_called_once_with(
             add=[str(new_dir)], remove=[str(old_dir)]
@@ -308,9 +309,7 @@ class TestDirectoryChangeRetiresTheOldEntry:
         page = self._page(app_state, settings_service, client, remove_supported=False)
         new_dir = tmp_path / "elsewhere"
 
-        page._handle_dir_change(
-            "profiles", page._profiles_dir_label, str(new_dir), tmp_path / "absent-old"
-        )
+        page._handle_dir_change("profiles", str(new_dir))
 
         client.update_profile_search_dirs.assert_called_once_with(add=[str(new_dir)], remove=None)
 
@@ -347,7 +346,5 @@ class TestSearchDirDisclosure:
 
         page = SettingsPage(state=app_state, settings_service=settings_service)
         new_dir = tmp_path / "elsewhere"
-        page._handle_dir_change(
-            "profiles", page._profiles_dir_label, str(new_dir), tmp_path / "absent-old"
-        )
+        page._handle_dir_change("profiles", str(new_dir))
         assert str(new_dir) in page._search_dir_note.text()

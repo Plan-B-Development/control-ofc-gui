@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from control_ofc.api.client import DaemonClient
     from control_ofc.services.series_selection import SeriesSelectionModel
 from PySide6.QtWidgets import (
@@ -61,7 +63,7 @@ from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import Card, SectionHeader
 from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.components.toggle_switch import ToggleSwitch
-from control_ofc.ui.qt_util import block_signals, set_chip_class
+from control_ofc.ui.qt_util import set_chip_class
 from control_ofc.ui.theme import ThemeTokens
 
 log = logging.getLogger(__name__)
@@ -277,6 +279,9 @@ class SettingsPage(QWidget):
         # registered but the old one could not be retired, so the status line can
         # say so instead of reporting an unqualified success.
         self._stale_search_dir = ""
+        #: What each Save-Changes field last showed from the store, by field
+        #: name — the baseline that tells an edit from a stale widget (`GSA-d`).
+        self._batched_shown: dict[str, object] = {}
 
         self.setObjectName("Settings_Root")
 
@@ -557,8 +562,9 @@ class SettingsPage(QWidget):
         v.setSpacing(8)
         v.addWidget(SectionHeader("Path Management"))
         note = QLabel(
-            "Override where profiles, themes, and exports are stored. "
-            "Leave blank to use the default XDG location."
+            "Override where profiles, themes, and exports are stored. Reset returns "
+            "to the default XDG location. A profiles or themes folder change applies "
+            "at once; the export folder is saved with Save Changes."
         )
         note.setWordWrap(True)
         note.setProperty("class", "CardMeta")
@@ -575,6 +581,7 @@ class SettingsPage(QWidget):
                 self._browse_profiles_dir,
                 key="profilesDir",
                 what="profiles directory",
+                reset_callback=lambda: self._handle_dir_change("profiles", ""),
                 demo_gated=True,
             )
         )
@@ -587,6 +594,7 @@ class SettingsPage(QWidget):
                 self._browse_themes_dir,
                 key="themesDir",
                 what="themes directory",
+                reset_callback=lambda: self._handle_dir_change("themes", ""),
                 demo_gated=True,
             )
         )
@@ -2193,14 +2201,17 @@ class SettingsPage(QWidget):
         *,
         key: str,
         what: str,
+        reset_callback=None,
         demo_gated: bool = False,
     ) -> QHBoxLayout:
         """One path-override row: a caption, the current path, Browse, Reset.
 
         ``key`` is the camelCase objectName fragment (``"profilesDir"``); ``what``
         is the spoken noun phrase for the directory ("profiles directory").
-        ``demo_gated`` registers both buttons with
-        ``_refresh_dir_picker_availability``, which disables them in demo.
+        ``reset_callback`` replaces the default Reset (clear the label until Save)
+        for a row whose change applies at once. ``demo_gated`` registers both
+        buttons with ``_refresh_dir_picker_availability``, which disables them in
+        demo.
 
         Both buttons go through ``make_button`` rather than a hand-rolled
         ``QPushButton`` (`CLAUDE.md § GUI component standard`), and both take a
@@ -2244,7 +2255,7 @@ class SettingsPage(QWidget):
             accessible_name=f"Reset the {what} to its default location",
         )
         reset_btn.setToolTip("Reset to default XDG location")
-        reset_btn.clicked.connect(lambda: self._reset_dir(path_label))
+        reset_btn.clicked.connect(reset_callback or (lambda: self._reset_dir(path_label)))
         row.addWidget(reset_btn)
         if demo_gated:
             self._demo_gated_dir_buttons += [
@@ -2347,77 +2358,101 @@ class SettingsPage(QWidget):
 
     def _load_current_settings(self) -> None:
         s = self._settings_svc.settings
-        idx = self._startup_page_combo.findData(s.default_startup_page)
-        if idx >= 0:
-            self._startup_page_combo.setCurrentIndex(idx)
-        self._restore_page_cb.setChecked(s.restore_last_page)
-        self._demo_disconnect_cb.setChecked(s.demo_on_disconnect)
-        self._chart_range_combo.setCurrentIndex(
-            max(0, min(s.chart_default_range_index, self._chart_range_combo.count() - 1))
-        )
-        self._gpu_zero_rpm_warn_cb.setChecked(s.show_gpu_zero_rpm_warning)
-        self._aio_pump_info_cb.setChecked(s.show_aio_pump_info)
-        self._board_note_ack_cb.setChecked(s.board_notes_allow_acknowledge)
-        self._board_note_dismiss_cb.setChecked(s.board_notes_allow_dismiss)
-        self._wizard_spindown_spin.setValue(s.wizard_spindown_seconds)
+        self._sync_batched_settings(discard_edits=True)
         # No startup-delay seed here: the daemon owns that key and
         # `_refresh_daemon_config` is the only thing allowed to fill the spinner
         # (DEC-285). Seeding it locally is what let the card display a guess.
-        self._hide_igpu_cb.setChecked(s.hide_igpu_sensors)
-        self._hide_unused_fans_cb.setChecked(s.hide_unused_fan_headers)
 
         # DEC-215: card_size moved to the Theme page (it owns the combo + its
         # single writer); this page no longer loads or persists it.
 
-        # Directory overrides (show override or default as placeholder)
+        # Profiles and themes folders are not batched: a change applies at once
+        # (`_handle_dir_change`), so these labels always show what is in force.
         self._profiles_dir_label.setText(s.profiles_dir_override or str(profiles_dir()))
         self._themes_dir_label.setText(s.themes_dir_override or str(themes_dir()))
-        self._export_dir_label.setText(s.export_default_dir or str(export_default_dir()))
         self._refresh_search_dir_note()
         self._refresh_fan_aliases()
         self._refresh_reset_buttons()
 
+    def _batched_settings(self) -> dict[str, tuple[Callable[[], object], Callable[[object], None]]]:
+        """Every setting this page holds until Save Changes: field -> (read, show).
+
+        ``read`` returns the value the widget would save; ``show`` puts a stored
+        value on the widget. One table so that loading, refreshing and saving
+        cannot disagree about which fields the page owns (`GSA-d`).
+        """
+
+        def toggle(w: ToggleSwitch) -> tuple[Callable[[], object], Callable[[object], None]]:
+            return w.isChecked, lambda v: w.setChecked(bool(v))
+
+        def show_startup_page(v: object) -> None:
+            idx = self._startup_page_combo.findData(v)
+            if idx >= 0:
+                self._startup_page_combo.setCurrentIndex(idx)
+
+        def show_chart_range(v: object) -> None:
+            last = self._chart_range_combo.count() - 1
+            self._chart_range_combo.setCurrentIndex(max(0, min(int(v), last)))
+
+        def read_export_dir() -> str:
+            # The label shows the default when there is no override; saving that
+            # text back would turn "follow the default" into a fixed path.
+            text = self._export_dir_label.text()
+            return "" if text == str(Path.home()) else text
+
+        return {
+            "default_startup_page": (self._startup_page_combo.currentData, show_startup_page),
+            "restore_last_page": toggle(self._restore_page_cb),
+            "demo_on_disconnect": toggle(self._demo_disconnect_cb),
+            "chart_default_range_index": (self._chart_range_combo.currentIndex, show_chart_range),
+            "show_gpu_zero_rpm_warning": toggle(self._gpu_zero_rpm_warn_cb),
+            "show_aio_pump_info": toggle(self._aio_pump_info_cb),
+            "board_notes_allow_acknowledge": toggle(self._board_note_ack_cb),
+            "board_notes_allow_dismiss": toggle(self._board_note_dismiss_cb),
+            "wizard_spindown_seconds": (
+                self._wizard_spindown_spin.value,
+                lambda v: self._wizard_spindown_spin.setValue(int(v)),
+            ),
+            "hide_igpu_sensors": toggle(self._hide_igpu_cb),
+            "hide_unused_fan_headers": toggle(self._hide_unused_fans_cb),
+            "export_default_dir": (
+                read_export_dir,
+                lambda v: self._export_dir_label.setText(str(v) or str(Path.home())),
+            ),
+        }
+
+    def _sync_batched_settings(self, *, discard_edits: bool = False) -> None:
+        """Show the stored value of every batched setting the user has not edited.
+
+        Several of these have a second writer elsewhere — the GPU zero-RPM and
+        AIO pump popups clear their own flag, the Dashboard's Range combo writes
+        ``chart_default_range_index``. Save used to write the page's build-time
+        copy of every field back, so a popup the user had dismissed returned.
+        Each field now remembers the value it last showed (``_batched_shown``):
+        a widget still at that value is unedited and follows the store, and
+        Save writes only the fields that differ from it.
+        """
+        stored = self._settings_svc.settings
+        shown = self._batched_shown
+        for key, (read, show) in self._batched_settings().items():
+            if discard_edits or key not in shown or read() == shown[key]:
+                show(getattr(stored, key))
+                shown[key] = read()
+
     def _save_app_settings(self) -> None:
-        # Determine directory overrides: empty label text means "use default"
-        profiles_override = self._profiles_dir_label.text()
-        themes_override = self._themes_dir_label.text()
-        export_override = self._export_dir_label.text()
-
-        # Clear override if it matches the XDG default
-        from control_ofc.paths import config_dir as _config_dir
-
-        xdg_profiles = str(_config_dir() / "profiles")
-        xdg_themes = str(_config_dir() / "themes")
-        if profiles_override == xdg_profiles:
-            profiles_override = ""
-        if themes_override == xdg_themes:
-            themes_override = ""
-        if export_override == str(Path.home()):
-            export_override = ""
-
-        self._settings_svc.update(
-            default_startup_page=self._startup_page_combo.currentData(),
-            restore_last_page=self._restore_page_cb.isChecked(),
-            demo_on_disconnect=self._demo_disconnect_cb.isChecked(),
-            chart_default_range_index=self._chart_range_combo.currentIndex(),
-            show_gpu_zero_rpm_warning=self._gpu_zero_rpm_warn_cb.isChecked(),
-            show_aio_pump_info=self._aio_pump_info_cb.isChecked(),
-            board_notes_allow_acknowledge=self._board_note_ack_cb.isChecked(),
-            board_notes_allow_dismiss=self._board_note_dismiss_cb.isChecked(),
-            wizard_spindown_seconds=self._wizard_spindown_spin.value(),
-            hide_igpu_sensors=self._hide_igpu_cb.isChecked(),
-            hide_unused_fan_headers=self._hide_unused_fans_cb.isChecked(),
-            profiles_dir_override=profiles_override,
-            themes_dir_override=themes_override,
-            export_default_dir=export_override,
-        )
-
-        # Apply path overrides immediately
-        set_path_overrides(
-            profiles_dir=profiles_override,
-            themes_dir=themes_override,
-            export_dir=export_override,
-        )
+        current = {key: read() for key, (read, _show) in self._batched_settings().items()}
+        changed = {k: v for k, v in current.items() if v != self._batched_shown.get(k)}
+        if not changed:
+            self._set_status("No changes to save")
+            return
+        error = self._settings_svc.update(**changed)
+        self._apply_path_overrides()
+        if error is not None:
+            # In memory but not on disk. `_batched_shown` keeps the old values, so
+            # the edits stay pending and a second Save tries the write again.
+            self._set_status(f"Settings not saved — {error}")
+            return
+        self._batched_shown.update(changed)
 
         # No daemon write here (DEC-285). Save used to POST `startup.delay_secs`
         # unconditionally, bypassing `_write_daemon_key`'s no-op guard — so
@@ -2426,6 +2461,15 @@ class SettingsPage(QWidget):
         # a value nobody chose. Every daemon key is now written only by the
         # control that edits it, and only when it actually changed.
         self._set_status("Application settings saved")
+
+    def _apply_path_overrides(self) -> None:
+        """Put the stored directory overrides in force for this process."""
+        s = self._settings_svc.settings
+        set_path_overrides(
+            profiles_dir=s.profiles_dir_override,
+            themes_dir=s.themes_dir_override,
+            export_dir=s.export_default_dir,
+        )
 
     # ─── Preferred sensors (daemon, DEC-200) ───────────────────────
 
@@ -2534,20 +2578,11 @@ class SettingsPage(QWidget):
         # Dashboard), so re-read on arrival rather than trusting construction.
         self._refresh_fan_aliases()
         self._refresh_reset_buttons()
-        # DEC-245 made the Dashboard's Range combo a second writer of
-        # chart_default_range_index, so this mirror has to re-read on arrival too.
-        # Without it the combo holds its construction-time value and Save Changes
-        # writes that back, silently reverting a range picked on the Dashboard.
-        with block_signals(self._chart_range_combo):
-            self._chart_range_combo.setCurrentIndex(
-                max(
-                    0,
-                    min(
-                        self._settings_svc.settings.chart_default_range_index,
-                        self._chart_range_combo.count() - 1,
-                    ),
-                )
-            )
+        # The batched fields with a second writer (the Dashboard's Range combo,
+        # DEC-245; the GPU and AIO popups' "don't show again") re-read on arrival,
+        # so the page shows what is stored rather than what it was built with.
+        # Unsaved edits on this page are kept.
+        self._sync_batched_settings()
 
     def _refresh_preferred_sensors(self) -> None:
         """Fetch the classified sensor inventory and (re)populate the combos."""
@@ -2671,16 +2706,16 @@ class SettingsPage(QWidget):
     # ─── Directory picker handlers ─────────────────────────────────
 
     def _browse_profiles_dir(self) -> None:
-        current = self._profiles_dir_label.text() or str(profiles_dir())
-        path = QFileDialog.getExistingDirectory(self, "Select Profiles Directory", current)
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Profiles Directory", str(profiles_dir())
+        )
         if path:
-            self._handle_dir_change("profiles", self._profiles_dir_label, path, profiles_dir())
+            self._handle_dir_change("profiles", path)
 
     def _browse_themes_dir(self) -> None:
-        current = self._themes_dir_label.text() or str(themes_dir())
-        path = QFileDialog.getExistingDirectory(self, "Select Themes Directory", current)
+        path = QFileDialog.getExistingDirectory(self, "Select Themes Directory", str(themes_dir()))
         if path:
-            self._handle_dir_change("themes", self._themes_dir_label, path, themes_dir())
+            self._handle_dir_change("themes", path)
 
     def _browse_export_dir(self) -> None:
         current = self._export_dir_label.text() or str(export_default_dir())
@@ -2689,69 +2724,150 @@ class SettingsPage(QWidget):
             self._export_dir_label.setText(path)
 
     def _reset_dir(self, label: QLabel) -> None:
+        """Reset for the export row, which is saved with Save Changes."""
         label.setText("")
         label.setToolTip("Using default XDG location")
 
-    def _handle_dir_change(self, kind: str, label: QLabel, new_path: str, old_dir: Path) -> None:
-        """Handle profile/theme directory change: offer to move existing files."""
+    def _handle_dir_change(self, kind: str, new_path: str) -> None:
+        """Move the profiles or themes folder to *new_path* ("" = the default).
+
+        One step, applied at once (`GSA-c`): the files move, the override is
+        saved and put in force, and for profiles the daemon's search path follows.
+        It used to move the files and update the daemon immediately but leave the
+        override for Save Changes — leave without saving and the next launch
+        looked in the old, now empty folder. And because the override was not in
+        force, a second Browse retired the wrong directory at the daemon and
+        leaked the first one, and Reset changed nothing but the label.
+        """
         if self._in_demo_mode():
             # The buttons are disabled in demo (`DC-cj`); this covers any other caller.
             return
-        new_dir = Path(new_path)
-        if new_dir == old_dir:
-            label.setText(new_path)
+        field = f"{kind}_dir_override"
+        label = self._profiles_dir_label if kind == "profiles" else self._themes_dir_label
+        # The folder in force now, which is also the one `services/polling.py`
+        # registered with the daemon — not whatever the label last showed.
+        old_dir = profiles_dir() if kind == "profiles" else themes_dir()
+        default_dir = config_dir() / kind
+        new_dir = Path(new_path) if new_path else default_dir
+        if _same_dir(str(new_dir), str(old_dir)):
+            return
+        override = "" if _same_dir(str(new_dir), str(default_dir)) else str(new_dir)
+
+        to_move = self._confirm_dir_move(kind, old_dir, new_dir)
+        if to_move is None:
+            return  # cancelled: nothing has changed
+        try:
+            if to_move:
+                new_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            self._set_status(
+                f"{kind.capitalize()} folder not changed — cannot create {new_dir}: {e}"
+            )
             return
 
-        # Check for existing files to migrate
-        existing_files = list(old_dir.glob("*.json")) if old_dir.exists() else []
-        if existing_files:
-            reply = QMessageBox.question(
-                self,
-                f"Move existing {kind}?",
-                f"Move {len(existing_files)} file(s) from:\n{old_dir}\n\nto:\n{new_dir}?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.Yes:
-                new_dir.mkdir(parents=True, exist_ok=True)
-                moved = 0
-                for f in existing_files:
-                    try:
-                        dest = new_dir / f.name
-                        shutil.move(str(f), str(dest))
-                        moved += 1
-                    except OSError as e:
-                        log.warning("Failed to move %s: %s", f, e)
-                self._set_status(f"Moved {moved}/{len(existing_files)} files to {new_dir}")
+        # Record the new folder before moving anything into it: a file moved
+        # into a folder the next launch does not know about looks lost.
+        previous = getattr(self._settings_svc.settings, field)
+        error = self._settings_svc.update(**{field: override})
+        if error is not None:
+            self._settings_svc.update(**{field: previous})
+            self._set_status(f"{kind.capitalize()} folder not changed — {error}")
+            return
+        self._apply_path_overrides()
+        label.setText(override or str(default_dir))
 
-        label.setText(new_path)
-
-        # If profiles dir changed, update daemon via API. Register the new
-        # directory AND retire the old one in the same call — otherwise the
-        # daemon's search path gains an entry on every change and never loses
-        # one (DEC-285).
-        if kind == "profiles" and self._client:
-            error = self._sync_profile_search_dir(str(old_dir), new_path)
-            if error is not None:
-                QMessageBox.warning(self, "Daemon Config", f"Failed to update daemon: {error}")
-            elif self._stale_search_dir:
-                # Registered, but the old entry is still there. Say so — a silent
-                # leak is the thing this whole change exists to stop, and the
-                # user can prune it from Daemon Configuration.
-                self._set_status(
-                    f"Profile search dirs updated on daemon — the previous directory "
-                    f"({self._stale_search_dir}) is still registered and can be removed "
-                    f"under Daemon Configuration"
-                )
-            else:
-                self._set_status("Profile search dirs updated on daemon")
-        elif kind == "profiles":
-            self._set_status("Daemon not connected — update profile search dirs manually")
+        notes: list[str] = [f"{kind.capitalize()} folder is now {new_dir}"]
+        if to_move:
+            failed = 0
+            for f in to_move:
+                try:
+                    shutil.move(str(f), str(new_dir / f.name))
+                except OSError as e:
+                    failed += 1
+                    log.warning("Failed to move %s: %s", f, e)
+            notes.append(f"moved {len(to_move) - failed}/{len(to_move)} file(s)")
+            if failed:
+                notes.append(f"{failed} left in {old_dir}")
 
         if kind == "profiles":
+            notes.append(self._follow_profiles_dir_on_daemon(str(old_dir), str(new_dir)))
             self._refresh_search_dir_note()
             # The daemon card's list is now stale — re-read it if it is loaded.
             if self._daemon_cfg_loaded:
                 self._refresh_daemon_config()
+        self._set_status("; ".join(notes))
+
+    def _confirm_dir_move(self, kind: str, old_dir: Path, new_dir: Path) -> list[Path] | None:
+        """Ask which files to take along. The files to move, or None to cancel.
+
+        A same-named file already in *new_dir* is replaced only when the user
+        says so; otherwise it is kept and the old one stays where it was.
+        """
+        files = sorted(old_dir.glob("*.json")) if old_dir.is_dir() else []
+        if not files:
+            return []
+        buttons = (
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel
+        )
+        reply = QMessageBox.question(
+            self,
+            f"Move existing {kind}?",
+            f"Move {len(files)} file(s) from:\n{old_dir}\n\nto:\n{new_dir}?\n\n"
+            "No changes the folder without moving them; Cancel changes nothing.",
+            buttons,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return None
+        if reply != QMessageBox.StandardButton.Yes:
+            return []
+        clashes = [f for f in files if (new_dir / f.name).exists()]
+        if not clashes:
+            return files
+        names = ", ".join(f.name for f in clashes[:5]) + (", …" if len(clashes) > 5 else "")
+        reply = QMessageBox.question(
+            self,
+            "Replace existing files?",
+            f"{len(clashes)} file(s) with the same name already exist in {new_dir}:\n"
+            f"{names}\n\nReplace them with the ones being moved? No keeps the "
+            f"copies already there and leaves these in {old_dir}.",
+            buttons,
+        )
+        if reply == QMessageBox.StandardButton.Cancel:
+            return None
+        if reply == QMessageBox.StandardButton.Yes:
+            return files
+        return [f for f in files if f not in clashes]
+
+    def _follow_profiles_dir_on_daemon(self, old_path: str, new_path: str) -> str:
+        """Point the daemon's search path at the new profiles folder; the status text.
+
+        Registers the new directory AND retires the old one in the same call —
+        otherwise the daemon's search path gains an entry on every change and
+        never loses one (DEC-285).
+        """
+        if not self._client:
+            # `services/polling.py` registers the folder in force on connect,
+            # which is now the new one; nothing retires the old entry then.
+            return (
+                "daemon not connected — the new folder is registered when it connects; "
+                f"remove {old_path} under Daemon Configuration"
+            )
+        error = self._sync_profile_search_dir(old_path, new_path)
+        if error is not None:
+            QMessageBox.warning(self, "Daemon Config", f"Failed to update daemon: {error}")
+            return f"daemon not updated: {error}"
+        if self._stale_search_dir:
+            # Registered, but the old entry is still there. Say so — a silent
+            # leak is the thing this whole change exists to stop, and the
+            # user can prune it from Daemon Configuration.
+            return (
+                f"profile search dirs updated on daemon — the previous directory "
+                f"({self._stale_search_dir}) is still registered and can be removed "
+                f"under Daemon Configuration"
+            )
+        return "profile search dirs updated on daemon"
 
     # ── Daemon profile import (DEC-161) ──────────────────────────────────
 
@@ -2981,6 +3097,7 @@ class SettingsPage(QWidget):
             # machine keys from the *incoming* data means even a legacy full
             # export can never move the window or wipe local overrides.
             incoming = raw.get("settings")
+            save_error = None
             if isinstance(incoming, dict):
                 from control_ofc.services.app_settings_service import MACHINE_SPECIFIC_KEYS
 
@@ -2992,7 +3109,8 @@ class SettingsPage(QWidget):
                 if "theme_name" in incoming and "theme_name_scheme" not in incoming:
                     merged["theme_name_scheme"] = 0
                 imported = self._settings_svc.import_settings_from_dict(merged)
-                self._settings_svc.apply_imported(imported)
+                save_error = self._settings_svc.apply_imported(imported)
+                self._push_import_to_live_owners(imported)
                 self._load_current_settings()
                 # Apply live side effects, mirroring a manual Save (F11): the
                 # data-dir overrides. An import no longer pushes anything to the
@@ -3005,11 +3123,7 @@ class SettingsPage(QWidget):
                 # stripped from the incoming data above, so the profiles
                 # directory cannot move on import and no search-dir sync is owed
                 # here.
-                set_path_overrides(
-                    profiles_dir=imported.profiles_dir_override,
-                    themes_dir=imported.themes_dir_override,
-                    export_dir=imported.export_default_dir,
-                )
+                self._apply_path_overrides()
 
             # Apply profiles if present.
             skipped = 0
@@ -3024,6 +3138,13 @@ class SettingsPage(QWidget):
 
             backup_msg = f" (backup: {backup_path.name})" if backup_path else ""
             skip_msg = f" ({skipped} invalid item(s) skipped)" if skipped else ""
+            if save_error is not None:
+                self._set_export_result(
+                    f"Settings imported for this session but not saved — {save_error}"
+                    f"{backup_msg}{skip_msg}",
+                    "CriticalChip",
+                )
+                return
             css = "WarningChip" if skipped else "SuccessChip"
             self._set_export_result(
                 f"Settings imported{backup_msg}{skip_msg} — "
@@ -3039,6 +3160,23 @@ class SettingsPage(QWidget):
             AttributeError,
         ) as e:
             self._set_export_result(f"Import failed: {e}", "CriticalChip")
+
+    def _push_import_to_live_owners(self, imported) -> None:
+        """Hand imported state to the objects that hold a live copy of it (`GSA-d`).
+
+        ``AppState.fan_aliases`` and the chart-series model are what the app
+        renders from, and each persists its whole map on the next change. Left
+        stale, the first rename or series toggle after an import wrote the
+        pre-import map straight back over it.
+        """
+        if self._state is not None:
+            live = self._state.fan_aliases
+            for fan_id in sorted(set(live) | set(imported.fan_aliases)):
+                alias = imported.fan_aliases.get(fan_id, "")
+                if live.get(fan_id, "") != alias:
+                    self._state.set_fan_alias(fan_id, alias)
+        if self._series_selection is not None:
+            self._series_selection.replace_hidden(imported.hidden_chart_series)
 
     def _build_full_export(self) -> dict:
         """Build a comprehensive export covering all configurable state."""

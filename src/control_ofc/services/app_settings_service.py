@@ -763,25 +763,39 @@ class AppSettingsService:
             log.info("Loaded app settings from %s", path)
         self._loaded = True
 
-    def save(self) -> None:
+    def save(self) -> str | None:
+        """Write the settings file. ``None`` when it was written, else why it was not.
+
+        The reason is user-facing, for a caller that reports the outcome (`GSA-e`).
+        Never raises for a write that fails: an ``OSError`` from ``atomic_write``
+        used to escape every ``update()`` call site, and from ``closeEvent`` it
+        skipped the rest of teardown. Callers that only fire and forget lose
+        nothing — the failure is logged here either way.
+        """
         # No ephemeral check here on purpose: the demo seal is enforced in
         # update(), which never lets a sealed key reach self._settings. Refusing
         # the whole write instead would also block ordinary preferences and trap
         # the user in demo_on_disconnect.
+        path = app_settings_path()
         if not self._loaded:
-            # A programming error, not a user condition — something built a
-            # service and wrote through it without load(). Loud on purpose: a
-            # silently dropped save is how the next settings bug would hide.
+            # A file that could not be read at startup (see `load`), or a service
+            # built without load(). Loud on purpose: a silently dropped save is
+            # how the next settings bug would hide.
             log.warning(
                 "Refusing to write app settings — this service never loaded %s, so saving "
                 "would overwrite it with defaults",
-                app_settings_path(),
+                path,
             )
-            return
-        atomic_write(app_settings_path(), json.dumps(self._settings.to_dict(), indent=2) + "\n")
+            return f"{path} could not be read at startup, so this session does not save settings"
+        try:
+            atomic_write(path, json.dumps(self._settings.to_dict(), indent=2) + "\n")
+        except OSError as e:
+            log.warning("Could not write app settings to %s: %s", path, e)
+            return f"could not write {path}: {e.strerror or e}"
+        return None
 
-    def update(self, **kwargs: object) -> None:
-        """Update specific settings and save.
+    def update(self, **kwargs: object) -> str | None:
+        """Update specific settings and save. Returns ``save()``'s outcome.
 
         Routes through ``AppSettings.from_dict`` so every value is coerced and
         range-checked exactly like a fresh load (P2-A) — a wrong-typed value can
@@ -802,17 +816,17 @@ class AppSettingsService:
                 )
                 kwargs = {k: v for k, v in kwargs.items() if k not in _DEMO_SEALED_KEYS}
                 if not kwargs:
-                    return
+                    return None
         merged = self._settings.to_dict()
         merged.update({k: v for k, v in kwargs.items() if hasattr(self._settings, k)})
         self._settings = AppSettings.from_dict(merged)
-        self.save()
+        return self.save()
 
     def import_settings_from_dict(self, data: dict) -> AppSettings:
         """Import settings from a dict (e.g., from a comprehensive export file)."""
         return AppSettings.from_dict(data)
 
-    def apply_imported(self, settings: AppSettings) -> None:
-        """Apply imported settings and save."""
+    def apply_imported(self, settings: AppSettings) -> str | None:
+        """Apply imported settings and save. Returns ``save()``'s outcome."""
         self._settings = settings
-        self.save()
+        return self.save()
