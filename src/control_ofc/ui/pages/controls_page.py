@@ -8,8 +8,9 @@ Profile bar at top for profile management.
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
@@ -81,7 +82,7 @@ from control_ofc.services.profile_service import (
 from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
 from control_ofc.ui.components.buttons import make_button
 from control_ofc.ui.components.cards import SectionHeader
-from control_ofc.ui.qt_util import repolish, set_chip_class, style_splitter
+from control_ofc.ui.qt_util import set_chip_class, style_splitter
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE, card_pane_min_width
 from control_ofc.ui.widgets.control_card import ControlCard
 from control_ofc.ui.widgets.curve_card import CurveCard
@@ -102,6 +103,16 @@ if TYPE_CHECKING:
 # kept as a backstop so even off-thread a wedged call cannot pin the worker
 # forever.
 _OVERRIDE_HTTP_TIMEOUT_S = 2.0
+
+
+def _escaped_lines(lines: Sequence[str]) -> str:
+    """*lines* as one rich-text paragraph, each escaped, one per line.
+
+    For the daemon's reasons in a tooltip or a message box: those auto-detect
+    markup, and an escaped string with no tag would show its entities verbatim,
+    so the markup is made explicit instead (FFA-d).
+    """
+    return "<p>" + "<br>".join(html.escape(line, quote=False) for line in lines) + "</p>"
 
 
 class _OverrideWorker(QObject):
@@ -962,6 +973,9 @@ class ControlsPage(QWidget):
                 self._show_shared_switch_refusal("Not renamed")
                 return
             self._refresh_all()
+            # A rename is a save: one the daemon refuses, or cannot hear, keeps the
+            # new name only locally, and used to say nothing at all (FFA-d).
+            self._report_unpublished(profile, "Renamed locally")
 
     def _on_duplicate_profile(self) -> None:
         profile = self._get_current_profile()
@@ -1052,14 +1066,12 @@ class ControlsPage(QWidget):
             self._show_shared_switch_refusal("Not saved")
             return
         self._set_unsaved(False)
-        if self._profile_service.daemon_backed and not self._profile_service.is_published(
-            profile.id
-        ):
-            # Written to the local cache but the daemon did not accept it
-            # (offline, or rejected on upload) — an unpublished draft (6b).
-            self._unsaved_label.setText("Saved locally — daemon offline, not published")
-            self._unsaved_label.setProperty("class", "WarningChip")
-        elif (
+        if self._report_unpublished(profile, "Saved locally"):
+            # Written to the local cache but the daemon did not accept it — an
+            # unpublished draft (6b); the chip now says which way (FFA-d).
+            return
+        warnings = self._profile_service.save_warnings(profile.id)
+        if (
             self._client is not None
             and profile.id == self._profile_service.active_id
             and self._profile_service.is_published(profile.id)
@@ -1073,15 +1085,61 @@ class ControlsPage(QWidget):
             # deadband so the change is visible on the next tick, not up to ~30 s
             # later).
             if self._reapply_active_profile(profile):
-                self._unsaved_label.setText("Saved & reapplied to daemon")
-                self._unsaved_label.setProperty("class", "SuccessChip")
+                text, css_class = "Saved & reapplied to daemon", "SuccessChip"
             else:
-                self._unsaved_label.setText("Saved — reapply failed (see log)")
-                self._unsaved_label.setProperty("class", "WarningChip")
+                text, css_class = "Saved — reapply failed (see log)", "WarningChip"
         else:
-            self._unsaved_label.setText("Settings saved")
-            self._unsaved_label.setProperty("class", "SuccessChip")
-        repolish(self._unsaved_label)
+            text, css_class = "Settings saved", "SuccessChip"
+        if warnings:
+            # Accepted, but the daemon flagged something — e.g. a sensor this
+            # machine does not have, whose curve it will skip (FFA-d).
+            count = len(warnings)
+            text = f"{text} — {count} warning{'s' if count != 1 else ''} from the daemon"
+            css_class = "WarningChip"
+        self._set_status_chip(text, css_class, detail=warnings)
+
+    def _set_status_chip(self, text: str, css_class: str, *, detail: Sequence[str] = ()) -> None:
+        """Set the toolbar status chip. Every writer goes through here, so a
+        detail (the daemon's reasons) never outlives the text it explains.
+
+        The detail lines come from the daemon and may quote a profile's own
+        strings, so the tooltip is built as escaped rich text — Qt would
+        otherwise guess at markup in them.
+        """
+        self._unsaved_label.setText(text)
+        self._unsaved_label.setToolTip(_escaped_lines(detail) if detail else "")
+        self._unsaved_label.setAccessibleDescription("\n".join(detail))
+        set_chip_class(self._unsaved_label, css_class)
+
+    def _report_unpublished(self, profile: Profile, saved: str) -> bool:
+        """Say why *profile* is not on the daemon after a save; ``False`` when it is.
+
+        An offline daemon and a refusing one used to share one message —
+        "daemon offline" — so a profile the daemon rejected was blamed on the
+        connection and its reasons went only to the log (FFA-d). A refusal now
+        names itself on the chip and lists the daemon's reasons in a dialog: the
+        edit is kept locally, but it will not run until it is fixed and saved.
+        """
+        service = self._profile_service
+        if not service.daemon_backed or service.is_published(profile.id):
+            return False
+        reasons = service.rejection(profile.id)
+        if not reasons:
+            self._set_status_chip(f"{saved} — daemon offline, not published", "WarningChip")
+            return True
+        self._set_status_chip(
+            f"{saved} — refused by the daemon, not published", "CriticalChip", detail=reasons
+        )
+        # Escaped rich text, as for the chip's tooltip: the name is the user's
+        # and the reasons are the daemon's.
+        QMessageBox.warning(
+            self,
+            "Profile not published",
+            f"<p>The daemon refused “{html.escape(profile.name, quote=False)}”, so it is "
+            f"saved on this computer only and the daemon cannot run it. Correct the "
+            f"following and save again:</p>{_escaped_lines(reasons)}",
+        )
+        return True
 
     def _reapply_active_profile(self, profile) -> bool:
         """Re-activate the already-active profile so the daemon re-reads it and
@@ -1141,15 +1199,13 @@ class ControlsPage(QWidget):
             return
         reloaded = self._profile_service.reload_profile(profile.id)
         if reloaded is None:
-            self._unsaved_label.setText("Nothing to revert — profile not yet saved")
-            set_chip_class(self._unsaved_label, "WarningChip")
+            self._set_status_chip("Nothing to revert — profile not yet saved", "WarningChip")
             return
         # The editor may hold a now-stale curve object from the discarded edits.
         self._close_editor()
         self._refresh_all()
         self._set_unsaved(False)
-        self._unsaved_label.setText("Reverted to last saved")
-        set_chip_class(self._unsaved_label, "InfoChip")
+        self._set_status_chip("Reverted to last saved", "InfoChip")
 
     def _on_connection_changed(self, conn: ConnectionState) -> None:
         """React to daemon connectivity (live mode only).
@@ -2166,9 +2222,13 @@ class ControlsPage(QWidget):
 
     def _set_unsaved(self, unsaved: bool) -> None:
         self._has_unsaved = unsaved
-        self._unsaved_label.setText("Unsaved changes" if unsaved else "")
         if unsaved:
-            set_chip_class(self._unsaved_label, "WarningChip")
+            self._set_status_chip("Unsaved changes", "WarningChip")
+        else:
+            # Clear the chip but keep its class: the next writer sets one.
+            self._unsaved_label.setText("")
+            self._unsaved_label.setToolTip("")
+            self._unsaved_label.setAccessibleDescription("")
         # DEC-233: Revert is meaningful only while there are edits to discard.
         self._revert_btn.setEnabled(unsaved)
         # DEC-403: every edit comes through here, so the banner follows the edit.
@@ -2220,8 +2280,7 @@ class ControlsPage(QWidget):
 
     def _show_shared_switch_refusal(self, what: str) -> None:
         """A save path refused by DEC-403's rule: say so, and show why."""
-        self._unsaved_label.setText(f"{what} — see the Dell fan note")
-        set_chip_class(self._unsaved_label, "WarningChip")
+        self._set_status_chip(f"{what} — see the Dell fan note", "WarningChip")
         self._refresh_shared_switch_banner()
 
     def update_control_outputs(
@@ -2462,8 +2521,7 @@ class ControlsPage(QWidget):
             return
         message, css_class = feedback
         self._log.debug("Override on %s surfaced to user (%s)", control_id, exc.code)
-        self._unsaved_label.setText(message)
-        set_chip_class(self._unsaved_label, css_class)
+        self._set_status_chip(message, css_class)
 
     def _take_override(self, control_id: str, pct: int) -> None:
         """Pin a control to a fixed PWM on the daemon (dispatched off-thread —

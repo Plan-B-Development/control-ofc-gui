@@ -9,6 +9,11 @@
   nested too deeply to parse — is now skipped with a warning, at startup and in the Theme page's list. A
   settings file nested that deeply is now set aside as unreadable, like any other corrupt one, instead of
   stopping startup; an import of such a file reports *Import failed*.
+- **A profile the daemon refuses is no longer reported as "daemon offline".** Saving a profile the daemon
+  rejects now reads *Saved locally — refused by the daemon, not published* and lists the daemon's reasons
+  in a dialog, so you can correct them; the edit is still kept on this computer. A rename the daemon
+  refuses, or cannot receive, now says so instead of nothing, and a save the daemon accepts with warnings
+  (such as a sensor this machine does not have) says how many, with the warnings in the chip's tooltip.
 
 ## [4.0.0] — 2026-10-04
 

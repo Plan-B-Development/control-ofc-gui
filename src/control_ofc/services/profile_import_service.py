@@ -207,16 +207,12 @@ def _violation_summary(err: DaemonError) -> str:
 
     Extraction goes through :func:`parse_field_violations` (the DEC-160 helper
     built for exactly this payload) instead of raw dict access — adopted in the
-    2026-07-21 audit sweep, which found the helper built-but-bypassed.
+    2026-07-21 audit sweep, which found the helper built-but-bypassed — by way
+    of :func:`field_violation_lines`, the wording a Controls-page save shares.
     """
-    from control_ofc.api.models import parse_field_violations
+    from control_ofc.api.models import field_violation_lines
 
-    parts: list[str] = []
-    for v in parse_field_violations(err.details):
-        f = v.field.strip()
-        d = (v.description or v.reason).strip()
-        parts.append(f"{f}: {d}" if f and d else (f or d))
-    parts = [p for p in parts if p]
+    parts = field_violation_lines(err.details)
     if parts:
         return "; ".join(parts)
     return err.message or err.code or "validation failed"

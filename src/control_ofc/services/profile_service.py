@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
+from control_ofc.api.models import field_violation_lines
 from control_ofc.constants import DEFAULT_CURVE_POINTS
 from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
@@ -1957,6 +1958,12 @@ class ProfileService(QObject):
         # page badges these as unpublished drafts (Phase 6c). Always empty in
         # pure-local mode (there is no daemon to publish to).
         self._unpublished: set[str] = set()
+        # FFA-d: what the daemon said about each profile's last upload — why it
+        # refused it (a subset of `_unpublished`; an offline draft has none),
+        # and the soft warnings it accepted it with. Read by the Controls page,
+        # which used to call a refusal "daemon offline".
+        self._rejections: dict[str, list[str]] = {}
+        self._save_warnings: dict[str, list[str]] = {}
         # True once a load()/save fell back to the local cache because the
         # daemon was unreachable — the GUI is working against the offline
         # mirror. Cleared on the next successful daemon load.
@@ -2011,6 +2018,22 @@ class ProfileService(QObject):
         """True when ``profile_id`` is in the daemon store with no pending
         local-only edits. Always False in pure-local mode."""
         return profile_id in self._daemon_ids and profile_id not in self._unpublished
+
+    def rejection(self, profile_id: str) -> list[str]:
+        """Why the daemon refused ``profile_id``'s last upload, one line per
+        reason; empty when it did not (published, never uploaded, or saved while
+        the daemon was offline). A non-empty answer means an unpublished draft
+        the daemon *reached* — not an offline one (FFA-d)."""
+        return list(self._rejections.get(profile_id, ()))
+
+    def save_warnings(self, profile_id: str) -> list[str]:
+        """The soft warnings the daemon accepted ``profile_id``'s last upload
+        with (e.g. a sensor this machine does not have), one line each."""
+        return list(self._save_warnings.get(profile_id, ()))
+
+    def _forget_upload_outcome(self, profile_id: str) -> None:
+        self._rejections.pop(profile_id, None)
+        self._save_warnings.pop(profile_id, None)
 
     def load(self) -> list[tuple[str, str]]:
         """Load profiles, preferring the daemon store when a client is set.
@@ -2100,6 +2123,7 @@ class ProfileService(QObject):
             self._profiles[profile.id] = profile
             self._daemon_ids.add(profile.id)
             self._unpublished.discard(profile.id)
+            self._forget_upload_outcome(profile.id)
             # Mirror to the local cache (write only — never re-upload) so the
             # profile stays editable while offline.
             self._write_local(profile)
@@ -2245,17 +2269,24 @@ class ProfileService(QObject):
             except (DaemonUnavailable, DaemonTimeout):
                 self._offline = True
                 self._unpublished.add(profile.id)
+                # Whatever the daemon said last time, it has said nothing now.
+                self._forget_upload_outcome(profile.id)
                 log.info(
                     "Profile %s saved as a local draft — daemon offline, not published",
                     profile.id,
                 )
             except DaemonError as e:
                 # Daemon reached but rejected the document (validation / conflict).
-                # Keep the local draft so the edit is never lost. Validation is
-                # server-side on publish (POST/PUT) — there is no pre-save gate, so
-                # the reject reason is not surfaced here; the profile simply stays
-                # an unpublished draft until a later save succeeds.
+                # Keep the local draft so the edit is never lost, and keep the
+                # reasons for the caller to show (FFA-d): validation is
+                # server-side on publish (POST/PUT), so this is the only place
+                # they exist. The profile stays an unpublished draft until a
+                # later save succeeds.
                 self._unpublished.add(profile.id)
+                self._save_warnings.pop(profile.id, None)
+                self._rejections[profile.id] = field_violation_lines(e.details) or [
+                    e.message or e.code or "the daemon refused the profile"
+                ]
                 log.warning(
                     "Profile %s rejected by the daemon (%s): %s — kept as a local draft",
                     profile.id,
@@ -2272,19 +2303,26 @@ class ProfileService(QObject):
         assert self._client is not None
         document = profile.to_dict()
         if profile.id in self._daemon_ids:
-            self._client.update_profile(profile.id, document)
+            result = self._client.update_profile(profile.id, document)
         else:
             try:
-                self._client.create_profile(document)
+                result = self._client.create_profile(document)
             except DaemonError as e:
                 if e.code == "already_exists":
                     # The store already has this id (e.g. imported via DEC-161
                     # before this session knew about it) — replace it instead.
-                    self._client.update_profile(profile.id, document)
+                    result = self._client.update_profile(profile.id, document)
                 else:
                     raise
         self._daemon_ids.add(profile.id)
         self._unpublished.discard(profile.id)
+        self._forget_upload_outcome(profile.id)
+        # The persisted-result body carries the soft findings under `warnings`,
+        # in the field-violation shape (docs/08 § Profiles).
+        warnings = result.get("warnings") if isinstance(result, dict) else None
+        lines = field_violation_lines({"field_violations": warnings})
+        if lines:
+            self._save_warnings[profile.id] = lines
 
     def set_active(self, profile_id: str) -> bool:
         """Record which profile the daemon is running; ``""`` means none.
@@ -2454,6 +2492,7 @@ class ProfileService(QObject):
             path.unlink()
         self._daemon_ids.discard(profile_id)
         self._unpublished.discard(profile_id)
+        self._forget_upload_outcome(profile_id)
         if self._active_id == profile_id:
             # `CTRL-e`: clear rather than promote an arbitrary survivor. The
             # caller has just told the daemon to deactivate (DEC-097), so "no

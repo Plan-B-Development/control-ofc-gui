@@ -2770,6 +2770,24 @@ def parse_field_violations(details: object) -> list[FieldViolation]:
     ]
 
 
+def field_violation_lines(details: object) -> list[str]:
+    """One readable line per field violation in *details*: ``field: description``.
+
+    Falls back to the ``reason`` token when there is no description, and to
+    whichever half is present when one is empty. The one wording for a daemon's
+    validation findings — the profile import and the Controls page's save both
+    show it (FFA-d).
+    """
+    lines: list[str] = []
+    for v in parse_field_violations(details):
+        f = v.field.strip()
+        d = (v.description or v.reason).strip()
+        line = f"{f}: {d}" if f and d else (f or d)
+        if line:
+            lines.append(line)
+    return lines
+
+
 def parse_openfan_calibration_run(data: dict) -> OpenFanCalibrationRun:
     """Parse an OpenFan calibration run, tolerating unknown tokens and new fields."""
     run = OpenFanCalibrationRun(**_filter_fields(OpenFanCalibrationRun, data))

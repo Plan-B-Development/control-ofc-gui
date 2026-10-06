@@ -50,6 +50,9 @@ class FakeDaemonClient:
         # Per-id fetch failures for get_profile (id -> exception). Lets a test
         # fail one profile's hydration while the rest still succeed (DEC-175).
         self.fail_get: dict[str, Exception] = {}
+        # Soft findings a create/update is accepted with — the persisted-result
+        # body's `warnings` (docs/08 § Profiles), in the field-violation shape.
+        self.warnings: list[dict] = []
 
     def _maybe(self, name: str) -> None:
         exc = self.raise_on.get(name)
@@ -90,13 +93,13 @@ class FakeDaemonClient:
         if pid in self.store:
             raise DaemonError(code="already_exists", message="profile exists", status=409)
         self.store[pid] = dict(document)
-        return {"created": pid}
+        return {"created": pid, "warnings": list(self.warnings)}
 
     def update_profile(self, profile_id: str, document: dict) -> dict:
         self.calls.append(("update", profile_id))
         self._maybe("update_profile")
         self.store[profile_id] = dict(document)
-        return {"updated": profile_id}
+        return {"updated": profile_id, "warnings": list(self.warnings)}
 
     def delete_profile(self, profile_id: str) -> dict:
         self.calls.append(("delete", profile_id))
@@ -382,6 +385,105 @@ def test_save_rejected_by_daemon_keeps_draft_not_offline(cfg):
     assert svc.is_published(p.id) is False
     assert svc._offline is False  # daemon was reachable, it just rejected the doc
     assert (profiles_dir() / f"{p.id}.json").exists()
+
+
+_SYNC_VIOLATION = {
+    "field": "curves[0].sync_control_id",
+    "reason": "UNKNOWN_CONTROL_REF",
+    "description": "sync references control '', which does not exist in this profile",
+}
+
+
+def _validation_error(*violations: dict) -> DaemonError:
+    return DaemonError(
+        code="validation_error",
+        message="profile failed validation",
+        status=400,
+        details={"field_violations": list(violations)},
+    )
+
+
+def test_a_refusal_keeps_the_daemons_reasons_and_an_offline_save_has_none(cfg):
+    """FFA-d: the reasons were only logged, so the page could not tell a refusal
+    from an offline daemon and called both "daemon offline"."""
+    fake = FakeDaemonClient()
+    fake.raise_on["create_profile"] = _validation_error(_SYNC_VIOLATION)
+    svc = ProfileService(client=fake)
+    p = Profile(name="Bad")
+
+    svc.save_profile(p)
+
+    assert svc.rejection(p.id) == [f"{_SYNC_VIOLATION['field']}: {_SYNC_VIOLATION['description']}"]
+
+    # The same profile saved again while the daemon is away: the old reasons are
+    # not this save's answer.
+    fake.raise_on["create_profile"] = DaemonTimeout()
+    svc.save_profile(p)
+
+    assert svc.is_published(p.id) is False
+    assert svc.rejection(p.id) == []
+
+
+def test_a_refusal_without_violations_falls_back_to_the_envelope_message(cfg):
+    fake = FakeDaemonClient()
+    fake.raise_on["create_profile"] = DaemonError(code="conflict", message="store busy", status=409)
+    svc = ProfileService(client=fake)
+    p = Profile(name="Busy")
+
+    svc.save_profile(p)
+
+    assert svc.rejection(p.id) == ["store busy"]
+
+
+def test_a_later_successful_save_clears_the_refusal(cfg):
+    fake = FakeDaemonClient()
+    fake.raise_on["create_profile"] = _validation_error(_SYNC_VIOLATION)
+    svc = ProfileService(client=fake)
+    p = Profile(name="Fixed later")
+    svc.save_profile(p)
+    assert svc.rejection(p.id), "precondition: the first save was refused"
+
+    del fake.raise_on["create_profile"]
+    svc.save_profile(p)
+
+    assert svc.is_published(p.id)
+    assert svc.rejection(p.id) == []
+
+
+def test_soft_warnings_on_an_accepted_save_are_kept_and_replaced_by_the_next(cfg):
+    """FFA-d: a valid create/update carries soft `warnings` (a sensor this machine
+    lacks, whose curve the daemon will skip); they were dropped."""
+    fake = FakeDaemonClient()
+    fake.warnings = [
+        {"field": "curves[0].sensor_id", "reason": "UNKNOWN_SENSOR", "description": "not found"}
+    ]
+    svc = ProfileService(client=fake)
+    p = Profile(name="Portable")
+
+    svc.save_profile(p)
+
+    assert svc.is_published(p.id)
+    assert svc.save_warnings(p.id) == ["curves[0].sensor_id: not found"]
+
+    fake.warnings = []
+    svc.save_profile(p)  # now an update (PUT)
+
+    assert ("update", p.id) in fake.calls
+    assert svc.save_warnings(p.id) == []
+
+
+def test_deleting_a_profile_forgets_its_refusal(cfg):
+    fake = FakeDaemonClient()
+    fake.raise_on["create_profile"] = _validation_error(_SYNC_VIOLATION)
+    svc = ProfileService(client=fake)
+    p = Profile(name="Gone")
+    svc._profiles[p.id] = p  # held, as `create_profile` would leave it
+    svc.save_profile(p)
+    assert svc.rejection(p.id), "precondition: refused"
+
+    assert svc.delete_profile(p.id)
+
+    assert svc.rejection(p.id) == []
 
 
 def test_create_profile_method_uploads(cfg):

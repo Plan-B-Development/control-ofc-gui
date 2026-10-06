@@ -871,6 +871,13 @@ class TestCurveEditorSensorLabel:
         assert "°C" not in page._sensor_combo_label(missing)  # None stays hidden
 
 
+_FFA_D_VIOLATION = {
+    "field": "curves[0].sync_control_id",
+    "reason": "UNKNOWN_CONTROL_REF",
+    "description": "sync references control '', which does not exist in this profile",
+}
+
+
 class TestOfflineDraftUX:
     """Offline Save/Activate UX (slice 6) built on the 6b daemon-backed
     persistence state (internal offline/unpublished tracking + is_published)."""
@@ -897,7 +904,132 @@ class TestOfflineDraftUX:
         page._on_save_profile()
 
         assert "not published" in page._unsaved_label.text().lower()
+        assert "offline" in page._unsaved_label.text().lower()
+        assert "refused" not in page._unsaved_label.text().lower()
         assert page._unsaved_label.property("class") == "WarningChip"
+
+    # FFA-d: a profile the daemon refused was reported as "daemon offline", its
+    # reasons only logged; a rename gave no feedback at all; soft warnings on an
+    # accepted save were dropped.
+
+    def _refusing_page(self, qtbot, app_state, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from PySide6.QtWidgets import QMessageBox
+
+        from control_ofc.api.errors import DaemonError
+        from control_ofc.services.profile_service import ProfileService
+
+        client = MagicMock()
+        client.create_profile.side_effect = DaemonError(
+            code="validation_error",
+            message="profile failed validation",
+            status=400,
+            details={"field_violations": [_FFA_D_VIOLATION]},
+        )
+        ps = ProfileService(client=client)
+        ps._profiles["p1"] = Profile(id="p1", name="P1")
+        ps.set_active("p1")
+        page = ControlsPage(state=app_state, profile_service=ps, client=client)
+        qtbot.addWidget(page)
+        shown: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            QMessageBox,
+            "warning",
+            lambda _parent, title, text, *a, **k: shown.append((title, text)),
+        )
+        return page, client, shown
+
+    def test_a_refused_save_says_refused_and_shows_the_daemons_reasons(
+        self, qtbot, app_state, monkeypatch
+    ):
+        page, client, shown = self._refusing_page(qtbot, app_state, monkeypatch)
+
+        page._save_btn.click()
+
+        text = page._unsaved_label.text().lower()
+        assert "refused" in text and "not published" in text
+        assert "offline" not in text
+        assert page._unsaved_label.property("class") == "CriticalChip"
+        assert len(shown) == 1
+        assert _FFA_D_VIOLATION["description"] in shown[0][1]
+        assert _FFA_D_VIOLATION["description"] in page._unsaved_label.toolTip()
+        # Nothing the daemon refused is re-applied.
+        client.activate_profile.assert_not_called()
+
+    def test_the_reasons_do_not_outlive_the_next_edit(self, qtbot, app_state, monkeypatch):
+        page, _client, _shown = self._refusing_page(qtbot, app_state, monkeypatch)
+        page._save_btn.click()
+        assert page._unsaved_label.toolTip(), "precondition: the refusal set a detail"
+
+        page._set_unsaved(True)
+
+        assert page._unsaved_label.text() == "Unsaved changes"
+        assert page._unsaved_label.toolTip() == ""
+
+    def test_a_refused_rename_says_so(self, qtbot, app_state, monkeypatch):
+        from PySide6.QtWidgets import QInputDialog
+
+        page, _client, shown = self._refusing_page(qtbot, app_state, monkeypatch)
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Renamed", True))
+
+        page._on_rename_profile()
+
+        assert "refused" in page._unsaved_label.text().lower()
+        assert len(shown) == 1 and _FFA_D_VIOLATION["description"] in shown[0][1]
+
+    def test_an_accepted_rename_raises_no_dialog(self, qtbot, app_state, monkeypatch):
+        from PySide6.QtWidgets import QInputDialog
+
+        page, client, shown = self._refusing_page(qtbot, app_state, monkeypatch)
+        client.create_profile.side_effect = None
+        client.create_profile.return_value = {"created": "p1"}
+        monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Renamed", True))
+
+        page._on_rename_profile()
+
+        assert shown == []
+        assert "refused" not in page._unsaved_label.text().lower()
+
+    def test_an_accepted_save_with_warnings_says_how_many(self, qtbot, app_state, monkeypatch):
+        page, client, shown = self._refusing_page(qtbot, app_state, monkeypatch)
+        client.create_profile.side_effect = None
+        client.create_profile.return_value = {
+            "created": "p1",
+            "warnings": [
+                {"field": "curves[0].sensor_id", "reason": "UNKNOWN_SENSOR", "description": "gone"}
+            ],
+        }
+        page._profile_service.set_active("")  # not the active profile: no re-apply
+
+        page._save_btn.click()
+
+        assert page._unsaved_label.text() == "Settings saved — 1 warning from the daemon"
+        assert page._unsaved_label.property("class") == "WarningChip"
+        assert "curves[0].sensor_id: gone" in page._unsaved_label.toolTip()
+        assert page._unsaved_label.accessibleDescription() == "curves[0].sensor_id: gone"
+        assert shown == []
+
+    def test_markup_in_a_name_or_a_reason_is_shown_as_written(self, qtbot, app_state, monkeypatch):
+        """The name is the user's and the reasons are the daemon's; Qt guesses at
+        markup in a tooltip or a message box, so both are escaped explicitly."""
+        from control_ofc.api.errors import DaemonError
+
+        page, client, shown = self._refusing_page(qtbot, app_state, monkeypatch)
+        page._profile_service._profiles["p1"].name = "<b>Loud</b>"
+        client.create_profile.side_effect = DaemonError(
+            code="validation_error",
+            message="profile failed validation",
+            status=400,
+            details={"field_violations": [{"field": "name", "description": "<i>bad</i>"}]},
+        )
+
+        page._save_btn.click()
+
+        assert "&lt;b&gt;Loud&lt;/b&gt;" in shown[0][1]
+        assert "<b>Loud</b>" not in shown[0][1]
+        assert "name: &lt;i&gt;bad&lt;/i&gt;" in page._unsaved_label.toolTip()
+        assert page._unsaved_label.accessibleDescription() == "name: <i>bad</i>"
 
     def test_save_active_published_reapplies(self, qtbot, app_state):
         """DEC-188: saving the ACTIVE published profile re-applies it to the
