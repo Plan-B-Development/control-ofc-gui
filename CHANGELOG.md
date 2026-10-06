@@ -14,6 +14,14 @@
   in a dialog, so you can correct them; the edit is still kept on this computer. A rename the daemon
   refuses, or cannot receive, now says so instead of nothing, and a save the daemon accepts with warnings
   (such as a sensor this machine does not have) says how many, with the warnings in the chip's tooltip.
+- **Ordinary edits on the Controls page no longer leave a profile the daemon refuses.** Deleting a curve
+  left the fan roles using it in curve mode with no curve and left Mix curves naming it; deleting a role
+  left the Sync curves mirroring it with no target; a new Sync curve had no target; and a new role in a
+  profile with no curves had no curve. The daemon rejects a profile with any such reference, so it could
+  not be published. Now deleting a curve unlinks its roles (they switch to Manual, as **Unlink** does)
+  and removes it from Mix curves; a role a Sync curve mirrors is not deleted, and the message names the
+  Sync curve; a new Sync curve mirrors the first role, and is not offered while there is none; a new
+  role starts in Manual until the profile has a curve.
 
 ## [4.0.0] — 2026-10-04
 

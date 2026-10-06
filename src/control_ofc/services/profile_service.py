@@ -1053,6 +1053,44 @@ def sync_candidate_controls(profile: Profile, sync_curve_id: str) -> list[tuple[
     return out
 
 
+# GSA-a: the daemon rejects the whole profile when any reference inside it does not
+# resolve — a curve-mode control with no curve, a Mix input or a Sync target that is
+# gone (`profile.rs` validation). The edits below keep every reference resolving, so
+# an ordinary delete never leaves a profile that cannot be published.
+
+
+def unlink_curve(profile: Profile, curve_id: str) -> bool:
+    """Detach ``curve_id`` from every control using it: the curve is cleared and the
+    control switches to Manual, at its own manual output (DEC-214's Unlink).
+    Returns whether any control changed."""
+    changed = False
+    for control in profile.controls:
+        if control.curve_id == curve_id:
+            control.curve_id = ""
+            control.mode = ControlMode.MANUAL
+            changed = True
+    return changed
+
+
+def remove_curve(profile: Profile, curve_id: str) -> None:
+    """Delete ``curve_id`` and every reference to it: its controls are unlinked
+    (:func:`unlink_curve`) and each Mix curve drops it from its inputs, keeping the
+    rest. A Mix left with no inputs is still a valid profile."""
+    unlink_curve(profile, curve_id)
+    for curve in profile.curves:
+        if curve.type == CurveType.MIX and curve_id in curve.mix_curve_ids:
+            curve.mix_curve_ids = [i for i in curve.mix_curve_ids if i != curve_id]
+    profile.curves = [c for c in profile.curves if c.id != curve_id]
+
+
+def sync_curves_targeting(profile: Profile, control_id: str) -> list[CurveConfig]:
+    """The Sync curves that mirror ``control_id``. Deleting the control would leave
+    each one without a target, so the Controls page refuses it and names them."""
+    return [
+        c for c in profile.curves if c.type == CurveType.SYNC and c.sync_control_id == control_id
+    ]
+
+
 # DEC-102: known-dead member-id patterns. These ids were advertised by
 # pre-DEC-102 daemons that included AMD GPU `pwm1` in hwmon discovery.
 # RDNA4 exposes that file read-only without `pwm1_enable` (RDNA3 exposes both,

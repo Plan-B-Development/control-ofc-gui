@@ -88,7 +88,13 @@ class FanRoleDialog(ModalDialog):
         name_value_control(self._mode_combo, mode_label)
         self._mode_combo.addItem("Curve-based", ControlMode.CURVE.value)
         self._mode_combo.addItem("Manual", ControlMode.MANUAL.value)
-        idx = 0 if control.mode == ControlMode.CURVE else 1
+        if not curves:
+            # Nothing to follow: a curve-based role with no curve is a profile the
+            # daemon refuses (GSA-a), so the mode is not offered until one exists.
+            curve_item = self._mode_combo.model().item(0)
+            curve_item.setEnabled(False)
+            curve_item.setToolTip("Add a curve first — there is none to follow.")
+        idx = 0 if control.mode == ControlMode.CURVE and curves else 1
         self._mode_combo.setCurrentIndex(idx)
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self._mode_combo, 1)

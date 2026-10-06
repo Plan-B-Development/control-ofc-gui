@@ -77,7 +77,10 @@ from control_ofc.services.profile_service import (
     apply_role_floor,
     floor_role_header_roles,
     mix_candidate_curves,
+    remove_curve,
     sync_candidate_controls,
+    sync_curves_targeting,
+    unlink_curve,
 )
 from control_ofc.services.shared_fan_switch import SharedSwitchRuleError
 from control_ofc.ui.components.buttons import make_button
@@ -1721,8 +1724,11 @@ class ControlsPage(QWidget):
             if not ok or not name.strip():
                 return
             name = name.strip()
+        # With no curve to follow, a new control starts in Manual: a curve-mode
+        # control with no curve is a profile the daemon refuses (GSA-a).
         curve_id = profile.curves[0].id if profile.curves else ""
-        control = LogicalControl(name=name, mode=ControlMode.CURVE, curve_id=curve_id)
+        mode = ControlMode.CURVE if curve_id else ControlMode.MANUAL
+        control = LogicalControl(name=name, mode=mode, curve_id=curve_id)
         profile.controls.append(control)
         self._refresh_controls_grid(profile)
         self._set_unsaved(True)
@@ -1767,6 +1773,26 @@ class ControlsPage(QWidget):
     def _on_delete_control(self, control_id: str) -> None:
         profile = self._get_current_profile()
         if not profile:
+            return
+        mirrors = sync_curves_targeting(profile, control_id)
+        if mirrors:
+            # GSA-a: a Sync curve left without its target makes the whole profile
+            # one the daemon refuses; the user picks what the Sync curve does next.
+            control = next((c for c in profile.controls if c.id == control_id), None)
+            role = html.escape(control.name if control else control_id, quote=False)
+            names = "”, “".join(html.escape(c.name, quote=False) for c in mirrors)
+            one = len(mirrors) == 1
+            subject = (
+                f"The Sync curve “{names}” mirrors" if one else f"The Sync curves “{names}” mirror"
+            )
+            it = "it" if one else "them"
+            # Escaped rich text: the names are the user's (see `_escaped_lines`).
+            QMessageBox.warning(
+                self,
+                "Fan role not deleted",
+                f"<p>{subject} “{role}”. Point {it} at another fan role, or delete {it}, "
+                f"first.</p>",
+            )
             return
         profile.controls = [c for c in profile.controls if c.id != control_id]
         self._refresh_controls_grid(profile)
@@ -1925,7 +1951,15 @@ class ControlsPage(QWidget):
         self._set_unsaved(True)
 
     def _on_add_curve_menu(self) -> None:
+        menu = self._build_add_curve_menu()
+        btn = self._add_curve_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        menu.deleteLater()
+
+    def _build_add_curve_menu(self) -> QMenu:
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        profile = self._get_current_profile()
         for ct in [
             CurveType.GRAPH,
             CurveType.STEPPED,
@@ -1935,9 +1969,13 @@ class ControlsPage(QWidget):
             CurveType.MIX,
             CurveType.SYNC,
         ]:
-            menu.addAction(f"{ct.value.title()} Curve", lambda t=ct: self._on_add_curve(t))
-        btn = self._add_curve_btn
-        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+            action = menu.addAction(f"{ct.value.title()} Curve", lambda t=ct: self._on_add_curve(t))
+            if ct == CurveType.SYNC and not (profile and profile.controls):
+                # A Sync curve mirrors a fan role; with none there is no target it
+                # could have, and a targetless Sync curve is refused (GSA-a).
+                action.setEnabled(False)
+                action.setToolTip("Add a fan role first — a Sync curve mirrors one.")
+        return menu
 
     def _on_add_curve(self, curve_type: CurveType = CurveType.GRAPH) -> None:
         profile = self._get_current_profile()
@@ -1949,6 +1987,13 @@ class ControlsPage(QWidget):
         if curve_type in (CurveType.GRAPH, CurveType.STEPPED):
             points = [CurvePoint(p.temp_c, p.output_pct) for p in PRESETS["Linear"]]
         curve = CurveConfig(name=f"New {curve_type.value.title()}", type=curve_type, points=points)
+        if curve_type == CurveType.SYNC:
+            # Start on the first fan role it may mirror, never on none (GSA-a); the
+            # menu offers Sync only when there is one.
+            candidates = sync_candidate_controls(profile, curve.id)
+            if not candidates:
+                return
+            curve.sync_control_id = candidates[0][0]
         profile.curves.append(curve)
         self._refresh_curves_grid(profile)
         self._set_unsaved(True)
@@ -1957,17 +2002,16 @@ class ControlsPage(QWidget):
         profile = self._get_current_profile()
         if not profile:
             return
-        # Unassign from any controls that reference this curve
-        for ctrl in profile.controls:
-            if ctrl.curve_id == curve_id:
-                ctrl.curve_id = ""
-        profile.curves = [c for c in profile.curves if c.id != curve_id]
+        # Unlink its fan roles (Manual, as Unlink does) and drop it from every Mix:
+        # clearing only `curve_id` left curve-mode roles with no curve, which the
+        # daemon refuses (GSA-a).
+        remove_curve(profile, curve_id)
         # Close editor if editing the deleted curve
         editing = self._curve_editor.get_curve()
         if editing and editing.id == curve_id:
             self._close_editor()
         self._refresh_curves_grid(profile)
-        self._refresh_controls_grid(profile)  # update control cards (curve_id cleared)
+        self._refresh_controls_grid(profile)  # update control cards (unlinked roles)
         self._set_unsaved(True)
 
     def _on_rename_curve(self, curve_id: str) -> None:
@@ -2110,13 +2154,7 @@ class ControlsPage(QWidget):
         profile = self._get_current_profile()
         if not profile:
             return
-        changed = False
-        for control in profile.controls:
-            if control.curve_id == curve_id:
-                control.curve_id = ""
-                control.mode = ControlMode.MANUAL
-                changed = True
-        if changed:
+        if unlink_curve(profile, curve_id):
             self._refresh_controls_grid(profile)
             self._refresh_curves_grid(profile)
             self._set_unsaved(True)
