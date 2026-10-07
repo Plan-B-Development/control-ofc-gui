@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -76,6 +77,72 @@ LSMOD_TIMEOUT_S = 3
 # Modules we care about for fan / GPU diagnosis. Filtering keeps the bundle
 # small and focused; full lsmod output is rarely needed.
 KERNEL_MODULE_FILTER = ("it87", "nct6", "amdgpu", "k10temp", "asus_ec_sensors")
+
+# GSA-g: the boot parameters the bundle keeps — those of the drivers above, and
+# the few that decide whether a fan driver loads. The rest of the command line
+# names disks and encrypted volumes (`root=UUID=…`, `rd.luks.*`, `resume=`), and
+# sometimes a key option, and never helps a fan triage.
+_CMDLINE_KEPT_PARAMS = frozenset(
+    {"acpi_enforce_resources", "modprobe.blacklist", "module_blacklist"}
+)
+# A parameter is one run of non-space characters; a double-quoted part may hold
+# spaces (`foo="a b"`), as the kernel's own parser allows. A kept parameter never
+# has one: a quoted span can swallow the parameters after it.
+_CMDLINE_PARAM = re.compile(r'(?:[^\s"]+|"[^"]*")+')
+# The kernel logs its whole command line at boot (`Kernel command line: …`, and
+# on x86 an earlier `Command line: …`); with an `amdgpu.*` parameter on it, that
+# line matches the bundle's amdgpu kernel-log grep.
+_KERNEL_LOG_CMDLINE = re.compile(r"(?im)^(.*?command line):?(.*)$")
+
+# GSA-g: daemon journal lines that name an OpenFAN board's USB serial whatever the
+# GUI has seen of it. A `/dev/serial/by-id/` link's name carries the serial
+# (`usb-<vendor>_<product>_<serial>-if00`); a board back after an update is named
+# by it. A trailing colon, comma or full stop is the sentence's, not the name's.
+# ASCII whitespace only: udev keeps non-ASCII UTF-8 in a by-id name.
+_BY_ID_NAME = re.compile(
+    r"(?<=/dev/serial/by-id/)[^\x00-\x20\x7f'\"]+?(?=[:,.;)]?(?:[\x00-\x20\x7f'\"]|$))"
+)
+_BOARD_BACK_SERIAL = re.compile(r"(?<=OpenFan board )\S+(?= is back on USB port)")
+
+
+def bundle_cmdline(cmdline: str) -> tuple[str, int]:
+    """The fan- and GPU-driver parameters of a kernel command line, and how many
+    others were left out (GSA-g). Parameter names match with ``-`` and ``_``
+    interchangeable, as the kernel matches them."""
+    kept: list[str] = []
+    omitted = 0
+    for param in _CMDLINE_PARAM.findall(cmdline):
+        name = param.split("=", 1)[0].replace("-", "_")
+        module = name.split(".", 1)[0] if "." in name else ""
+        relevant = name in _CMDLINE_KEPT_PARAMS or (
+            module and module.startswith(KERNEL_MODULE_FILTER)
+        )
+        if relevant and not any(c.isspace() for c in param):
+            kept.append(param)
+        else:
+            omitted += 1
+    return " ".join(kept), omitted
+
+
+def scrub_kernel_log(text: str) -> str:
+    """Kernel log text with each logged command line cut to its fan- and
+    GPU-driver parameters (GSA-g), as the bundle's ``kernel.cmdline`` is."""
+
+    def cut(match: re.Match[str]) -> str:
+        kept, omitted = bundle_cmdline(match.group(2))
+        return f"{match.group(1)}: {kept} ({omitted} other parameters omitted)"
+
+    return _KERNEL_LOG_CMDLINE.sub(cut, text)
+
+
+def scrub_journal(text: str, serials: set[str]) -> str:
+    """Journal text with every OpenFAN USB serial removed (GSA-g): the ones the
+    GUI knows, and the ones the daemon's own log lines carry."""
+    from control_ofc.services.openfan_firmware_view import REDACTED, scrub_serials
+
+    text = _BY_ID_NAME.sub(REDACTED, text)
+    text = _BOARD_BACK_SERIAL.sub(REDACTED, text)
+    return scrub_serials(text, serials)
 
 
 def format_uptime(seconds: int) -> str:
@@ -476,8 +543,9 @@ class DiagnosticsService(QObject):
         return "\n".join(lines)
 
     @staticmethod
-    def collect_kernel_info() -> dict[str, str | None]:
-        """Capture kernel release, command line, and amdgpu boot parameters.
+    def collect_kernel_info() -> dict[str, str | int | None]:
+        """Capture kernel release, fan-relevant boot parameters, and amdgpu's
+        ppfeaturemask.
 
         Best-effort: every field is independently optional. Missing files
         return ``None`` so the support bundle can record absence rather
@@ -487,12 +555,17 @@ class DiagnosticsService(QObject):
         known regressions, but the support bundle still needs the raw
         kernel string and command line so a triager who sees a *new*
         regression has the data without asking the user to run `uname`.
+
+        GSA-g: ``cmdline`` keeps only the fan- and GPU-driver parameters
+        (:func:`bundle_cmdline`); ``cmdline_omitted`` counts the rest, so an
+        empty ``cmdline`` is not read as an empty command line.
         """
-        info: dict[str, str | None] = {
+        info: dict[str, str | int | None] = {
             "release": None,
             "version": None,
             "machine": None,
             "cmdline": None,
+            "cmdline_omitted": None,
             "amdgpu_ppfeaturemask": None,
         }
         try:
@@ -504,7 +577,8 @@ class DiagnosticsService(QObject):
             log.debug("os.uname() failed: %s", e)
 
         try:
-            info["cmdline"] = Path("/proc/cmdline").read_text(errors="replace").strip()
+            cmdline = Path("/proc/cmdline").read_text(errors="replace")
+            info["cmdline"], info["cmdline_omitted"] = bundle_cmdline(cmdline)
         except OSError as e:
             log.debug("read /proc/cmdline failed: %s", e)
 
@@ -659,9 +733,24 @@ class DiagnosticsService(QObject):
 
     # ─── Support bundle ──────────────────────────────────────────────
 
+    def _known_openfan_serials(self) -> set[str]:
+        """Every OpenFAN USB serial this GUI has been told: the last update run's,
+        and a silent board's (DEC-484)."""
+        from control_ofc.services.openfan_firmware_view import record_serials
+
+        serials: set[str] = set()
+        if self.last_openfan_update is not None:
+            serials |= record_serials(self.last_openfan_update)
+        ds = self._state.daemon_status if self._state else None
+        if ds and ds.openfan_silent_board:
+            serials.add(ds.openfan_silent_board.usb_serial)
+        return serials
+
     def export_support_bundle(self, path: Path) -> None:
         """Export a JSON support bundle for troubleshooting."""
         missing: list[str] = []
+        # GSA-g: an event can quote a daemon answer naming a by-id port.
+        serials = self._known_openfan_serials()
         kernel_info = self.collect_kernel_info()
         bundle: dict = {
             "timestamp": time.time(),
@@ -683,7 +772,7 @@ class DiagnosticsService(QObject):
                     "time": e.time_str,
                     "level": e.level,
                     "source": e.source,
-                    "message": e.message,
+                    "message": scrub_journal(e.message, serials),
                 }
                 for e in self._events
             ],
@@ -822,10 +911,11 @@ class DiagnosticsService(QObject):
                 },
             }
 
-        # System journal (daemon logs)
+        # System journal (daemon logs), without the board's serial (GSA-g). The
+        # Logs page shows the same lines unscrubbed: they stay on this machine.
         journal_text = self.fetch_journal_entries()
         if journal_text:
-            bundle["journal"] = journal_text
+            bundle["journal"] = scrub_journal(journal_text, serials)
         else:
             missing.append("journal: journalctl returned no output")
 
@@ -835,7 +925,7 @@ class DiagnosticsService(QObject):
         # Navi 48 card and 7.0 dropped it — DEC-421/422.)
         kernel_log = self.fetch_kernel_log_amdgpu()
         if kernel_log:
-            bundle["kernel_log_amdgpu"] = kernel_log
+            bundle["kernel_log_amdgpu"] = scrub_kernel_log(kernel_log)
 
         if missing:
             bundle["missing_sections"] = missing

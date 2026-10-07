@@ -1343,11 +1343,26 @@ REDACTED = "(redacted)"
 _MIN_SCRUBBED = 4
 
 
-def bundle_record(raw: Mapping) -> dict:
-    """The last run as the support bundle carries it: the daemon's record with
-    every USB serial number removed — the fields that hold one, and any place
-    the daemon's own words repeat it (a flash id that did not match is named in
-    a note, DEC-483). The record holds no file path."""
+def _serial_pattern(serials: Iterable[str]) -> re.Pattern[str] | None:
+    """One case-blind pattern for every serial long enough to identify a board,
+    longest first so a serial that contains another is removed whole."""
+    usable = {s for s in serials if len(s) >= _MIN_SCRUBBED}
+    if not usable:
+        return None
+    return re.compile(
+        "|".join(re.escape(s) for s in sorted(usable, key=len, reverse=True)), re.IGNORECASE
+    )
+
+
+def scrub_serials(text: str, serials: Iterable[str]) -> str:
+    """``text`` with each of ``serials`` replaced by ``REDACTED`` (GSA-g)."""
+    pattern = _serial_pattern(serials)
+    return pattern.sub(REDACTED, text) if pattern else text
+
+
+def _redact_fields(raw: Mapping) -> tuple[dict, set[str]]:
+    """A copy of the record with the fields that hold a USB serial redacted, and
+    the serials they held."""
     out = copy.deepcopy(dict(raw))
     serials: set[str] = set()
 
@@ -1355,7 +1370,7 @@ def bundle_record(raw: Mapping) -> dict:
         if not isinstance(holder, dict) or key not in holder:
             return
         value = holder[key]
-        if isinstance(value, str) and len(value) >= _MIN_SCRUBBED:
+        if isinstance(value, str):
             serials.add(value)
         if value is not None or not keep_null:
             holder[key] = REDACTED
@@ -1366,11 +1381,24 @@ def bundle_record(raw: Mapping) -> dict:
         take(snap.get("usb") if isinstance(snap, dict) else None, "serial")
     # A flash id never read stays null: that is how far the write got.
     take(out.get("firmware_write"), "flash_id", keep_null=True)
-    if not serials:
+    return out, serials
+
+
+def record_serials(raw: Mapping) -> set[str]:
+    """Every USB serial number a firmware update record names — the ones the
+    support bundle must keep out of any other text it carries (GSA-g)."""
+    return _redact_fields(raw)[1]
+
+
+def bundle_record(raw: Mapping) -> dict:
+    """The last run as the support bundle carries it: the daemon's record with
+    every USB serial number removed — the fields that hold one, and any place
+    the daemon's own words repeat it (a flash id that did not match is named in
+    a note, DEC-483). The record holds no file path."""
+    out, serials = _redact_fields(raw)
+    pattern = _serial_pattern(serials)
+    if pattern is None:
         return out
-    pattern = re.compile(
-        "|".join(re.escape(s) for s in sorted(serials, key=len, reverse=True)), re.IGNORECASE
-    )
 
     def scrub(value: object) -> object:
         if isinstance(value, str):

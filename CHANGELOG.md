@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **The support bundle no longer carries your OpenFAN board's serial number or your disk ids.** The
+  daemon journal it includes named the board's USB serial — in a `/dev/serial/by-id/` port name and when a
+  board came back after a firmware update — and the bundle copied the whole kernel command line, with its
+  disk and encrypted-volume UUIDs — also repeated in the `amdgpu` kernel messages, since the kernel logs it
+  at boot. Serials in the journal and the event log (a pinned port adopted by a Rescan) are now replaced
+  by *(redacted)*, and the bundle keeps only the fan- and GPU-driver boot parameters (`amdgpu.*`, `it87.*`,
+  `nct6*.*`, `acpi_enforce_resources`, a module blacklist), with a count of those it left out, both in its
+  kernel section and in the kernel messages. The Logs page still shows the journal in full.
 - **Moving the Profiles or Themes folder now sticks without Save Changes.** The files were moved and the
   daemon updated at once, but the new folder was saved only by **Save Changes** — leave the page without
   saving and the next launch looked in the old, empty folder. A folder change is now saved and applied in

@@ -13,6 +13,7 @@ from control_ofc.api.models import (
     FanReading,
     IdentifyStatusEntry,
     OpenfanCapability,
+    OpenFanSilentBoardEntry,
     OperationMode,
     OverrideStatusEntry,
     SensorReading,
@@ -22,7 +23,9 @@ from control_ofc.services.alerts import AlertOccurrence, AlertTransition
 from control_ofc.services.app_state import AppState
 from control_ofc.services.diagnostics_service import (
     DiagnosticsService,
+    bundle_cmdline,
     format_uptime,
+    scrub_journal,
 )
 
 # ---------------------------------------------------------------------------
@@ -551,3 +554,161 @@ class TestEventIdentityAndFields:
         assert event.fields["alert_key"] == "fan:stall:cpu_fan"
         assert event.fields["alert"] == "CPU_FAN stall"
         assert "duration_s" not in event.fields, "an onset has not lasted any time yet"
+
+
+# ---------------------------------------------------------------------------
+# GSA-g — the support bundle keeps board serials and boot disk ids out
+# ---------------------------------------------------------------------------
+
+_BOARD = "E6614103E7AB1234"  # the serial the daemon names in its own log line
+_LINKED = "E66141FFAB009876"  # only ever in a /dev/serial/by-id/ link's name
+_SILENT = "DF6050A04B2C3D4E"  # known to the GUI from a silent board (DEC-484)
+_BY_ID_PATH = f"/dev/serial/by-id/usb-Karanovic_Research_OpenFan_{_LINKED}-if00"
+_ROOT_UUID = "5f0c1d2e-3a4b-4c5d-8e9f-0a1b2c3d4e5f"
+_LUKS_UUID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+_CMDLINE = (
+    f"BOOT_IMAGE=/vmlinuz-linux root=UUID={_ROOT_UUID} rw "
+    f"rd.luks.name={_LUKS_UUID}=cryptroot rd.luks.options={_LUKS_UUID}=tpm2-device=auto "
+    "amdgpu.ppfeaturemask=0xfff7ffff acpi_enforce_resources=lax it87.force_id=0x8628 "
+    'quiet splash="a b"\n'
+)
+_JOURNAL = "\n".join(
+    [
+        "2026-10-07T10:00:00+0000 h control-ofc-daemon[1]: Opening configured serial port "
+        f"/dev/serial/by-id/usb-Karanovic_Research_OpenFan_{_LINKED}-if00",
+        "2026-10-07T10:00:01+0000 h control-ofc-daemon[1]: Failed to open configured serial "
+        f"port /dev/serial/by-id/usb-Karanovic_Research_OpenFan_{_LINKED}-if00: No such file",
+        f"2026-10-07T10:00:02+0000 h control-ofc-daemon[1]: OpenFan board {_BOARD} is back on "
+        "USB port 8-8 — adopting it",
+        f"2026-10-07T10:00:03+0000 h control-ofc-daemon[1]: silent board {_SILENT.lower()}",
+    ]
+)
+
+# What `journalctl -k --grep=amdgpu|smu` returns at boot once the command line has
+# an `amdgpu.*` parameter: the kernel logs the whole line.
+_KERNEL_LOG = "\n".join(
+    [
+        f"Oct 07 08:33:20 h kernel: Command line: {_CMDLINE.strip()}",
+        f"Oct 07 08:33:20 h kernel: Kernel command line: {_CMDLINE.strip()}",
+        "Oct 07 08:33:21 h kernel: [drm] amdgpu kernel modesetting enabled.",
+    ]
+)
+
+
+def _export_with_host(tmp_path, monkeypatch, svc: DiagnosticsService) -> str:
+    """Export a bundle on a simulated host: this command line and this journal."""
+    from pathlib import Path
+
+    real_read_text = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if str(self) == "/proc/cmdline":
+            return _CMDLINE
+        return real_read_text(self, *args, **kwargs)
+
+    def run(args, **kwargs):
+        result = MagicMock(returncode=0, stderr="")
+        if "-u" in args:
+            result.stdout = _JOURNAL
+        elif "-k" in args:
+            result.stdout = _KERNEL_LOG
+        else:
+            result.stdout = ""
+        return result
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    monkeypatch.setattr("control_ofc.services.diagnostics_service.subprocess.run", run)
+    out = tmp_path / "support.json"
+    svc.export_support_bundle(out)
+    return real_read_text(out)
+
+
+class TestSupportBundlePrivacy:
+    def test_no_board_serial_reaches_the_bundle_journal(self, tmp_path, monkeypatch):
+        state = AppState()
+        state.set_status(DaemonStatus(openfan_silent_board=OpenFanSilentBoardEntry(_SILENT, "8-8")))
+        svc = DiagnosticsService(state=state)
+        # The Logs page reads the same lines: they stay whole on this machine.
+        monkeypatch.setattr(
+            "control_ofc.services.diagnostics_service.subprocess.run",
+            lambda *a, **k: MagicMock(returncode=0, stderr="", stdout=_JOURNAL),
+        )
+        assert _BOARD in svc.fetch_journal_entries()
+
+        text = _export_with_host(tmp_path, monkeypatch, svc)
+        journal = json.loads(text)["journal"]
+        assert "Opening configured serial port /dev/serial/by-id/(redacted)" in journal
+        assert "/dev/serial/by-id/(redacted): No such file" in journal
+        assert "OpenFan board (redacted) is back on USB port 8-8" in journal
+        assert "silent board (redacted)" in journal
+        # An event quoting a by-id port, as a Rescan that adopts a pinned port logs.
+        svc.log_event("info", "rescan", f"OpenFanController adopted on {_BY_ID_PATH} via rescan")
+        text = _export_with_host(tmp_path, monkeypatch, svc)
+        messages = [e["message"] for e in json.loads(text)["events"]]
+        assert "OpenFanController adopted on /dev/serial/by-id/(redacted) via rescan" in messages
+        for serial in (_BOARD, _LINKED, _SILENT):
+            assert serial.lower() not in text.lower(), serial
+
+    def test_the_update_records_serial_is_scrubbed_from_the_journal_too(
+        self, tmp_path, monkeypatch
+    ):
+        """A serial only the update record names, repeated in a journal line."""
+        svc = DiagnosticsService(state=AppState())
+        svc.set_openfan_update_record({"run_id": "ofmaint-1", "expected_usb_serial": "C0FFEE42"})
+        monkeypatch.setattr(
+            "control_ofc.services.diagnostics_service.DiagnosticsService.fetch_journal_entries",
+            lambda self: "x: preparing the update for C0FFEE42",
+        )
+        text = _export_with_host(tmp_path, monkeypatch, svc)
+        assert json.loads(text)["journal"] == "x: preparing the update for (redacted)"
+
+    def test_only_fan_relevant_boot_parameters_reach_the_bundle(self, tmp_path, monkeypatch):
+        text = _export_with_host(tmp_path, monkeypatch, DiagnosticsService())
+        kernel = json.loads(text)["system"]["kernel"]
+        assert kernel["cmdline"] == (
+            "amdgpu.ppfeaturemask=0xfff7ffff acpi_enforce_resources=lax it87.force_id=0x8628"
+        )
+        assert kernel["cmdline_omitted"] == 7
+        kernel_log = json.loads(text)["kernel_log_amdgpu"]
+        assert (
+            "kernel: Kernel command line: amdgpu.ppfeaturemask=0xfff7ffff "
+            "acpi_enforce_resources=lax it87.force_id=0x8628 (7 other parameters omitted)"
+        ) in kernel_log
+        assert "[drm] amdgpu kernel modesetting enabled." in kernel_log
+        for secret in (_ROOT_UUID, _LUKS_UUID, "tpm2-device", "BOOT_IMAGE"):
+            assert secret not in text, secret
+
+
+class TestBundleCmdline:
+    def test_names_match_with_dash_or_underscore_and_by_module_prefix(self):
+        kept, omitted = bundle_cmdline(
+            "acpi-enforce-resources=lax nct6775.force_id=0xd428 nct6687.manual=1 "
+            "modprobe.blacklist=nouveau k10temp.force=1 asus_ec_sensors.x=1 "
+            "nvme_core.default_ps_max_latency_us=0 resume=UUID=1 cryptdevice=UUID=2:root"
+        )
+        assert kept.split() == [
+            "acpi-enforce-resources=lax",
+            "nct6775.force_id=0xd428",
+            "nct6687.manual=1",
+            "modprobe.blacklist=nouveau",
+            "k10temp.force=1",
+            "asus_ec_sensors.x=1",
+        ]
+        assert omitted == 3
+
+    def test_a_quoted_value_with_spaces_is_one_parameter_and_is_left_out(self):
+        """A quoted span can swallow the parameters after it (``it87.x=0" root=UUID=1"``),
+        so a kept parameter never carries whitespace."""
+        assert bundle_cmdline('it87.x="a b" foo="c d" bar it87.y="ok"') == ('it87.y="ok"', 3)
+        assert bundle_cmdline('it87.force_id=0x8628" root=UUID=X rd.luks.name=Y" quiet') == (
+            "",
+            2,
+        )
+
+    def test_a_by_id_name_with_non_ascii_space_is_redacted_whole(self):
+        name = "usb-Vendor\u00a0Name_OpenFan_E6614103E7AB1234-if00"
+        out = scrub_journal(f"x: Opening configured serial port /dev/serial/by-id/{name}", set())
+        assert out == "x: Opening configured serial port /dev/serial/by-id/(redacted)"
+
+    def test_an_empty_command_line(self):
+        assert bundle_cmdline("") == ("", 0)

@@ -370,13 +370,13 @@ available from every page.
 
 The footer's **Export Support Bundle** button saves one JSON file (`control_ofc_support_bundle.json` by default) containing:
 
-- the GUI version, your kernel release and boot parameters, and the loaded kernel modules
-- the app's event log
+- the GUI version, your kernel release, the fan- and GPU-driver boot parameters (not the rest of the command line, which names your disks), and the loaded kernel modules
+- the app's event log, with any OpenFAN board serial number replaced by *(redacted)*
 - the daemon's version, capabilities and subsystem status, and each fan's RPM and last reported duty (sensor readings are counted, not listed)
 - your GUI settings, apart from window and chart layout, the export folder, and anything you typed as free text (your hardware and cooler notes, the Logs search box) — it **keeps** machine-specific settings such as sensor classifications and the profile and theme folder overrides, because those are often the cause of a problem
 - the active profile's name, your profiles' names and ids (not their curves), and your theme names
 - your board, BIOS version and detected fan-control chips, once the app has read them from the daemon
-- the last 100 lines of the daemon's journal, and any `amdgpu` kernel messages from this boot
+- the last 100 lines of the daemon's journal, with any OpenFAN board serial number replaced by *(redacted)*, and any `amdgpu` kernel messages from this boot (with the boot command line cut the same way)
 
 Review it before sharing — it names your hardware and may name your folders.
 
