@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-10-07
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.0 is
+the matching release. Nothing is removed, and profiles, settings and themes load as before.
+
 ### Fixed
 
 - **A daemon that stops answering no longer sets off a burst of updates when it recovers.** While a poll
