@@ -204,11 +204,16 @@ Manual override is temporary and high-visibility.
   releases the override (`DELETE`) and the role returns to its curve.
 - **Renewal**: the page renews every few seconds (the interval the daemon returns in
   `renew_secs`). A renew the daemon refuses means the override has expired, and the card
-  reverts to its curve.
+  reverts to its curve. A renew that never reached the daemon (a timeout, the socket gone)
+  is retried on the next tick while the override's TTL, counted from the last renew that
+  succeeded, has not run out; past it the card reverts and the page sends a best-effort
+  release (FFA-f). A failed re-pin (a slider drag) reverts the card and releases the grant
+  it would have replaced. A re-pin that timed out but which the daemon applied anyway holds a
+  token the page never received, so that pin shows as **External** until its TTL runs out.
 - **What ends one without the user**: the daemon's deadman when renewals stop (a frozen or
   closed GUI — the page does not release overrides on close), and activating or
-  deactivating a profile (DEC-189/DEC-218). While the daemon is unreachable a renew fails,
-  which the page treats as expiry, so the card reverts.
+  deactivating a profile (DEC-189/DEC-218). While the daemon is unreachable the card stays
+  in Manual until the TTL has run out, then reverts.
 - **Another client's override** shows on the card as an **External** chip (DEC-169); the
   page clears those chips, and every **Not controlled** chip, on a disconnect, because
   nothing would refresh them while polling is stopped.

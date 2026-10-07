@@ -70,7 +70,7 @@ This is the sole place the GUI evaluates curves. It never runs against real hard
 ## Manual override (daemon API — DEC-163)
 Live manual control is an **expiring, fencing-guarded daemon override**, not a GUI write:
 - `POST /control/{id}/override` pins the control's members to a fixed PWM and returns an `override_token` + `renew_secs`
-- the Controls page renews on a `QTimer` (interval from `renew_secs`, ~5 s); a **rejected renew is the expiry signal** — the card reverts to showing curve control
+- the Controls page renews on a `QTimer` (interval from `renew_secs`, ~5 s); a **rejected renew is the expiry signal** — the card reverts to showing curve control; a renew lost in transit is retried until the TTL since the last successful renew has run out (FFA-f)
 - on release (`DELETE`) or expiry the daemon resumes curve control automatically and resets that control's hysteresis
 - the override PWM is still **floor-clamped** (pump/CPU ≥ 30 %, a DC-mode pump ≥ 70 %, GPU 0 %); deliberately stopping a fan is the identify path, which is floor-exempt for ordinary fans but never stops a pump (DEC-311)
 - a frozen/crashed GUI cannot strand fans — the daemon's deadman reverts to the curve when renewals stop

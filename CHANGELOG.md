@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **A manual override no longer drops out of Manual on one slow renew.** A single renew that timed out or
+  found the daemon briefly unreachable reverted the card to its curve while the daemon kept the fan
+  pinned, so for up to 15 seconds the card showed an **External** override you could not release. The page
+  now keeps the override and retries until the daemon has really let it go, then releases it. A slider
+  change that fails no longer leaves the previous manual speed held in the background after the card has
+  returned to its curve.
 - **The dashboard chart no longer shows a frozen sensor as live.** Every reading was plotted as taken
   "now" however old it was, so a sensor the daemon had stopped refreshing kept drawing a flat line at its
   last value and counted in its group's **max**. Readings are now placed at the time the daemon took

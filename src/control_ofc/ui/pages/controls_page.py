@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import html
 import logging
+import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
@@ -30,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import ConnectionState, DaemonStatus, OperationMode
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
@@ -286,6 +287,10 @@ class ControlsPage(QWidget):
     # debounce coalesces a live slider drag into a single re-pin (a new
     # override_take supersedes the prior token) instead of one call per pixel.
     _OVERRIDE_RENEW_FALLBACK_MS = 5000
+    # FFA-f: the lifetime assumed for a grant that states no ``ttl_secs`` — the
+    # daemon's default override TTL. Bounds how long a renew may keep failing in
+    # transit before the card stops claiming Manual.
+    _OVERRIDE_TTL_FALLBACK_S = 15.0
     _OVERRIDE_VALUE_DEBOUNCE_MS = 200
     # DEC-220: dispatch override HTTP on a worker thread (production). Tests flip
     # this to False to run take/renew/release inline — deterministic and no
@@ -344,6 +349,15 @@ class ControlsPage(QWidget):
         # also resets the running countdown, so we always recompute from the
         # tightest grant).
         self._override_renew_secs: dict[str, int | None] = {}
+        # FFA-f: per held grant (lockstep with ``_overrides``), the grant's TTL
+        # and the ``_clock`` time by which the daemon has dropped the override
+        # if no later renew reached it: the last confirmed take/renew plus the
+        # TTL. The daemon handled that call before its answer arrived, so this
+        # is never earlier than the daemon's own expiry. A renew lost in
+        # transit keeps the override held until then.
+        self._override_ttl_s: dict[str, float] = {}
+        self._override_lapse_at: dict[str, float] = {}
+        self._clock = time.monotonic
         self._override_pending: dict[str, int] = {}
         # DEC-169: daemon-held overrides this session does NOT own (control_id ->
         # pwm), discovered by reconciling `/status.overrides[]`. Distinct from
@@ -1233,7 +1247,7 @@ class ControlsPage(QWidget):
         if conn != ConnectionState.CONNECTED:
             # DEC-169: polling stops while offline, so nothing would clear a
             # stale "External" chip — revert them now. GUI-owned overrides
-            # self-correct via the renew timer's rejected renew.
+            # keep renewing until their TTL has run out, then revert (FFA-f).
             self._clear_all_external_overrides()
             # 273-i: same reasoning — with polling stopped nothing would clear a
             # stale "Not controlled" chip, and a disconnected GUI does not know
@@ -2598,13 +2612,21 @@ class ControlsPage(QWidget):
         if self._is_shut_down:  # DEC-231: a result queued before cleanup()
             return
         if error is not None:
-            self._manual_intent.discard(control_id)
             self._log.warning(
                 "Override of control %s failed (%s): %s",
                 control_id,
                 error.code,
                 error.message,
             )
+            # FFA-f: a failed re-pin (slider drag) still holds the previous
+            # grant. Left in `_overrides`, the renew timer kept that pin alive
+            # indefinitely while the card had already reverted to its curve.
+            # Not closed: a re-pin that timed out but was applied late holds a
+            # token this page never saw, so this release misses it and the pin
+            # shows as External until the daemon's TTL drops it.
+            held = self._forget_override(control_id)
+            if held is not None and self._override_worker is not None:
+                self._request_release.emit(control_id, held)
             self._revert_card_manual(control_id)
             self._surface_override_rejection(control_id, error)
             return
@@ -2616,6 +2638,8 @@ class ControlsPage(QWidget):
             return
         self._overrides[control_id] = grant.override_token
         self._override_renew_secs[control_id] = grant.renew_secs
+        self._override_ttl_s[control_id] = float(grant.ttl_secs or self._OVERRIDE_TTL_FALLBACK_S)
+        self._override_lapse_at[control_id] = self._clock() + self._override_ttl_s[control_id]
         # F-2: recompute from ALL held grants, not just this one — the shared
         # timer must renew on the tightest cadence held.
         self._recompute_renew_interval()
@@ -2629,15 +2653,24 @@ class ControlsPage(QWidget):
         if card is not None:
             card.reflect_manual_applied(grant.pwm_percent)
 
-    def _release_override(self, control_id: str) -> None:
-        """Release a held override; the daemon reverts the control to its curve."""
+    def _forget_override(self, control_id: str) -> int | None:
+        """Drop every record of the user's override on *control_id* — intent,
+        pending value, held grant — and stop the renew timer when nothing is
+        held. Returns the held token, which the caller releases if it should."""
         self._manual_intent.discard(control_id)
         self._override_pending.pop(control_id, None)
         token = self._overrides.pop(control_id, None)
         self._override_renew_secs.pop(control_id, None)
+        self._override_ttl_s.pop(control_id, None)
+        self._override_lapse_at.pop(control_id, None)
         self._renew_in_flight.discard(control_id)
         if not self._overrides:
             self._override_renew_timer.stop()
+        return token
+
+    def _release_override(self, control_id: str) -> None:
+        """Release a held override; the daemon reverts the control to its curve."""
+        token = self._forget_override(control_id)
         if token is None or self._override_worker is None:
             # No confirmed token yet (take still in flight) — clearing the intent
             # above makes _on_take_result release the grant when it arrives.
@@ -2695,20 +2728,36 @@ class ControlsPage(QWidget):
                     control_id,
                 )
                 return
+            # FFA-f: a renew lost in transit (timeout, socket gone) says nothing
+            # about the override, which the daemon keeps for its full TTL — about
+            # three renew periods. Reverting on the first one turned a live pin
+            # into an "External" chip the user could not release. Keep it and
+            # let the timer retry until a renew lands or the TTL has run out.
+            in_transit = isinstance(error, (DaemonTimeout, DaemonUnavailable))
+            lapse_at = self._override_lapse_at.get(control_id, 0.0)
+            if in_transit and self._clock() < lapse_at:
+                self._log.info(
+                    "Override renew on %s did not reach the daemon (%s); retrying",
+                    control_id,
+                    error.code,
+                )
+                return
             self._log.info("Override on %s lapsed (%s) — reverting card", control_id, error.code)
-            self._overrides.pop(control_id, None)
-            self._override_renew_secs.pop(control_id, None)
-            self._override_pending.pop(control_id, None)
-            self._manual_intent.discard(control_id)
+            self._forget_override(control_id)
+            if in_transit and self._override_worker is not None:
+                # A renew that timed out may still have been applied late; a
+                # best-effort release stops that pin outliving the card.
+                self._request_release.emit(control_id, sent_token)
             self._revert_card_manual(control_id)
             self._surface_override_rejection(control_id, error)
-            if not self._overrides:
-                self._override_renew_timer.stop()
             return
         # Only advance the token if the held one is still the one we renewed — a
         # concurrent re-pin may have installed a newer token we must not clobber.
         if self._overrides.get(control_id) == sent_token:
             self._overrides[control_id] = new_token
+            self._override_lapse_at[control_id] = self._clock() + self._override_ttl_s.get(
+                control_id, self._OVERRIDE_TTL_FALLBACK_S
+            )
         elif control_id not in self._overrides:
             # The user released while this renew was in flight. The worker is
             # sequential, so the renew went out FIRST and its answer lands here
