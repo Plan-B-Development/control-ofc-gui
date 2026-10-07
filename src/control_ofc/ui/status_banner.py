@@ -34,6 +34,20 @@ MODE_LABELS: dict[OperationMode, str] = {
     OperationMode.DEMO: "Demo mode",
 }
 
+# `GSA-f`: demo mode sets CONNECTED so every page renders, but nothing is
+# connected — demo often starts *because* the daemon is unreachable (DEC-139).
+# The connection slot says so instead of a green "Connected".
+DEMO_CONNECTION_LABEL = "Demo — simulated"
+DEMO_CONNECTION_CHIP = "InfoChip"
+
+
+def connection_display(state: ConnectionState, mode: OperationMode) -> tuple[str, str]:
+    """(label, chip class) for the connection slot, given the operation mode."""
+    if mode == OperationMode.DEMO:
+        return DEMO_CONNECTION_LABEL, DEMO_CONNECTION_CHIP
+    return CONNECTION_LABELS.get(state, "Unknown"), CONNECTION_CHIP.get(state, "")
+
+
 # DaemonStatus.thermal_state -> (label, chip class). The daemon reports
 # "normal" | "recovery" | "emergency" | "no_sensor_fallback" (DEC-132/165) —
 # "recovery" only from daemons before DEC-386, which removed the rung;
@@ -97,15 +111,25 @@ class StatusBanner(QWidget):
         self._demo_badge.hide()
         layout.addWidget(self._demo_badge)
 
+        self._connection = ConnectionState.DISCONNECTED
+        self._mode = OperationMode.READ_ONLY
+
     def set_connection_state(self, state: ConnectionState) -> None:
-        self._connection_label.setText(CONNECTION_LABELS.get(state, "Unknown"))
-        set_chip_class(self._connection_label, CONNECTION_CHIP.get(state, ""))
+        self._connection = state
+        self._render_connection()
 
     def set_active_profile(self, name: str) -> None:
         self._profile_label.setText(name if name else "No profile")
 
     def set_operation_mode(self, mode: OperationMode) -> None:
+        self._mode = mode
         self._demo_badge.setVisible(mode == OperationMode.DEMO)
+        self._render_connection()
+
+    def _render_connection(self) -> None:
+        label, chip = connection_display(self._connection, self._mode)
+        self._connection_label.setText(label)
+        set_chip_class(self._connection_label, chip)
 
     def set_warning_count(self, count: int) -> None:
         if count > 0:

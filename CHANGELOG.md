@@ -10,6 +10,10 @@
   (`it87.2624`, `it87.2656`, the Kraken's USB device), so the Hardware page and System State show what a
   real machine would. The demo's NZXT Kraken pump now has an RPM reading, and its NVMe drive no longer
   shares an address with the NVIDIA GPU.
+- **Demo mode no longer says it is connected to the daemon.** Starting demo — including the automatic
+  fallback when the daemon is unreachable — showed a "Connected to daemon" notice and a green
+  **Connected** in the top ribbon and status banner. Both now read *Demo — simulated*, with an info-coloured
+  status light, and no connection notice appears.
 
 ## [4.1.0] — 2026-10-07
 

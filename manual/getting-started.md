@@ -180,7 +180,7 @@ If you want to explore the interface without hardware or a running daemon:
 control-ofc-gui --demo
 ```
 
-Demo mode generates synthetic sensor temperatures and fan speeds. You can create profiles, edit curves and explore the UI, but not everything works as it does against a real daemon: the PWM Test Report will not start, hardware advisories and some checks are skipped, and Import Config and the profiles and themes folder settings are unavailable. **System State** and the Hardware page's **Voltages** table show a synthetic Gigabyte X870E AORUS MASTER, and a support bundle exported in demo carries those synthetic readings. **Profiles you create or edit in demo are not saved** — they last until demo ends. A **DEMO** badge appears in the status banner, and the footer's mode reads *Demo mode*, so you always know when synthetic data is being shown.
+Demo mode generates synthetic sensor temperatures and fan speeds. You can create profiles, edit curves and explore the UI, but not everything works as it does against a real daemon: the PWM Test Report will not start, hardware advisories and some checks are skipped, and Import Config and the profiles and themes folder settings are unavailable. **System State** and the Hardware page's **Voltages** table show a synthetic Gigabyte X870E AORUS MASTER, and a support bundle exported in demo carries those synthetic readings. **Profiles you create or edit in demo are not saved** — they last until demo ends. The top ribbon and the status banner read *Demo — simulated* where they would show the daemon connection, a **DEMO** badge appears in the status banner, and the footer's mode reads *Demo mode*, so you always know when synthetic data is being shown.
 
 You can also enable "Start in demo mode when daemon is unavailable" in Settings so the GUI falls back to demo automatically.
 
@@ -218,8 +218,8 @@ Three strips frame every page:
 
 | Strip | What it shows |
 |-------|---------------|
-| **Top ribbon** (every page) | The daemon's connection state with a status light, the daemon's uptime, a thermal pill, and **Alerts** with a count — click it to jump to the **Logs** page, the single surface that lists them |
-| **Status banner** (under the ribbon, on every page except the Dashboard, which has its own status strip) | Connection — green "Connected", yellow "Degraded" or red "Disconnected" — the active profile (or "No profile"), the number of warnings (not clickable; use **Alerts**), and a **DEMO** badge in demo mode |
+| **Top ribbon** (every page) | The daemon's connection state with a status light (*Demo — simulated* in demo mode), the daemon's uptime, a thermal pill, and **Alerts** with a count — click it to jump to the **Logs** page, the single surface that lists them |
+| **Status banner** (under the ribbon, on every page except the Dashboard, which has its own status strip) | Connection — green "Connected", yellow "Degraded" or red "Disconnected" ("Demo — simulated" in demo mode) — the active profile (or "No profile"), the number of warnings (not clickable; use **Alerts**), and a **DEMO** badge in demo mode |
 | **Footer** (every page) | How long ago the last poll arrived, the mode — "Automatic" (the daemon runs your fans), "Read-only" (the daemon is not connected; it clears on the next successful poll) or "Demo mode" — the thermal state (click it for the detail), a hardware-readiness chip, a health light, **Rescan Hardware** and **Export Support Bundle** |
 
 Two banners can appear across the top of the window when the GUI and the daemon do not fit together:

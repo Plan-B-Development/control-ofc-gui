@@ -24,6 +24,9 @@ There is no in-app button. The disconnected Dashboard names `--demo` in its hint
 When demo mode is active:
 - the status strip under the ribbon shows a **DEMO** badge, and the footer's mode chip reads
   *Demo mode* in the same badge style, on every page
+- the ribbon's and the status strip's connection slot read *Demo — simulated* (info colour,
+  info LED), never a green *Connected*, and no "Connected to daemon" notice appears — demo
+  reports CONNECTED internally so its pages render, but no daemon is behind it (`GSA-f`)
 - explain that data is simulated
 - prevent confusion with real hardware control
 

@@ -326,6 +326,9 @@ class MainWindow(QWidget):
         # feeds a warnings count, and shows daemon uptime + thermal from
         # status_updated; the footer shows the health rollup from the warning count.
         self._state.connection_changed.connect(self.status_ribbon.set_connection_state)
+        # `GSA-f`: demo reports CONNECTED; the ribbon shows demo, not green.
+        self._state.mode_changed.connect(self.status_ribbon.set_operation_mode)
+        self.status_ribbon.set_operation_mode(self._state.mode)
         # DEC-222: the footer's thermal + readiness chips are poll-driven, so they
         # must go dark when the daemon does rather than freeze on a stale state —
         # and so must the ribbon's thermal pill and the System State Safety row,
@@ -905,6 +908,10 @@ class MainWindow(QWidget):
             self._diag.log_event("info", "gui", "Demo mode active")
 
     def _on_connection_changed(self, state: ConnectionState) -> None:
+        # `GSA-f`: demo sets CONNECTED with no daemon behind it — often because
+        # the daemon was unreachable (DEC-139) — so it announces nothing.
+        if self._demo_mode:
+            return
         if state == ConnectionState.DISCONNECTED:
             self.error_banner.show_warning("Daemon disconnected — retrying...")
         elif state == ConnectionState.CONNECTED:

@@ -12,12 +12,17 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
-from control_ofc.api.models import ConnectionState
+from control_ofc.api.models import ConnectionState, OperationMode
 from control_ofc.ui.branding import load_app_icon
 from control_ofc.ui.components.badges import StatusPill
 from control_ofc.ui.components.glow import PulsingLed
 from control_ofc.ui.qt_util import set_chip_class
-from control_ofc.ui.status_banner import CONNECTION_CHIP, CONNECTION_LABELS, THERMAL_STATES
+from control_ofc.ui.status_banner import (
+    CONNECTION_CHIP,
+    CONNECTION_LABELS,
+    THERMAL_STATES,
+    connection_display,
+)
 
 # ConnectionState -> pulsing-LED colour role.
 _CONNECTION_LED: dict[ConnectionState, str] = {
@@ -86,6 +91,8 @@ class StatusRibbon(QWidget):
         self._daemon_label.setObjectName("StatusRibbon_Label_daemon")
         set_chip_class(self._daemon_label, CONNECTION_CHIP[ConnectionState.DISCONNECTED])
         layout.addWidget(self._daemon_label)
+        self._connection = ConnectionState.DISCONNECTED
+        self._mode = OperationMode.READ_ONLY
 
         # Daemon uptime.
         self._uptime_label = QLabel(format_uptime(None))
@@ -116,9 +123,24 @@ class StatusRibbon(QWidget):
     # -- setters (dumb view) --
 
     def set_connection_state(self, state: ConnectionState) -> None:
-        self._daemon_label.setText(CONNECTION_LABELS.get(state, "Unknown"))
-        set_chip_class(self._daemon_label, CONNECTION_CHIP.get(state, ""))
-        self._daemon_led.set_color_role(_CONNECTION_LED.get(state, "neutral"))
+        self._connection = state
+        self._render_connection()
+
+    def set_operation_mode(self, mode: OperationMode) -> None:
+        """Demo shows a demo label and an info LED, never a green "Connected"
+        (`GSA-f`): demo reports CONNECTED, but there is no daemon behind it."""
+        self._mode = mode
+        self._render_connection()
+
+    def _render_connection(self) -> None:
+        label, chip = connection_display(self._connection, self._mode)
+        self._daemon_label.setText(label)
+        set_chip_class(self._daemon_label, chip)
+        if self._mode == OperationMode.DEMO:
+            led = "info"
+        else:
+            led = _CONNECTION_LED.get(self._connection, "neutral")
+        self._daemon_led.set_color_role(led)
 
     def set_live(self, live: bool) -> None:
         """Hide the thermal pill while the daemon is unreachable (`TS-g`).
