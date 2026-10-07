@@ -10,8 +10,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PySide6.QtCore import QThread
+from PySide6.QtWidgets import QApplication
 
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
     BoardInfo,
@@ -252,7 +254,9 @@ class TestPollWorkerBatchFallback:
     def test_batch_poll_fallback(self, qtbot):
         """If client.poll() raises, individual status/sensors/fans are called."""
         mock_client = _make_mock_client()
-        mock_client.poll.side_effect = DaemonError(code="not_found", message="batch not supported")
+        mock_client.poll.side_effect = DaemonError(
+            code="not_found", message="batch not supported", status=404
+        )
 
         worker = _make_worker(mock_client)
         status_spy = _collect_signal(worker.status_ready)
@@ -278,7 +282,9 @@ class TestPollWorkerBatchFallback:
         fetching sensors/fans, so a mid-fallback exception left the UI with
         a fresh status plus stale fan data."""
         mock_client = _make_mock_client()
-        mock_client.poll.side_effect = DaemonError(code="not_found", message="batch unsupported")
+        mock_client.poll.side_effect = DaemonError(
+            code="not_found", message="batch unsupported", status=404
+        )
         mock_client.fans.side_effect = DaemonError(code="internal_error", message="fans gone")
 
         worker = _make_worker(mock_client)
@@ -297,6 +303,62 @@ class TestPollWorkerBatchFallback:
         assert len(fans_spy) == 0
         assert len(connected_spy) == 0
         assert len(disconnected_spy) == 1
+
+
+class TestPollWorkerBatchFallbackScope:
+    """FFA-g: the single endpoints are asked only when ``/poll`` itself is the
+    problem — never when the daemon is slow or gone, which they cannot fix and
+    which used to double every hung cycle."""
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            DaemonTimeout(),
+            DaemonUnavailable(),
+            ConnectionError("reset"),
+            DaemonError(code="internal_error", message="boom", status=500),
+        ],
+        ids=["timeout", "unavailable", "connection-error", "http-500"],
+    )
+    def test_a_failure_that_is_not_the_batch_route_fails_the_cycle(self, qtbot, exc):
+        client = _make_mock_client()
+        client.poll.side_effect = exc
+        worker = _make_worker(client)
+        worker._poll_count = 1  # skip the capabilities leg
+        disconnected = _collect_signal(worker.disconnected)
+
+        worker.poll()
+
+        client.status.assert_not_called()
+        client.sensors.assert_not_called()
+        client.fans.assert_not_called()
+        assert len(disconnected) == 1
+        assert worker._consecutive_failures == 1
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            DaemonError(code="parse_error", message="not JSON", status=404),
+            DaemonError(code="parse_error", message="not JSON", status=200),
+            KeyError("status"),
+            ValueError("bad"),
+            TypeError("bad"),
+        ],
+        ids=["bare-404", "non-json-200", "key-error", "value-error", "type-error"],
+    )
+    def test_a_missing_route_or_unparseable_batch_falls_back(self, qtbot, exc):
+        client = _make_mock_client()
+        client.poll.side_effect = exc
+        worker = _make_worker(client)
+        worker._poll_count = 1
+        connected = _collect_signal(worker.connected)
+
+        worker.poll()
+
+        client.status.assert_called_once()
+        client.sensors.assert_called_once()
+        client.fans.assert_called_once()
+        assert len(connected) == 1
 
 
 class TestPollWorkerActiveProfileFailure:
@@ -414,62 +476,150 @@ class TestPollWorkerReconnect:
         ok_client.capabilities.assert_called_once()
 
 
-class TestPollWorkerInFlightGuard:
-    """F-5: a poll still in flight causes the next invocation to be skipped,
-    not queued/run a second time. The guard is cleared in a ``finally`` so a
-    failed cycle can't wedge polling off permanently."""
+class TestPollCycleGate:
+    """FFA-g: one poll cycle at a time, gated on the main thread.
 
-    def test_reentrant_poll_is_skipped(self, qtbot):
-        """A poll() that re-enters while the first is still running short-circuits
-        — the batch endpoint fires once, not twice."""
-        mock_client = _make_mock_client()
-        worker = _make_worker(mock_client)
+    The timer's ticks used to be queued straight to the worker, so a poll that
+    blocked let them pile up in the worker's event queue and run back to back
+    once it returned. The worker reports each finished cycle with
+    ``cycle_done`` and the service requests the next one only after it.
+    """
 
-        reentrant_results: list = []
-
-        def _reenter(*_args, **_kwargs):
-            # Called from inside the first poll(), while _in_flight is set. The
-            # guard must drop this re-entrant call rather than run a 2nd cycle.
-            reentrant_results.append(worker.poll())
-            return (
-                DaemonStatus(overall_status="ok"),
-                [SensorReading(id="cpu", value_c=45.0, age_ms=100)],
-                [FanReading(id="fan0", rpm=1200, age_ms=100)],
-            )
-
-        mock_client.poll.side_effect = _reenter
-
-        worker.poll()
-
-        # The re-entrant poll() returned immediately (None) without issuing a
-        # second batch call.
-        assert reentrant_results == [None]
-        assert mock_client.poll.call_count == 1
-
-    def test_busy_flag_makes_poll_a_noop(self, qtbot):
-        """With the guard already set, poll() does nothing — no client is even
-        obtained."""
-        mock_client = _make_mock_client()
-        worker = _make_worker(mock_client)
-        worker._in_flight = True
-
-        worker.poll()
-
-        worker._ensure_client.assert_not_called()
-        mock_client.poll.assert_not_called()
-
-    def test_flag_cleared_after_successful_poll(self, qtbot):
-        """A normal cycle releases the guard so the next tick can run."""
+    def test_cycle_done_follows_a_successful_poll(self, qtbot):
         worker = _make_worker(_make_mock_client())
+        done = _collect_signal(worker.cycle_done)
         worker.poll()
-        assert worker._in_flight is False
+        assert len(done) == 1
 
-    def test_flag_cleared_after_failed_poll(self, qtbot):
-        """The ``finally`` clears the guard even when the cycle raises, so a
-        transient failure can't wedge polling off permanently."""
+    def test_cycle_done_follows_a_failed_poll(self, qtbot):
         worker = _make_worker(_make_failing_client())
+        done = _collect_signal(worker.cycle_done)
         worker.poll()
-        assert worker._in_flight is False
+        assert worker._consecutive_failures == 1
+        assert len(done) == 1
+
+    def test_cycle_done_follows_a_poll_that_raises(self, qtbot):
+        """An exception the cycle does not handle must still end the cycle, or
+        the service would never request another and polling would stop."""
+        client = _make_mock_client()
+        client.capabilities.side_effect = AttributeError("not handled by the cycle")
+        worker = _make_worker(client)
+        done = _collect_signal(worker.cycle_done)
+        with pytest.raises(AttributeError):
+            worker.poll()
+        assert len(done) == 1
+
+    def test_cycle_done_follows_a_poll_after_shutdown(self, qtbot):
+        worker = _make_worker(_make_mock_client())
+        done = _collect_signal(worker.cycle_done)
+        worker.shutdown()
+        worker.poll()
+        worker._ensure_client.assert_not_called()
+        assert len(done) == 1
+
+    def test_a_tick_during_a_running_cycle_requests_nothing(self, qtbot, tmp_path):
+        """Real service and worker against a socket that does not exist (each
+        cycle fails fast): a second tick before ``cycle_done`` has come back is
+        dropped; the first tick after it requests the next cycle."""
+        svc = PollingService(AppState(), str(tmp_path / "absent.sock"))
+        try:
+            requested = _collect_signal(svc._request_poll)
+            svc._timer.timeout.emit()
+            svc._timer.timeout.emit()  # no event processed: cycle_done not back yet
+            assert len(requested) == 1
+
+            qtbot.waitUntil(lambda: not svc._cycle_in_flight, timeout=2000)
+            svc._timer.timeout.emit()
+            assert len(requested) == 2
+        finally:
+            svc.shutdown()
+
+    def test_a_blocked_poll_does_not_release_a_burst(self, qtbot, monkeypatch, tmp_path):
+        """The real timer against a worker whose first poll blocks for eight
+        intervals: no backlog runs when it returns. Before the gate the queued
+        ticks all ran within a few milliseconds of the block ending."""
+        import threading
+        import time
+
+        interval_ms = 50
+        block_s = 0.4
+        starts: list[float] = []
+        released_at: list[float] = []
+        client = _make_mock_client()
+        batch = client.poll.return_value
+
+        threads: list = []
+
+        def _poll():
+            starts.append(time.monotonic())
+            threads.append(QThread.currentThread())
+            if len(starts) == 1:
+                threading.Event().wait(block_s)  # a daemon that answers late
+                released_at.append(time.monotonic())
+            return batch
+
+        client.poll.side_effect = _poll
+        monkeypatch.setattr("control_ofc.services.polling.DaemonClient", lambda **_kw: client)
+
+        svc = PollingService(AppState(), str(tmp_path / "fake.sock"))
+        try:
+            svc._timer.setInterval(interval_ms)
+            svc.start()
+            qtbot.waitUntil(lambda: bool(released_at), timeout=3000)
+            qtbot.wait(8 * interval_ms)  # observe the window after the block
+        finally:
+            svc.stop()
+            svc.shutdown()
+
+        assert all(t == svc._thread for t in threads), "a poll ran off the worker thread"
+        after = [t - released_at[0] for t in starts[1:]]
+        assert len(after) >= 2, f"too few cycles after the block to judge: {after}"
+        burst = [t for t in after if t < (interval_ms / 2) / 1000]
+        # Two, not one: a tick delayed by a busy runner can land just before the
+        # next one. The backlog this guards against was eight.
+        assert len(burst) <= 2, f"{len(burst)} cycles ran as the block ended: {after}"
+
+    def test_ticks_while_a_poll_blocks_are_dropped_not_queued(self, qtbot, monkeypatch, tmp_path):
+        """The same property without timing: five ticks while the worker is
+        held inside a poll start no cycle, before or after it returns. Before
+        the gate each one ran once the poll returned."""
+        import threading
+
+        entered = threading.Event()
+        release = threading.Event()
+        threads: list = []
+        client = _make_mock_client()
+        batch = client.poll.return_value
+
+        def _poll():
+            threads.append(QThread.currentThread())
+            if not entered.is_set():
+                entered.set()
+                release.wait(5.0)
+            return batch
+
+        client.poll.side_effect = _poll
+        monkeypatch.setattr("control_ofc.services.polling.DaemonClient", lambda **_kw: client)
+
+        svc = PollingService(AppState(), str(tmp_path / "fake.sock"))
+        try:
+            svc._timer.timeout.emit()
+            assert entered.wait(2.0), "the first cycle never reached the worker"
+            for _ in range(5):
+                svc._timer.timeout.emit()
+                QApplication.processEvents()
+            release.set()
+            qtbot.waitUntil(lambda: not svc._cycle_in_flight, timeout=2000)
+            QApplication.processEvents()
+            assert client.poll.call_count == 1
+
+            svc._timer.timeout.emit()  # the gate is open again
+            qtbot.waitUntil(lambda: client.poll.call_count == 2, timeout=2000)
+        finally:
+            release.set()
+            svc.shutdown()
+
+        assert threads and all(t == svc._thread for t in threads), "a poll ran off the worker"
 
 
 # ---------------------------------------------------------------------------

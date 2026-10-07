@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **A daemon that stops answering no longer sets off a burst of updates when it recovers.** While a poll
+  waited on a hung daemon, the once-a-second requests queued up behind it and then all ran at once. A
+  request that arrives while a poll is still running is now skipped. A poll that times out is also no
+  longer asked again through three slower requests, which doubled the wait before the GUI showed the
+  daemon as disconnected.
 - **A manual override no longer drops out of Manual on one slow renew.** A single renew that timed out or
   found the daemon briefly unreachable reverted the card to its curve while the daemon kept the fan
   pinned, so for up to 15 seconds the card showed an **External** override you could not release. The page

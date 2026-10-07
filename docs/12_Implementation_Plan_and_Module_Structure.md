@@ -117,6 +117,10 @@ The app feels coherent and test-ready.
 ### `services/polling.py`
 - periodic read orchestration
 - publishes snapshots to stores/view models
+- one cycle at a time: the main-thread timer requests a cycle only after the worker's
+  `cycle_done`, so a tick that lands while a slow poll is running is dropped, not queued (FFA-g)
+- falls back from `GET /poll` to `/status` + `/sensors` + `/fans` only for a 404 or an
+  unparseable body; a timeout, a lost socket or any other HTTP error fails the cycle (FFA-g)
 
 ### `services/demo_controller.py` (demo mode only)
 - evaluates the active profile against synthetic sensors on a 1 Hz timer

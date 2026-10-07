@@ -12,7 +12,7 @@ import logging
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from control_ofc.api.client import DaemonClient
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import (
     ActiveProfileInfo,
     Capabilities,
@@ -28,6 +28,21 @@ from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.history_store import HistoryStore
 
 log = logging.getLogger(__name__)
+
+
+def _batch_unsupported(exc: Exception) -> bool:
+    """True when a failed ``GET /poll`` means this daemon cannot serve the batch
+    read, so the three single endpoints are worth asking (FFA-g).
+
+    A 404 (no such route) or a body that would not parse. Never a transport
+    failure: a daemon that timed out or went away on ``/poll`` will do the same on
+    ``/status``, and asking anyway doubled every hung cycle.
+    """
+    if isinstance(exc, (DaemonTimeout, DaemonUnavailable)):
+        return False
+    if isinstance(exc, DaemonError):
+        return exc.status == 404 or exc.code == "parse_error"
+    return isinstance(exc, (KeyError, ValueError, TypeError))
 
 
 class _PollWorker(QObject):
@@ -52,6 +67,9 @@ class _PollWorker(QObject):
     # Connection state
     connected = Signal()
     disconnected = Signal()
+    #: FFA-g: emitted when a ``poll()`` invocation returns, whatever it did, so
+    #: ``PollingService`` can request the next cycle only once this one is over.
+    cycle_done = Signal()
 
     def __init__(self, socket_path: str, history: HistoryStore | None = None) -> None:
         super().__init__()
@@ -59,12 +77,6 @@ class _PollWorker(QObject):
         self._client: DaemonClient | None = None
         self._poll_count = 0
         self._consecutive_failures = 0
-        # F-5: in-flight guard. The 1 Hz timer→poll() connection is queued, so a
-        # poll that runs longer than the interval would otherwise pile up behind
-        # it and fire as a back-to-back burst. While one poll() is running, the
-        # next invocation is skipped outright. The worker lives on a single
-        # thread, so a plain bool is race-free (no lock needed).
-        self._in_flight = False
         # DEC-229: latches once /diagnostics/hardware has been fetched. DMI
         # board identity cannot change without a reboot, so one success per
         # process is enough — but a *failed* attempt must not latch, or a GUI
@@ -85,8 +97,7 @@ class _PollWorker(QObject):
         # closed, opening a fresh socket and blocking on it. That kept the thread
         # busy past `wait(2000)` and forced `QThread::terminate()`, which is how
         # you orphan a half-written request. The latch makes post-shutdown work a
-        # no-op instead. Single-threaded worker, so a plain bool needs no lock —
-        # same reasoning as `_in_flight` above.
+        # no-op instead. Single-threaded worker, so a plain bool needs no lock.
         self._shutting_down = False
         # `TS-ae`: since DEC-384 `stop_permitted` and `effective_min_pwm_pct`
         # follow the active profile, so headers read up to 300 s ago can promise
@@ -122,24 +133,20 @@ class _PollWorker(QObject):
         return self._client
 
     def poll(self) -> None:
-        """Execute one poll cycle — called from the timer thread.
+        """Execute one poll cycle on the worker thread, then report it done.
 
-        F-5: skip this invocation entirely if a prior poll() is still running.
-        A poll slower than the 1 Hz interval would otherwise queue behind the
-        timer and fire as a burst; the guard drops the overlapping tick instead.
-        The flag is set here and cleared in ``finally`` so a raising cycle can
-        never wedge polling off permanently.
+        ``cycle_done`` is emitted in ``finally`` so a raising cycle can never
+        wedge polling off: ``PollingService`` requests no further cycle until it
+        hears this one ended (FFA-g).
         """
-        if self._shutting_down or self._in_flight:
-            return
-        self._in_flight = True
         try:
-            self._poll_once()
+            if not self._shutting_down:
+                self._poll_once()
         finally:
-            self._in_flight = False
+            self.cycle_done.emit()
 
     def _poll_once(self) -> None:
-        """Body of one poll cycle (see ``poll`` for the in-flight guard)."""
+        """Body of one poll cycle (see ``poll``)."""
         # Exponential backoff: skip cycles when daemon is unreachable.
         # After first failure: retry every 2nd cycle, then 4th, capped at 8s.
         # 8s cap is appropriate for local Unix socket (not network service).
@@ -227,7 +234,9 @@ class _PollWorker(QObject):
             sensors = []
             try:
                 status, sensors, fans = client.poll()
-            except (DaemonError, ConnectionError, OSError, KeyError, ValueError) as e:
+            except (DaemonError, KeyError, ValueError, TypeError) as e:
+                if not _batch_unsupported(e):
+                    raise  # a failed cycle, handled below
                 log.debug("Batch poll failed, falling back to individual endpoints: %s", e)
                 # Fetch all three before emitting — a partial fallback must not
                 # leave a fresh status paired with stale fans/sensors. If any
@@ -374,6 +383,9 @@ class _PollWorker(QObject):
 class PollingService(QObject):
     """Manages the polling lifecycle — timer + worker thread."""
 
+    #: Queued to ``_PollWorker.poll`` on the worker thread (FFA-g gate).
+    _request_poll = Signal()
+
     def __init__(
         self,
         state: AppState,
@@ -413,10 +425,20 @@ class PollingService(QObject):
         self._worker.connected.connect(self._on_connected)
         self._worker.disconnected.connect(self._on_disconnected)
 
-        # Timer runs on main thread, triggers worker.poll() on worker thread
+        # Timer runs on main thread, triggers worker.poll() on worker thread.
+        #
+        # FFA-g: at most one cycle requested at a time. A tick queued straight to
+        # the worker sits in its event queue while a poll blocks, so a daemon
+        # that accepts but never answers built a backlog that ran as a burst on
+        # recovery — and a guard inside the worker could not see it, since each
+        # queued tick starts only after the previous one returned. The gate lives
+        # here instead: a tick that finds a cycle still running is dropped.
+        self._cycle_in_flight = False
+        self._request_poll.connect(self._worker.poll, Qt.ConnectionType.QueuedConnection)
+        self._worker.cycle_done.connect(self._on_cycle_done, Qt.ConnectionType.QueuedConnection)
         self._timer = QTimer(self)
         self._timer.setInterval(POLL_INTERVAL_MS)
-        self._timer.timeout.connect(self._worker.poll, Qt.ConnectionType.QueuedConnection)
+        self._timer.timeout.connect(self._on_tick)
 
         self._thread.start()
 
@@ -448,6 +470,15 @@ class PollingService(QObject):
             log.warning("Polling thread did not stop within 2s, terminating")
             self._thread.terminate()
             self._thread.wait(1000)
+
+    def _on_tick(self) -> None:
+        if self._cycle_in_flight:
+            return
+        self._cycle_in_flight = True
+        self._request_poll.emit()
+
+    def _on_cycle_done(self) -> None:
+        self._cycle_in_flight = False
 
     def _on_connected(self) -> None:
         # Stamp every successful poll for the dashboard "Updated Xs ago" strip.

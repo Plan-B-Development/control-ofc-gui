@@ -1661,8 +1661,10 @@ so every `/status` field above arrives under `status.` here. `sensors` and `fans
 **top-level** arrays — the entries of `GET /sensors` and `GET /fans`, without those
 routes' wrapper objects.
 
-If `/poll` fails for any reason, the GUI fetches `/status`, `/sensors` and `/fans`
-for that cycle and emits nothing unless all three succeed.
+If `/poll` answers 404 or a body that will not parse (a daemon without the route), the
+GUI fetches `/status`, `/sensors` and `/fans` for that cycle and emits nothing unless all
+three succeed. Any other failure — a timeout, a lost socket, another HTTP error — fails the
+cycle: the GUI shows the daemon as disconnected, drops its connection and backs off (FFA-g).
 
 ### GET /sensors/history?id=...&last=N
 Returns per-sensor time-series history from the daemon's ring buffer:
