@@ -3387,6 +3387,26 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
 - `PUT /profiles/{id}` — create-or-replace stored desired-state → **200 OK** (no hot-reload —
   re-activate to apply)
 - `DELETE /profiles/{id}` — `409 profile_in_use` if it is the active profile
+- **Reads are confined to the search directories (daemon > 4.0.0, FFA-a/FFA-b).** `GET /profiles`,
+  `GET /profiles/{id}` and activation treat a profile file as **absent** (`404`, not listed) when it is
+  a symlink, a FIFO or anything else but a regular file, or when its owner is not its directory's owner.
+  They skip, with a daemon-side warning, a search directory whose real path is not the path registered
+  (one swapped for a symlink after it was added). Earlier daemons followed links, so any local user could
+  read any root-readable JSON file through `GET /profiles/{id}`, and a FIFO blocked the request for good.
+  Profile reads run off the daemon's async workers and answer within **2 s**: a read that does not finish
+  in time answers a retryable `500 internal_error`. A user's search directory that stopped answering (a
+  hung FUSE or network mount) costs that one request; later requests skip the directory, with a
+  daemon-side warning, until its read returns, so the rest of the list still loads. Root's directories
+  (the store, the presets) are never skipped, so a profile found by id is never a user's same-id file read
+  past a busy store: a request that cannot read them in time answers the retryable `500`. A listing that
+  runs out of time in a user's directory answers the profiles found so far (`200`, logged).
+- **Store bounds (daemon > 4.0.0, FFA-j).** `POST`/`PUT` store the document compact. A document whose
+  stored form would exceed 4 MiB is `400 validation_error` (re-serialising can lengthen numbers, so this can
+  fire for a body under the 4 MiB request limit); a **new** id once the store holds 256 profiles is
+  `400 validation_error` (replacing an existing id still works), and so is a write that would leave the
+  store holding more than **64 MiB** in all. Create, delete and activation are
+  serialised, so concurrent `POST`s of one id answer one `201` and `409 already_exists` for the rest,
+  and a delete cannot land between an activation's read and its swap.
 - Profile ids are filesystem-safe stems: non-empty, ≤128 bytes, no `/` `\` `..` or control
   characters, else `400 validation_error` (DEC-173). The GUI auto-generates 8-char hex ids, so this
   only constrains hand-authored/imported ids.
@@ -3406,18 +3426,25 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
 ### Profile activation
 - `POST /profile/activate` — `{"profile_path": "/path/to/profile.json"}` or `{"profile_id": "quiet"}`
   - Daemon validates, applies, and persists active profile to `/var/lib/control-ofc/daemon_state.json`
-  - `profile_path` must canonicalize to a path **inside a registered profile
-    search directory**, else `400 validation_error` ("profile_path must be
-    within a profile search directory"). The GUI always qualifies — it
-    registers its own profiles dir as a search dir on connect (see the
-    store-of-record note below); independent API consumers must register
-    theirs via `POST /config/profile-search-dirs` first.
+  - `profile_path` must name a file **directly inside a registered profile
+    search directory**: its directory, resolved, must be a registered entry,
+    else `400 validation_error` ("profile_path must name a file directly inside
+    a profile search directory"). The file itself is read as any profile is
+    (§ Profile storage): a symlink or other non-regular file is `400` "profile
+    could not be read or parsed". Daemons ≤ 4.0.0 resolved the whole path and
+    also accepted a file in a subdirectory or reached through a symlink that
+    stayed inside a search directory. The GUI always qualifies — it registers
+    its own profiles dir as a search dir on connect (see the store-of-record
+    note below); independent API consumers must register theirs via
+    `POST /config/profile-search-dirs` first.
   - Returns `{"api_version", "activated": true, "profile_id": "...", "profile_name": "..."}`
   - **Errors**: `404 validation_error` for a `profile_path` that does not exist or a
     `profile_id` found in no search directory; `400 validation_error` for a body with
     neither key, a path outside every search directory, a file that cannot be read or
     parsed, or a profile that fails validation (`error.details.field_violations`, as for
-    `POST /profiles`). On any error the previously active profile keeps running.
+    `POST /profiles`); a retryable `500 internal_error` when the read, or resolving a
+    `profile_path` whose directory is not a registered entry as written, did not finish in
+    time (daemon > 4.0.0). On any error the previously active profile keeps running.
   - **Saving the new state is best-effort.** If writing `daemon_state.json` fails, the
     daemon logs a warning and still answers `200`: the profile is active now, but a
     restart brings back the previous one.
@@ -3780,7 +3807,7 @@ Two things distinguish the cooldown 409 from the single-flight 409, and a client
   (§ OpenFan firmware update).
 - 409 `session_full` (source: `"validation"`, retryable: false, daemon ≥ 2.56.2) — `POST /validation/session/event` or `/measurement` while the recording session already holds its cap of that kind (4096 events, 512 measurements). Nothing was appended; `details.limit` is the cap. A new session is the only way to record more (DEC-426, `DC-m`).
 - 409 `stale_fencing_token` (source: `"validation"`, retryable: false) — override renew/release (DEC-163) bearing a superseded `override_token`; a newer override has been issued for that control, so the stale holder cannot re-pin (fencing)
-- 500 `internal_error` (source: `"internal"`, retryable: true)
+- 500 `internal_error` (source: `"internal"`, retryable: true) — among other causes, a profile read on `GET /profiles`, `GET /profiles/{id}`, `POST /profile/activate` or `POST /config/profile-search-dirs` that did not finish within 2 s (daemon > 4.0.0, FFA-b)
 - 503 `hardware_unavailable` (source: `"hardware"`, retryable: true)
 - 503 `persistence_failed` (source: `"internal"`, retryable: true) — returned by `POST /config/*` when the daemon cannot persist the runtime configuration file
 
@@ -4178,7 +4205,9 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     - removing `/etc/control-ofc/profiles` — it holds the admin-installed profiles, and the daemon always keeps it in the path;
     - any edit whose result would be an **empty** search path — `activate_profile` resolves against this list, so emptying it is an unrecoverable soft-lock reachable from an unprivileged call;
     - any edit whose result does not leave the daemon's **profile store of record** as the **first** entry. The store of record (DEC-160) is *defined* as the first search dir, and it is the write target for profile create and delete, so displacing it would silently redirect every profile write for the rest of the daemon's process life. Note this is a rule about **position**, not membership: `{"add": [store], "remove": [store]}` removes it from index 0 and re-appends it at the end, which leaves it present and displaced — and is refused. A client that wants to show why Remove is unavailable can apply the same rule locally (the GUI does).
-  - **Peer-uid confined (daemon ≥ 2.9.0, DEC-205):** a non-root client may only `add` directories that exist and canonicalize to a path within its **own home directory** (resolved from the socket peer's `SO_PEERCRED` uid); root / CLI callers are exempt. An out-of-home dir, a nonexistent/unreadable dir, or a caller whose uid/home cannot be resolved is `400 validation_error`. Older daemons (< 2.9.0) accept any absolute dir. `remove` is confined the same way but by a predicate that does **not** require the directory to still exist: it accepts the path's raw form, falling back to its canonical form when that resolves. Both legs are needed. Raw, because a stale entry worth pruning is very often one that is already gone, so requiring existence would refuse exactly the entries this operation exists to clean up. Canonical, because the add path validates the *canonical* form but persists the *raw* string — so without it a directory added through a symlink (or under a `systemd-homed` layout where `pw_dir` and `$HOME` spell the home differently) is storable and permanently unremovable. A home that cannot confine anything — `/`, or `/nonexistent` — is treated as unresolvable and fails closed, in both predicates.
+  - **Peer-uid confined (daemon ≥ 2.9.0, DEC-205):** a non-root client may only `add` directories that exist and canonicalize to a path within its **own home directory** (resolved from the socket peer's `SO_PEERCRED` uid); root / CLI callers are exempt. An out-of-home dir, a nonexistent/unreadable dir, or a caller whose uid/home cannot be resolved is `400 validation_error`. Older daemons (< 2.9.0) accept any absolute dir. `remove` is confined the same way but by a predicate that does **not** require the directory to still exist: it accepts the path's raw form, falling back to its canonical form when that resolves. Both legs are needed. Raw, because a stale entry worth pruning is very often one that is already gone, so requiring existence would refuse exactly the entries this operation exists to clean up. Canonical, because daemons ≤ 4.0.0 validated the *canonical* form but persisted the *raw* string — so without it a directory added through a symlink (or under a `systemd-homed` layout where `pw_dir` and `$HOME` spell the home differently) is storable and permanently unremovable.
+  - **Stored by real path, deduplicated, bounded (daemon > 4.0.0, FFA-c).** An added directory is resolved once and stored as that real path (symlinks resolved) when it exists, else in lexical normal form; that same value is what confinement checks, and a refusal names the path as the caller sent it, never its real path. Every spelling of one directory (`/./`, `//`, a trailing `/`) is the same entry, so re-adding a variant changes nothing; a removal also matches an entry stored by its real path, when that real path is one the caller may remove. At most **32** entries, and at most **4** inside one non-root caller's home (an edit that would grow either past its limit is `400`; a longer list from an older daemon can still shrink), and **4096** bytes per path (`400`). Root (or any caller) removing an entry by the spelling it is stored under touches no filesystem, so a directory that stopped answering can always be removed. A search directory whose real path is not its registered path is skipped when profiles are read, so an entry an older daemon stored through a symlink stops resolving until it is added again — the GUI re-adds its own folder on every connect. Earlier daemons stored the raw string, so variants each added an entry and the list could grow until `runtime.toml` exceeded its read cap.
+  - A retryable `500 internal_error` when a directory named in the request did not answer within 2 s (daemon > 4.0.0, FFA-b). Paths a client names are resolved one at a time per uid, so after that a caller's further edits are refused the same way, at once, until its hung resolution returns; other users are unaffected. A home that cannot confine anything — `/`, or `/nonexistent` — is treated as unresolvable and fails closed, in both predicates.
   - A persistence failure is `503 persistence_failed`; the daemon persists first and leaves in-memory state untouched on failure.
   - The GUI surfaces the daemon's message verbatim: the Settings ▸ profiles-directory picker prefixes it with `Failed to update daemon:`, and the Daemon Configuration card's search-dir editor reports it in its result line.
 - `POST /config/exit-floor` — `{"exit_floor_pct": 0..100}` (DEC-388, daemon ≥ 2.50.0; capability
