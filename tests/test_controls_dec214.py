@@ -112,6 +112,19 @@ class TestCleanup:
         page.cleanup()  # second call must not raise
         assert page._curve_editor._cleaned_up is True
 
+    def test_closing_the_page_tears_down_the_curve_editor(self, qtbot, app_state, profile_service):
+        """FFA-k: closing the page is what qtbot does at teardown. The editor is a
+        child, so it never gets a close event of its own; without the page's
+        ``closeEvent`` its pyqtgraph scene was left for the cyclic GC, which freed
+        a ViewBox before its axes during a later test's event loop (SIGSEGV)."""
+        page = _page(qtbot, app_state, profile_service)
+        assert not getattr(page._curve_editor, "_cleaned_up", False)
+
+        page.close()
+
+        assert getattr(page._curve_editor, "_cleaned_up", False) is True
+        assert page._is_shut_down is True
+
 
 class TestCurveEditorRoleFloorIsWired:
     """[SAFETY] Register row `TT-a` — the DEC-095/DEC-312 authoring guardrail.

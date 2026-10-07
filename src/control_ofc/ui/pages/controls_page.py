@@ -700,6 +700,17 @@ class ControlsPage(QWidget):
         self._page_visible = False
         super().hideEvent(event)
 
+    def closeEvent(self, event) -> None:
+        """Tear down when the page itself is closed (e.g. test teardown), not
+        only via ``MainWindow``'s explicit ``cleanup()`` — as ``DashboardPage``
+        does. Only the closed top-level receives a close event, so the curve
+        editor's own ``closeEvent`` never fires here, and its pyqtgraph scene was
+        left for the cyclic GC to free, items in arbitrary order, during a later
+        event loop (a ``ViewBox already deleted`` error or SIGSEGV, FFA-k).
+        ``cleanup()`` is idempotent."""
+        self.cleanup()
+        super().closeEvent(event)
+
     def cleanup(self) -> None:
         """Deterministically tear down the always-mounted curve editor's
         pyqtgraph scene (DEC-180 lineage) and the DEC-220 override worker thread.
