@@ -49,6 +49,10 @@ _~/.local/share/control-ofc/reports/_
 _~/.cache/control-ofc/_
 	Generated theme images. Safe to delete; it is recreated.
 
+_~/.cache/control-ofc/firmware/_
+	Checked copies of OpenFAN firmware files, made for a firmware update.
+	Safe to delete when no update is running.
+
 _/run/control-ofc/control-ofc.sock_
 	Default daemon Unix socket path.
 

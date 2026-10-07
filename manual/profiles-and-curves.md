@@ -92,6 +92,8 @@ The **Minimum** floor is chosen automatically from the role inferred for the fan
 
 These per-role floors are GUI-owned policy baked into the profile. The daemon additionally enforces the **pump/CPU 30% floor** as a hard backstop: it rejects a profile whose pump/CPU control declares a `minimum_pct` below 30% at validate time, and re-applies the 30% floor on every evaluation tick regardless of the declared value. The 20% chassis / 0% GPU floors remain GUI policy — the daemon does not enforce those.
 
+A pump on a motherboard header that runs in **DC mode** gets a higher daemon floor: **70%** instead of 30% (daemon 3.0.0 and later), because a pump driven by voltage rather than PWM stalls higher in its range. Like the 30% floor it is hardcoded in the daemon and applies whatever the profile's own minimum says. The **Min** badge does not show it; the header's **Details** on the [Diagnostics](diagnostics.md) page show the floor the daemon applies.
+
 A profile saved before one of its fans earned the 30% floor — say, a cooler an older version did not recognise — is **healed when it loads**: a pump/CPU control below 30% is raised to 30%, so the daemon does not refuse it when you apply it. Only the 30% floor is healed; a chassis control you deliberately set below 20% keeps your value.
 
 ## Curves
