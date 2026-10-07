@@ -575,6 +575,32 @@ class TestWizardPumpProtection:
         w = _wizard(qtbot, app_state, [header])
         assert w.is_pump_target(header.id) is False
 
+    def test_the_daemons_stop_permitted_outranks_the_reconstruction_both_ways(
+        self, qtbot, app_state
+    ):
+        """GSA-l: the wizard asks the shared predicate, which prefers the daemon's
+        ``stop_permitted`` (DEC-316). Each header is one the reconstruction alone
+        would answer the opposite way, so a predicate honouring only one direction
+        of the field fails one half."""
+        from dataclasses import replace
+
+        assigned_pump = _mb_header(5, role="pump", role_source="user_assigned")
+        chassis = _mb_header(4, label="SYS_FAN2")
+        w = _wizard(qtbot, app_state, [assigned_pump, chassis])
+        # Preconditions: what the reconstruction says while the daemon is silent.
+        assert w.is_pump_target(assigned_pump.id) is True
+        assert w.is_pump_target(chassis.id) is False
+
+        app_state.hwmon_headers = [
+            replace(assigned_pump, stop_permitted=True),
+            replace(chassis, stop_permitted=False),
+        ]
+
+        assert w.is_pump_target(assigned_pump.id) is False
+        assert w.identify_verb(assigned_pump.id) == "stop"
+        assert w.is_pump_target(chassis.id) is True
+        assert w.identify_verb(chassis.id) == "change speed"
+
     def test_older_daemon_keeps_the_stop_wording(self, qtbot, app_state):
         header = _mb_header(5, role="pump")
         w = _wizard(qtbot, app_state, [header], header_roles=False)

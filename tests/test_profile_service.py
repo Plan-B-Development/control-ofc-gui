@@ -947,6 +947,79 @@ def test_v3_to_v4_migration_chassis_only_raises_to_20():
     assert p.controls[0].minimum_pct == 20.0
 
 
+# GSA-l: the floor every stored schema version loads with. A pump/CPU control is
+# raised to its floor on every version — by the v4 migration below v4, by the
+# DEC-423 heal from v4 on. The chassis default is a v4-migration floor only: from
+# v4 on the loader keeps a chassis minimum the user set below it.
+_CPU_MEMBER_ID = "hwmon:nct6798:nct6775.656:pwm1:CPU_FAN"
+_CHASSIS_MEMBER_ID = "openfan:ch00"
+_ALL_STORED_VERSIONS = [1, *range(3, PROFILE_SCHEMA_VERSION + 1)]
+
+
+def _stored_at(version: int, member_id: str) -> dict:
+    if version == 1:
+        return {
+            "id": "legacy",
+            "name": "Legacy",
+            "version": 1,
+            "assignments": [
+                {
+                    "target_id": member_id,
+                    "target_type": "fan",
+                    "curve": {"sensor_id": "cpu", "points": []},
+                }
+            ],
+        }
+    source = "openfan" if member_id.startswith("openfan") else "hwmon"
+    return {
+        "id": "legacy",
+        "name": "Legacy",
+        "version": version,
+        "controls": [
+            {
+                "id": "c1",
+                "name": "Role",
+                "mode": "curve",
+                "curve_id": "x",
+                "members": [{"source": source, "member_id": member_id}],
+                "minimum_pct": 0.0,
+            }
+        ],
+        "curves": [],
+    }
+
+
+@pytest.mark.parametrize("version", _ALL_STORED_VERSIONS)
+def test_every_stored_version_loads_a_cpu_pump_control_at_its_floor(version):
+    from control_ofc.services.profile_service import (
+        CONTROL_ROLE_CPU_PUMP,
+        control_minimum_pct,
+        infer_control_role,
+    )
+
+    control = Profile.from_dict(_stored_at(version, _CPU_MEMBER_ID)).controls[0]
+
+    assert infer_control_role(control.members) == CONTROL_ROLE_CPU_PUMP, "precondition"
+    assert control_minimum_pct(control.members) > 0, "precondition: stored at 0, below it"
+    assert control.minimum_pct == control_minimum_pct(control.members)
+
+
+@pytest.mark.parametrize("version", _ALL_STORED_VERSIONS)
+def test_the_chassis_default_is_applied_only_by_the_v4_migration(version):
+    from control_ofc.services.profile_service import (
+        CONTROL_ROLE_CHASSIS,
+        control_minimum_pct,
+        infer_control_role,
+    )
+
+    control = Profile.from_dict(_stored_at(version, _CHASSIS_MEMBER_ID)).controls[0]
+
+    assert infer_control_role(control.members) == CONTROL_ROLE_CHASSIS, "precondition"
+    assert control_minimum_pct(control.members) > 0, "precondition: stored at 0, below it"
+    expected = control_minimum_pct(control.members) if version < 4 else 0.0
+    assert control.minimum_pct == expected
+
+
 def test_fan_zero_rpm_field_roundtrip():
     """ControlMember.fan_zero_rpm survives to_dict/from_dict."""
     m = ControlMember(

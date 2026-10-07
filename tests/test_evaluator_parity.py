@@ -8,10 +8,10 @@ headless behaviour are pinned together — silent drift (the cause of DEC-096 /
 DEC-119) fails on at least one side.
 
 - ``curve_eval``: stateless ``CurveConfig.interpolate`` vs ``evaluate_curve``.
-
-The GUI's stateful tuning pipeline moved to the daemon at the 2.0 flip (DEC-165),
-so its ``tuning_sequence`` parity is pinned daemon-side now; the GUI keeps the
-stateless tier honest here (it still backs demo/preview).
+- ``tuning_sequence``: the floor-bearing invariants only. The GUI's stateful
+  tuning pipeline moved to the daemon at the 2.0 flip (DEC-165), so sequence
+  parity is pinned daemon-side; here the GUI's member classification and load
+  sanitisation are held against the oracle's sequences.
 """
 
 from __future__ import annotations
@@ -21,7 +21,14 @@ from pathlib import Path
 
 import pytest
 
-from control_ofc.services.profile_service import CurveConfig
+from control_ofc.services.profile_service import (
+    CONTROL_ROLE_CPU_PUMP,
+    CONTROL_ROLE_GPU,
+    ROLE_MINIMUM_PCT,
+    CurveConfig,
+    Profile,
+    infer_member_role,
+)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "parity_vectors.json"
 _VECTORS = json.loads(FIXTURE.read_text())
@@ -67,6 +74,52 @@ def test_curve_eval_parity(case):
 
 
 # The GUI's full tuning/hysteresis pipeline moved to the daemon at the 2.0 flip
-# (DEC-165); its parity is now pinned daemon-side against the same fixture
-# (``tuning_sequence``). The GUI keeps only the stateless ``interpolate`` tier
-# honest here, which is what demo/preview still use.
+# (DEC-165); its sequence parity is pinned daemon-side against the same fixture
+# (``tuning_sequence``). What the GUI still decides is which floor each member
+# gets: its member classification stamps ``minimum_pct`` and feeds the floor the
+# Controls page shows, and its loader sanitises a pump's ``stop_pct``. The tests
+# below hold those GUI rules against the oracle's floor-bearing sequences (GSA-l).
+
+
+def _members_by_expected_id(case: dict):
+    """(member, loaded control, oracle pwm sequence) for each expected member,
+    with the profile loaded through the GUI's own path."""
+    profile = Profile.from_dict(case["profile"])
+    by_id = {m.member_id: (m, c) for c in profile.controls for m in c.members}
+    for expected in case["expected"]:
+        member, control = by_id[expected["member_id"]]
+        yield member, control, expected["pwm"]
+
+
+_TUNING = _VECTORS["tuning_sequence"]
+
+
+def test_the_oracle_holds_every_non_gpu_member_at_its_controls_minimum():
+    """A non-GPU member never runs between 0 and its control's minimum; a GPU
+    member is exempt (DEC-095: 0 % GPU floor). Classifying a member the wrong
+    way here would show a floor the daemon does not apply, or hide one it does."""
+    seen_gpu_below_minimum = False
+    for case in _TUNING:
+        for member, control, pwm in _members_by_expected_id(case):
+            if infer_member_role(member) == CONTROL_ROLE_GPU:
+                seen_gpu_below_minimum |= any(v < control.minimum_pct for v in pwm)
+                continue
+            for value in pwm:
+                assert value == 0 or value >= control.minimum_pct, (case["name"], member)
+    assert seen_gpu_below_minimum, "precondition: the oracle exempts a GPU member"
+
+
+def test_the_oracle_never_stops_or_underruns_a_member_the_gui_calls_a_pump():
+    """The pump/CPU floor (DEC-095/167): what the GUI classifies as pump/CPU the
+    oracle holds at or above that floor and never stops — so the GUI's loader
+    zeroing the member's ``stop_pct`` agrees with the daemon's evaluation."""
+    floor = ROLE_MINIMUM_PCT[CONTROL_ROLE_CPU_PUMP]
+    pump_cases = 0
+    for case in _TUNING:
+        for member, control, pwm in _members_by_expected_id(case):
+            if infer_member_role(member) != CONTROL_ROLE_CPU_PUMP:
+                continue
+            pump_cases += 1
+            assert min(pwm) >= floor, case["name"]
+            assert control.stop_pct == 0.0, case["name"]
+    assert pump_cases, "precondition: the oracle carries a pump/CPU member"

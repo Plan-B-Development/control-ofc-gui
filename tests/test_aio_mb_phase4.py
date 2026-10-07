@@ -298,6 +298,26 @@ class TestDaemonReportedFloor:
         assert header_is_pump_protected(h, caps) is True
         assert header_effective_floor_pct(h, caps) == 30
 
+    def test_daemon_stoppable_answer_outranks_a_protected_reconstruction(self):
+        """GSA-l: the reverse of the case above. The daemon is authoritative both
+        ways; a check honouring only ``stop_permitted is False`` would fall
+        through to the reconstruction here and claim protection the daemon does
+        not apply."""
+        caps = _caps()
+        silent = HwmonHeader(id=PUMP_ID, label="PUMP", pwm_index=5, role="pump")
+        assert header_is_pump_protected(silent, caps) is True  # the reconstruction's answer
+
+        stoppable = HwmonHeader(
+            id=PUMP_ID,
+            label="PUMP",
+            pwm_index=5,
+            role="pump",
+            stop_permitted=True,
+        )
+        assert header_is_pump_protected(stoppable, caps) is False
+        # With no reported floor, the fallback floor follows the same answer.
+        assert header_effective_floor_pct(stoppable, caps) is None
+
     def test_reconstruction_runs_when_the_daemon_is_silent(self):
         caps = _caps()
         old = HwmonHeader(id=PUMP_ID, label="PUMP", pwm_index=5)

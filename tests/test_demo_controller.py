@@ -128,8 +128,19 @@ def test_emits_outputs_changed(qtbot):
 
 
 def test_no_active_profile_is_noop(qtbot):
-    dc = DemoController(ProfileService(), DemoService(), AppState())
-    dc.tick()  # must not raise; emits nothing
+    """GSA-l: the no-profile tick must emit nothing and write no fan. Its
+    presence counterpart is ``test_emits_outputs_changed``."""
+    profiles, demo = ProfileService(), DemoService()
+    dc = DemoController(profiles, demo, AppState())
+    assert profiles.active_profile is None, "precondition"
+    pwm_before = dict(demo._fan_pwm)
+    seen: list[dict] = []
+    dc.outputs_changed.connect(seen.append)
+
+    dc.tick()
+
+    assert seen == []
+    assert demo._fan_pwm == pwm_before
 
 
 def test_no_deadband_output_tracks_sub_2c_fall_immediately(qtbot):

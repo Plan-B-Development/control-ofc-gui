@@ -159,6 +159,26 @@ class TestOutcome:
         text = outcome_message("AIO_PUMP", result, after, _caps())
         assert "Chassis fan" in text and "still protects it as a pump" in text
 
+    def test_no_protection_caveat_when_the_daemon_will_stop_it(self):
+        """GSA-l: the opposite branch. The same downgrade, with the daemon now
+        reporting the header stoppable, must not claim a protection it does not
+        apply — even though the ``AIO_PUMP`` label alone would reconstruct one."""
+        result = HeaderRoleResult(
+            updated=True, header_id=LABEL_PUMP, role="chassis_fan", effective_role="chassis_fan"
+        )
+        protected = _hdr(
+            LABEL_PUMP, role="chassis_fan", role_source="user_assigned", stop_permitted=False
+        )
+        stoppable = _hdr(
+            LABEL_PUMP, role="chassis_fan", role_source="user_assigned", stop_permitted=True
+        )
+        assert "still protects" in outcome_message("AIO_PUMP", result, protected, _caps())
+
+        text = outcome_message("AIO_PUMP", result, stoppable, _caps())
+
+        assert "Chassis fan" in text
+        assert "still protects" not in text
+
     def test_a_clear_reports_what_the_daemon_fell_back_to(self):
         after = _hdr(LABEL_PUMP, role="pump", role_source="label", stop_permitted=False)
         result = HeaderRoleResult(
