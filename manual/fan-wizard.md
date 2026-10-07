@@ -8,7 +8,7 @@ Ordinary fans are stopped briefly. A **pump is never stopped** — the daemon sh
 
 ## Why Use the Wizard?
 
-Fan hardware IDs like `openfan:ch03` or `hwmon:it8696:pci0:pwm1:CHA_FAN1` are not helpful for daily use. The wizard lets you assign labels like "Rear Exhaust" or "CPU Cooler" that appear everywhere in the GUI — dashboard, controls, the Overview page, and profile editing.
+Fan hardware IDs like `openfan:ch03` or `hwmon:it8696:it87.2624:pwm1:CHA_FAN1` are not helpful for daily use. The wizard lets you assign labels like "Rear Exhaust" or "CPU Cooler" that appear everywhere in the GUI — dashboard, controls, the Overview page, and profile editing.
 
 Launch it from the Controls page header: **Set up ▾** → **Auto-Connect Wizard…**.
 

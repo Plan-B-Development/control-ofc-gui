@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Demo mode names its hardware as a real daemon does.** The demo's motherboard chips were listed under
+  a description ("ITE IT8696E") instead of the device name a daemon reports, and its fan and voltage ids
+  disagreed with its sensor ids about that name. They now use the device names of the board they imitate
+  (`it87.2624`, `it87.2656`, the Kraken's USB device), so the Hardware page and System State show what a
+  real machine would. The demo's NZXT Kraken pump now has an RPM reading, and its NVMe drive no longer
+  shares an address with the NVIDIA GPU.
+
 ## [4.1.0] — 2026-10-07
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.0 is

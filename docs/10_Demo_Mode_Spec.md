@@ -42,7 +42,10 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
   IT87952E (`SYS_FAN5`, `SYS_FAN6`, `SYS_FAN4` — the board's channel order, without its
   `_PUMP` suffixes so the demo has one pump), and an NZXT Kraken pump (`is_aio`, DEC-156).
   `/diagnostics/hardware`'s chip list and header counts are derived from these headers, as the
-  daemon derives them (DEC-472, `VOLT-e`)
+  daemon derives them (DEC-472, `VOLT-e`). Every hwmon id, header and chip carries the device
+  name a daemon would report on that board — the it87 platform devices `it87.2624` and
+  `it87.2656`, the Kraken's HID device `0003:1E71:3008.0001`, `nvme0` — and every header has a
+  fan reading, the Kraken pump's included (`VOLT-f`)
 - an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
 - CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, and the Kraken's coolant
   sensor (classified as Liquid)
@@ -56,7 +59,7 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
 - Radiator Push 1 / Radiator Push 2 (OpenFan)
 - CPU Fan, CPU OPT / Pump (hwmon, IT8696E)
 - Bottom Intake 1 / Bottom Intake 2, Side Exhaust (hwmon, IT87952E)
-- Pump (hwmon, NZXT Kraken)
+- Kraken Pump (hwmon, NZXT Kraken)
 - RX 7900 XTX Fan (AMD GPU)
 - Arc B580 Fan (Intel GPU, read-only)
 - RTX 4080 Fan (NVIDIA GPU, read-only)

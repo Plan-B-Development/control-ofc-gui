@@ -45,6 +45,16 @@ from control_ofc.api.models import (
 # Demo fan / sensor definitions
 # ---------------------------------------------------------------------------
 
+# `VOLT-f` (`U19`): each chip's `device_id` is the platform device name a daemon
+# reports — the basename of the hwmon directory's `device` link
+# (`hwmon/util.rs::device_id_from_path`) — and every hwmon id embeds it, as
+# `hwmon:<chip>:<device_id>:…`. The two Super I/O chips are the it87 platform
+# devices at 0xa40 and 0xa60, as on a real X870E AORUS MASTER; the Kraken Z53 is
+# its HID device (bus 0003, NZXT 1E71, product 3008); an NVMe drive is `nvmeN`.
+_IT8696_DEVICE = "it87.2624"
+_IT87952_DEVICE = "it87.2656"
+_KRAKEN_DEVICE = "0003:1E71:3008.0001"
+
 _DEMO_FANS: list[dict] = [
     {"id": "openfan:ch00", "source": "openfan", "label": "Front Intake 1"},
     {"id": "openfan:ch01", "source": "openfan", "label": "Front Intake 2"},
@@ -54,12 +64,36 @@ _DEMO_FANS: list[dict] = [
     {"id": "openfan:ch05", "source": "openfan", "label": "GPU Adjacent Intake"},
     {"id": "openfan:ch06", "source": "openfan", "label": "Radiator Push 1"},
     {"id": "openfan:ch07", "source": "openfan", "label": "Radiator Push 2"},
-    {"id": "hwmon:it8696:pci0:pwm1:CHA_FAN1", "source": "hwmon", "label": "CPU Fan"},
-    {"id": "hwmon:it8696:pci0:pwm3:CHA_FAN3", "source": "hwmon", "label": "CPU OPT / Pump"},
+    {"id": f"hwmon:it8696:{_IT8696_DEVICE}:pwm1:CHA_FAN1", "source": "hwmon", "label": "CPU Fan"},
+    {
+        "id": f"hwmon:it8696:{_IT8696_DEVICE}:pwm3:CHA_FAN3",
+        "source": "hwmon",
+        "label": "CPU OPT / Pump",
+    },
     # `VOLT-e`: the board's second chip, whose rails the Voltages panel shows.
-    {"id": "hwmon:it87952:pci0:pwm1:SYS_FAN5", "source": "hwmon", "label": "Bottom Intake 1"},
-    {"id": "hwmon:it87952:pci0:pwm2:SYS_FAN6", "source": "hwmon", "label": "Bottom Intake 2"},
-    {"id": "hwmon:it87952:pci0:pwm3:SYS_FAN4", "source": "hwmon", "label": "Side Exhaust"},
+    {
+        "id": f"hwmon:it87952:{_IT87952_DEVICE}:pwm1:SYS_FAN5",
+        "source": "hwmon",
+        "label": "Bottom Intake 1",
+    },
+    {
+        "id": f"hwmon:it87952:{_IT87952_DEVICE}:pwm2:SYS_FAN6",
+        "source": "hwmon",
+        "label": "Bottom Intake 2",
+    },
+    {
+        "id": f"hwmon:it87952:{_IT87952_DEVICE}:pwm3:SYS_FAN4",
+        "source": "hwmon",
+        "label": "Side Exhaust",
+    },
+    # `VOLT-f`: the Kraken pump header's reading. A pump spins faster than a fan
+    # at the same duty (the Z53's runs to about 2800 RPM).
+    {
+        "id": f"hwmon:z53:{_KRAKEN_DEVICE}:pwm1:Pump",
+        "source": "hwmon",
+        "label": "Kraken Pump",
+        "rpm_per_pct": 28,
+    },
     {"id": "amd_gpu:0000:2d:00.0", "source": "amd_gpu", "label": "RX 7900 XTX Fan"},
     # Intel discrete GPU (DEC-121) — read-only fan; demonstrates the
     # "(read-only)" treatment and firmware-managed messaging.
@@ -131,14 +165,14 @@ _DEMO_SENSORS: list[dict] = [
         "chip_name": "nouveau",
     },
     {
-        "id": "hwmon:it8696:it87.2624:temp1",
+        "id": f"hwmon:it8696:{_IT8696_DEVICE}:temp1",
         "kind": "mb_temp",
         "label": "temp1",
         "source": "hwmon",
         "chip_name": "it8696",
     },
     {
-        "id": "hwmon:nvme:0000:01:00.0:Composite",
+        "id": "hwmon:nvme:nvme0:Composite",
         "kind": "disk_temp",
         "label": "Composite",
         "source": "hwmon",
@@ -146,7 +180,7 @@ _DEMO_SENSORS: list[dict] = [
     },
     # NZXT Kraken AIO coolant temperature (DEC-156) — classifies as Liquid.
     {
-        "id": "hwmon:z53:usb-3-2:Coolant",
+        "id": f"hwmon:z53:{_KRAKEN_DEVICE}:Coolant",
         "kind": "coolant_temp",
         "label": "Coolant",
         "source": "hwmon",
@@ -160,9 +194,10 @@ _DEMO_SENSORS: list[dict] = [
 # offer no hwmon headers at all. `tests/test_demo_hwmon_headers.py` pins this.
 _DEMO_HWMON_HEADERS: list[dict] = [
     {
-        "id": "hwmon:it8696:pci0:pwm1:CHA_FAN1",
+        "id": f"hwmon:it8696:{_IT8696_DEVICE}:pwm1:CHA_FAN1",
         "label": "CPU Fan",
         "chip_name": "it8696",
+        "device_id": _IT8696_DEVICE,
         "pwm_index": 1,
         "supports_enable": True,
         "rpm_available": True,
@@ -171,9 +206,10 @@ _DEMO_HWMON_HEADERS: list[dict] = [
         "max_pwm_percent": 100,
     },
     {
-        "id": "hwmon:it8696:pci0:pwm3:CHA_FAN3",
+        "id": f"hwmon:it8696:{_IT8696_DEVICE}:pwm3:CHA_FAN3",
         "label": "CPU OPT / Pump",
         "chip_name": "it8696",
+        "device_id": _IT8696_DEVICE,
         "pwm_index": 3,
         "supports_enable": True,
         "rpm_available": True,
@@ -188,9 +224,10 @@ _DEMO_HWMON_HEADERS: list[dict] = [
     # pump is the Kraken below — three running pumps is no real build.
     *(
         {
-            "id": f"hwmon:it87952:pci0:pwm{index}:{label}",
+            "id": f"hwmon:it87952:{_IT87952_DEVICE}:pwm{index}:{label}",
             "label": label,
             "chip_name": "it87952",
+            "device_id": _IT87952_DEVICE,
             "pwm_index": index,
             "supports_enable": True,
             "rpm_available": True,
@@ -202,9 +239,10 @@ _DEMO_HWMON_HEADERS: list[dict] = [
     ),
     # NZXT Kraken pump — liquid-cooler header (DEC-156): is_aio + writable.
     {
-        "id": "hwmon:z53:usb-3-2:pwm1:Pump",
+        "id": f"hwmon:z53:{_KRAKEN_DEVICE}:pwm1:Pump",
         "label": "Pump",
         "chip_name": "z53",
+        "device_id": _KRAKEN_DEVICE,
         "pwm_index": 1,
         "supports_enable": True,
         "rpm_available": True,
@@ -230,8 +268,8 @@ _DEMO_ZONES: dict[str, str] = {
     "openfan:ch04": "Exhaust",
     "openfan:ch06": "Radiator",
     "openfan:ch07": "Radiator",
-    "hwmon:it8696:pci0:pwm1:CHA_FAN1": "CPU",
-    "hwmon:it8696:pci0:pwm3:CHA_FAN3": "CPU",
+    f"hwmon:it8696:{_IT8696_DEVICE}:pwm1:CHA_FAN1": "CPU",
+    f"hwmon:it8696:{_IT8696_DEVICE}:pwm3:CHA_FAN3": "CPU",
 }
 
 
@@ -242,23 +280,23 @@ _DEMO_ZONES: dict[str, str] = {
 # count is what let the chip list name one chip of two. Driver fields follow the
 # daemon's `chip_db`: the it87952 is a mainline it87 chip and the it8696 is not;
 # the daemon's table has no entry for the Kraken's chip, so it says "unknown"
-# beside the bound `nzxt-kraken3`. `device_id` is descriptive here, unlike the
-# platform device name a daemon reports (`VOLT-f`).
+# beside the bound `nzxt-kraken3`. `device_id` is the platform device name the
+# chip's ids embed (`VOLT-f`).
 _DEMO_CHIP_INFO: dict[str, dict] = {
     "it8696": {
-        "device_id": "ITE IT8696E",
+        "device_id": _IT8696_DEVICE,
         "expected_driver": "it87",
         "bound_driver": "it87",
         "in_mainline_kernel": False,
     },
     "it87952": {
-        "device_id": "ITE IT87952E",
+        "device_id": _IT87952_DEVICE,
         "expected_driver": "it87",
         "bound_driver": "it87",
         "in_mainline_kernel": True,
     },
     "z53": {
-        "device_id": "NZXT Kraken Z53",
+        "device_id": _KRAKEN_DEVICE,
         "expected_driver": "unknown",
         "bound_driver": "nzxt-kraken3",
         "in_mainline_kernel": False,
@@ -279,8 +317,8 @@ def _demo_hwmon_diagnostics() -> HwmonDiagnostics:
         total_headers=sum(counts.values()),
         writable_headers=sum(1 for h in _DEMO_HWMON_HEADERS if h["is_writable"]),
         enable_revert_counts={
-            "hwmon:it8696:pci0:pwm1:CHA_FAN1": 0,
-            "hwmon:it8696:pci0:pwm3:CHA_FAN3": 0,
+            f"hwmon:it8696:{_IT8696_DEVICE}:pwm1:CHA_FAN1": 0,
+            f"hwmon:it8696:{_IT8696_DEVICE}:pwm3:CHA_FAN3": 0,
         },
     )
 
@@ -321,7 +359,7 @@ _DEMO_VOLTAGES: tuple[tuple[str, int, str, float, str, float | None, bool], ...]
 def _demo_voltages() -> list[VoltageRail]:
     return [
         VoltageRail(
-            id=f"hwmon:{chip}:pci0:in{channel}",
+            id=f"hwmon:{chip}:{_DEMO_CHIP_INFO[chip]['device_id']}:in{channel}",
             chip_name=chip,
             channel=channel,
             label=label or f"in{channel}",
@@ -482,7 +520,7 @@ class DemoService:
         fans = []
         for f in _DEMO_FANS:
             pwm = self._fan_pwm.get(f["id"], 40)
-            base_rpm = int(pwm * 18 + random.gauss(0, 15))
+            base_rpm = int(pwm * f.get("rpm_per_pct", 18) + random.gauss(0, 15))
             # Intel (DEC-121) + NVIDIA (DEC-204) discrete GPU fans are read-only:
             # the daemon never commands them, so report no last_commanded_pwm.
             # NVIDIA additionally exposes a firmware-reported *measured* duty %.
