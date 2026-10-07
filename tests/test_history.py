@@ -8,6 +8,16 @@ from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
 from control_ofc.services.history_store import HistoryStore, TimestampedReading
 
 
+class _Clock:
+    """A settable chart clock (boottime seconds) for a HistoryStore."""
+
+    def __init__(self, t: float = 1000.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
 def test_record_sensors():
     store = HistoryStore()
     sensors = [SensorReading(id="cpu", kind="cpu_temp", value_c=45.0)]
@@ -32,9 +42,11 @@ def test_record_fan_no_rpm():
 
 
 def test_multiple_recordings():
-    store = HistoryStore()
+    clock = _Clock()
+    store = HistoryStore(clock=clock)
     for temp in [40.0, 42.0, 44.0]:
         store.record_sensors([SensorReading(id="cpu", value_c=temp)])
+        clock.t += 1.0  # one GUI poll later
     series = store.get_series("sensor:cpu")
     assert len(series) == 3
     assert [r.value for r in series] == [40.0, 42.0, 44.0]
@@ -47,18 +59,16 @@ def test_clear():
     assert store.get_series("sensor:cpu") == []
 
 
-def test_get_series_on_fully_aged_out_key_returns_empty(monkeypatch):
+def test_get_series_on_fully_aged_out_key_returns_empty():
     # Prune-to-empty (DEC-236 hardening): once every entry ages past max_age,
     # _prune pops the key, so get_series must return [] — not KeyError — for a
     # series that just aged out (the other prune tests always leave >=1 entry).
-    import control_ofc.services.history_store as hs
-
-    store = HistoryStore(max_age_s=2)
+    clock = _Clock()
+    store = HistoryStore(max_age_s=2, clock=clock)
     store.record_sensors([SensorReading(id="cpu", value_c=40.0)])
     assert len(store.get_series("sensor:cpu")) == 1
-    # Advance the monotonic clock well past max_age so every point is now stale.
-    future = time.monotonic() + 100
-    monkeypatch.setattr(hs.time, "monotonic", lambda: future)
+    # Advance the clock well past max_age so every point is now stale.
+    clock.t += 100
     assert store.get_series("sensor:cpu") == []
 
 
@@ -107,28 +117,20 @@ def test_prefill_sensor_old_points_pruned():
 
 def test_pruning_removes_old_entries():
     """Old entries beyond max_age should be pruned."""
-    import time
-    from unittest.mock import patch
-
-    store = HistoryStore(max_age_s=5)  # 5 second window for test
+    clock = _Clock()
+    store = HistoryStore(max_age_s=5, clock=clock)  # 5 second window for test
 
     # Insert a reading at "now"
     store.record_sensors([SensorReading(id="cpu", value_c=40.0)])
     assert len(store.get_series("sensor:cpu")) == 1
 
-    # Advance monotonic clock by 6 seconds
-    original_monotonic = time.monotonic
-
-    def shifted_monotonic():
-        return original_monotonic() + 6.0
-
-    with patch("time.monotonic", shifted_monotonic):
-        # Add another reading at "now + 6s"
-        store.record_sensors([SensorReading(id="cpu", value_c=50.0)])
-        series = store.get_series("sensor:cpu")
-        # Old entry should be pruned (older than 5s)
-        assert len(series) == 1
-        assert series[0].value == 50.0
+    # Add another reading at "now + 6s"
+    clock.t += 6.0
+    store.record_sensors([SensorReading(id="cpu", value_c=50.0)])
+    series = store.get_series("sensor:cpu")
+    # Old entry should be pruned (older than 5s)
+    assert len(series) == 1
+    assert series[0].value == 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -180,19 +182,16 @@ def test_prefill_sensor_merges_with_existing_series_sorted():
 def test_prefill_sensor_double_prefill_dedupes_exact_timestamps():
     """A repeated prefill with identical points converted at the same instant
     must not duplicate entries — exact-timestamp collisions keep one copy."""
-    from unittest.mock import patch
-
-    store = HistoryStore()
+    # Freeze both clocks so the wall→chart conversion is identical for both
+    # prefill calls.
+    store = HistoryStore(clock=lambda: 1000.0, wall_ms=lambda: 2_000_000)
     points = [
         HistoryPoint(ts=2_000_000 - 3000, v=40.0),
         HistoryPoint(ts=2_000_000 - 2000, v=42.0),
     ]
-    # Freeze both clocks so the wall→monotonic conversion is identical for
-    # both prefill calls (time.time()*1000 == 2_000_000 ms).
-    with patch("time.monotonic", lambda: 1000.0), patch("time.time", lambda: 2000.0):
-        store.prefill_sensor("cpu", points)
-        store.prefill_sensor("cpu", points)
-        series = store.get_series("sensor:cpu")
+    store.prefill_sensor("cpu", points)
+    store.prefill_sensor("cpu", points)
+    series = store.get_series("sensor:cpu")
     assert len(series) == 2, f"duplicate prefill must dedupe, got {len(series)}"
     assert [r.value for r in series] == [40.0, 42.0]
 
@@ -206,7 +205,7 @@ def test_prefill_sensor_backfills_gap_between_old_and_live():
     from control_ofc.services.history_store import TimestampedReading
 
     store = HistoryStore()
-    base = time.monotonic()
+    base = store.now()
     store._series["sensor:cpu"] = deque(
         [
             TimestampedReading(timestamp=base - 10.0, value=30.0),  # pre-disconnect
@@ -227,19 +226,18 @@ def test_prune_boundary_keeps_entry_exactly_at_cutoff():
     entry whose timestamp equals the cutoff must be RETAINED. Locks down
     `<` vs `<=` on the prune loop's condition."""
     from collections import deque
-    from unittest.mock import patch
 
     from control_ofc.services.history_store import TimestampedReading
 
-    store = HistoryStore(max_age_s=5)
-
     # A float-exact baseline: (base + 5.0) - 5.0 must round-trip to *exactly*
-    # `base` or the "entry sits on the cutoff" premise breaks. A live
-    # time.monotonic() carries enough fractional bits that the round-trip drifts
-    # by an ULP and the boundary entry is spuriously pruned — 1000.0 is exact.
+    # `base` or the "entry sits on the cutoff" premise breaks. A live clock
+    # carries enough fractional bits that the round-trip drifts by an ULP and
+    # the boundary entry is spuriously pruned — 1000.0 is exact.
     base = 1000.0
+    # The clock reads base + 5, so cutoff = base + 5 - 5 = base.
+    store = HistoryStore(max_age_s=5, clock=lambda: base + 5.0)
 
-    # Seed two entries at known monotonic timestamps:
+    # Seed two entries at known timestamps:
     #   entry A: t = base (the future cutoff will land *exactly* here)
     #   entry B: t = base + 1 (clearly inside the window)
     store._series["sensor:cpu"] = deque(
@@ -249,31 +247,28 @@ def test_prune_boundary_keeps_entry_exactly_at_cutoff():
         ]
     )
 
-    # Patch monotonic so cutoff = base + 5 - 5 = base.
-    # Then entry A (timestamp = base) is EXACTLY at the cutoff.
-    with patch("time.monotonic", lambda: base + 5.0):
-        series = store.get_series("sensor:cpu")
-        # The strict `<` predicate keeps the entry at the cutoff.
-        assert len(series) == 2, (
-            "entry exactly at cutoff must be retained "
-            f"(strict `<`), got {len(series)} entries: {[r.value for r in series]}"
-        )
-        assert series[0].value == 10.0
-        assert series[1].value == 20.0
+    # Entry A (timestamp = base) is EXACTLY at the cutoff.
+    series = store.get_series("sensor:cpu")
+    # The strict `<` predicate keeps the entry at the cutoff.
+    assert len(series) == 2, (
+        "entry exactly at cutoff must be retained "
+        f"(strict `<`), got {len(series)} entries: {[r.value for r in series]}"
+    )
+    assert series[0].value == 10.0
+    assert series[1].value == 20.0
 
 
 def test_prune_drops_entry_just_past_cutoff():
     """Companion to the boundary test: an entry whose timestamp is even
     1 nanosecond past the cutoff must be dropped."""
     from collections import deque
-    from unittest.mock import patch
 
     from control_ofc.services.history_store import TimestampedReading
 
-    store = HistoryStore(max_age_s=5)
     # Fixed, float-exact baseline so (base + 5.0) - 5.0 == base exactly (a live
-    # time.monotonic() can drift by an ULP and move the cutoff off `base`).
+    # clock can drift by an ULP and move the cutoff off `base`).
     base = 1000.0
+    store = HistoryStore(max_age_s=5, clock=lambda: base + 5.0)
     store._series["sensor:cpu"] = deque(
         [
             TimestampedReading(timestamp=base - 0.001, value=10.0),  # past cutoff
@@ -282,10 +277,9 @@ def test_prune_drops_entry_just_past_cutoff():
     )
 
     # cutoff = base + 5 - 5 = base. Entry A is base - 0.001 < base → pruned.
-    with patch("time.monotonic", lambda: base + 5.0):
-        series = store.get_series("sensor:cpu")
-        assert len(series) == 1
-        assert series[0].value == 20.0
+    series = store.get_series("sensor:cpu")
+    assert len(series) == 1
+    assert series[0].value == 20.0
 
 
 # ---------------------------------------------------------------------------
@@ -319,11 +313,14 @@ def test_readings_since_unknown_key_is_empty():
 
 
 def test_generation_stable_across_plain_appends():
-    store = HistoryStore()
+    clock = _Clock()
+    store = HistoryStore(clock=clock)
     key = "sensor:cpu"
     assert store.generation(key) == 0
     store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
+    clock.t += 1.0
     store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=51.0, age_ms=10)])
+    assert len(store.get_series(key)) == 2  # both appended
     assert store.generation("sensor:cpu") == 0  # append-only → cache stays valid
 
 

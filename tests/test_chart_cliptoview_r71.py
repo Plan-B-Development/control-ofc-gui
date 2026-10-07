@@ -7,8 +7,6 @@ chart data is populated correctly after an update cycle.
 
 from __future__ import annotations
 
-import time
-
 import pyqtgraph as pg
 
 from control_ofc.services.history_store import HistoryStore
@@ -18,7 +16,7 @@ from control_ofc.ui.widgets.timeline_chart import TimelineChart
 
 def _seed_history(history: HistoryStore, key: str, n: int = 5, base: float = 40.0):
     """Add *n* data points to *history* for *key*."""
-    now = time.monotonic()
+    now = history.now()
     for i in range(n):
         history._append(key, now - (n - i), base + i)
 
@@ -177,7 +175,7 @@ class TestChartDataPopulated:
         for k in keys:
             selection.set_visible(k, True)
 
-        now = time.monotonic()
+        now = history.now()
         for cycle in range(5):
             history._append("sensor:cpu0", now + cycle, 45.0 + cycle)
             history._append("fan:openfan:ch00:rpm", now + cycle, 1200.0 + cycle * 10)

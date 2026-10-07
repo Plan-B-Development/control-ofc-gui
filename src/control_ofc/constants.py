@@ -76,6 +76,13 @@ CPU_HEDGE_STALE_AFTER_MS = 7000
 # History
 HISTORY_DURATION_S = 7200  # 2 hours
 
+# A chart line breaks where two consecutive samples of a series lie further apart
+# than this (GSA-i): a disconnect, a sensor that stopped refreshing, a fan that
+# lost its RPM. Samples are stamped at their sample time, so their spacing is the
+# daemon's cadence — admin-configurable up to 6 s (see CPU_HEDGE_STALE_AFTER_MS)
+# — and a tighter break would cut every segment of a healthy slow series.
+HISTORY_GAP_BREAK_S = 7.0
+
 # Curves
 DEFAULT_CURVE_POINTS = 5
 

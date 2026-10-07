@@ -8,8 +8,6 @@ removed in v2.3.0 / DEC-186.)
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from control_ofc.api.models import (
@@ -212,21 +210,21 @@ class TestChartWidget:
 
     def test_annotation_render_prune_and_cap(self, chart_sel):
         chart, _ = chart_sel
-        chart.add_annotation(time.monotonic(), "Profile: quiet")
+        chart.add_annotation(chart._history.now(), "Profile: quiet")
         chart.update_chart()
         assert len(chart._annotation_items) == 1
         # An annotation older than the window is pruned on the next render.
-        chart.add_annotation(time.monotonic() - 10_000, "ancient")
+        chart.add_annotation(chart._history.now() - 10_000, "ancient")
         chart.update_chart()
         assert all("ancient" not in lbl for _, _, lbl in chart._annotations)
         # Hard cap on retained annotations.
         for i in range(_MAX_ANNOTATIONS + 20):
-            chart.add_annotation(time.monotonic(), f"e{i}")
+            chart.add_annotation(chart._history.now(), f"e{i}")
         assert len(chart._annotations) <= _MAX_ANNOTATIONS
 
     def test_cleanup_clears_annotations_idempotent(self, chart_sel):
         chart, _ = chart_sel
-        chart.add_annotation(time.monotonic(), "x")
+        chart.add_annotation(chart._history.now(), "x")
         chart.update_chart()
         chart.cleanup()
         chart.cleanup()  # idempotent

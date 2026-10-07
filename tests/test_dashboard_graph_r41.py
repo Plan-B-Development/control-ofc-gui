@@ -86,12 +86,12 @@ _RPM_KEY = "fan:openfan:ch00:rpm"
 _ZERO_RPM_KEY = "fan:openfan:ch09:rpm"
 
 
-def _seed_flat(history: HistoryStore, key: str, value: float, n: int = 10) -> None:
-    """Append *n* points all equal to *value*, so the hover readout at any x is
-    deterministic regardless of which sample the cursor lands on."""
-    import time
-
-    now = time.monotonic()
+def _seed_flat(history: HistoryStore, key: str, value: float, n: int = 400) -> None:
+    """Append *n* 1 s-spaced points all equal to *value*, so the hover readout at
+    any x is deterministic regardless of which sample the cursor lands on. They
+    span the default 5 min window: a hover where a series has no sample omits it
+    (GSA-i), so the plot centre must fall inside the data."""
+    now = history.now()
     for i in range(n):
         history._append(key, now - (n - i), value)
 

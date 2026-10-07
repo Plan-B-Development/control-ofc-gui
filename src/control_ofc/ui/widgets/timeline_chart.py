@@ -8,7 +8,7 @@ values for all visible series at the cursor position.
 from __future__ import annotations
 
 import contextlib
-import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.constants import HISTORY_DURATION_S
+from control_ofc.constants import HISTORY_DURATION_S, HISTORY_GAP_BREAK_S
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import ChartMode
 from control_ofc.ui.components.a11y import name_value_control
@@ -64,7 +64,10 @@ _MAX_ANNOTATIONS = 40
 class _SeriesCache:
     """Append-only numpy mirror of one history series (EFF-1, 2026-07-21 audit).
 
-    ``xs``/``ys`` hold absolute monotonic timestamps/values; ``count`` is the
+    ``xs``/``ys`` hold absolute chart-time (boottime) timestamps/values; a
+    ``NaN`` value marks a break, inserted at the midpoint of any gap wider than
+    ``HISTORY_GAP_BREAK_S`` so the line stops there instead of bridging it
+    (GSA-i). The last entry is always a real sample. ``count`` is the
     valid prefix (arrays over-allocate geometrically, compacting entries older
     than the longest chart range before growing). Steady-state ticks append
     only the new tail readings and serve the visible window as a searchsorted
@@ -79,15 +82,12 @@ class _SeriesCache:
     __slots__ = ("count", "generation", "xs", "ys")
 
     def __init__(self, readings, generation: int) -> None:
-        n = len(readings)
-        cap = max(256, 2 * n)
+        cap = max(256, 2 * len(readings))
         self.xs = np.empty(cap, dtype=np.float64)
         self.ys = np.empty(cap, dtype=np.float64)
-        for i, r in enumerate(readings):
-            self.xs[i] = r.timestamp
-            self.ys[i] = r.value
-        self.count = n
+        self.count = 0
         self.generation = generation
+        self.append(readings)
 
     @property
     def last_ts(self) -> float:
@@ -95,11 +95,16 @@ class _SeriesCache:
 
     def append(self, readings) -> None:
         for r in readings:
-            if self.count == len(self.xs):
-                self._make_room()
-            self.xs[self.count] = r.timestamp
-            self.ys[self.count] = r.value
-            self.count += 1
+            if self.count and r.timestamp - self.xs[self.count - 1] > HISTORY_GAP_BREAK_S:
+                self._push((self.xs[self.count - 1] + r.timestamp) / 2, np.nan)
+            self._push(r.timestamp, r.value)
+
+    def _push(self, x: float, y: float) -> None:
+        if self.count == len(self.xs):
+            self._make_room()
+        self.xs[self.count] = x
+        self.ys[self.count] = y
+        self.count += 1
 
     def _make_room(self) -> None:
         # Compact first: drop entries older than the longest chart range,
@@ -177,7 +182,7 @@ class TimelineChart(QWidget):
         # — there is no profile/mode history to look up).
         self._ctx_profile = ""
         self._ctx_mode = ""
-        # Poll-diff event annotations (DEC-181): (id, monotonic_ts, label). Rendered
+        # Poll-diff event annotations (DEC-181): (id, chart_ts, label). Rendered
         # as scrolling vertical lines, pruned to the visible window + capped.
         self._annotations: list[tuple[int, float, str]] = []
         # id -> (vertical line, text label). A self-managed TextItem is used for
@@ -187,6 +192,9 @@ class TimelineChart(QWidget):
         # like _latest_items / _hover_label.
         self._annotation_items: dict[int, tuple[pg.InfiniteLine, pg.TextItem]] = {}
         self._annotation_seq = 0
+        # Hover series names (GSA-i): the page's resolver, so the readout names a
+        # series as the rail does. None/empty falls back to _humanize_key.
+        self._label_resolver: Callable[[str], str | None] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -579,7 +587,7 @@ class TimelineChart(QWidget):
 
     def update_chart(self) -> None:
         """Refresh the chart from history data."""
-        now = time.monotonic()
+        now = self._history.now()
         plot = self._plot_widget.getPlotItem()
         if not plot:
             return
@@ -602,6 +610,12 @@ class TimelineChart(QWidget):
 
             x, y = self._windowed_series(key, now)
             if x is None or len(x) == 0:
+                # Every sample has left the window — normal for a sensor that
+                # stopped refreshing (GSA-i). Clear what the last tick drew, or
+                # its stub and latest-value dot freeze at the left edge.
+                for items in (self._temp_items, self._rpm_items, self._latest_items):
+                    if key in items:
+                        items[key].setData([], [])
                 continue
 
             color = self.color_for_key(key)
@@ -614,7 +628,8 @@ class TimelineChart(QWidget):
                         x,
                         y,
                         pen=pen,
-                        skipFiniteCheck=True,
+                        # No skipFiniteCheck: gap breaks are NaN (GSA-i), and
+                        # the default connect="auto" draws them as breaks.
                         autoDownsample=True,
                         downsampleMethod="peak",
                         # Per-item AA smooths only the dashboard series; the
@@ -632,8 +647,9 @@ class TimelineChart(QWidget):
                 if key not in self._rpm_items:
                     # PlotCurveItem for secondary ViewBox (PlotDataItem does
                     # not render correctly on a bare ViewBox). Per-item AA as
-                    # above (DEC-068, DEC-118).
-                    item = pg.PlotCurveItem(x, y, pen=pen, antialias=True)
+                    # above (DEC-068, DEC-118). connect="finite": its default
+                    # "all" drops NaN points and bridges the gap (GSA-i).
+                    item = pg.PlotCurveItem(x, y, pen=pen, antialias=True, connect="finite")
                     self._rpm_vb.addItem(item)
                     self._rpm_items[key] = item
                 else:
@@ -687,22 +703,21 @@ class TimelineChart(QWidget):
         lines = []
         for key in visible:
             if key in self._temp_items:
-                ds = self._temp_items[key].getData()
-                if ds is None or ds[0] is None or len(ds[0]) == 0:
+                xd, yd = self._temp_items[key].getData()
+                temp = _sample_near(xd, yd, x_val)
+                if temp is None:
                     continue
-                xd, yd = ds
-                idx = int(np.clip(np.searchsorted(xd, x_val), 0, len(yd) - 1))
-                lines.append(f"{self._humanize_key(key)}: {yd[idx]:.1f}\u00b0C")
+                lines.append(f"{self._series_label(key)}: {temp:.1f}\u00b0C")
             elif key in self._rpm_items:
                 xd, yd = self._rpm_items[key].getData()
-                if xd is None or len(xd) == 0:
+                rpm = _sample_near(xd, yd, x_val)
+                if rpm is None:
                     continue
-                idx = int(np.clip(np.searchsorted(xd, x_val), 0, len(yd) - 1))
-                val = int(yd[idx])
+                val = int(rpm)
                 # Suppress 0 RPM from hover — zero-RPM idle is noise, not signal
                 if val == 0:
                     continue
-                lines.append(f"{self._humanize_key(key)}: {val} RPM")
+                lines.append(f"{self._series_label(key)}: {val} RPM")
 
         if lines:
             secs_ago = abs(x_val)
@@ -763,8 +778,21 @@ class TimelineChart(QWidget):
         self._ctx_profile = profile or ""
         self._ctx_mode = mode or ""
 
+    def set_label_resolver(self, resolver: Callable[[str], str | None] | None) -> None:
+        """Name hover series through the page's resolver (series key -> label)."""
+        self._label_resolver = resolver
+
+    def _series_label(self, key: str) -> str:
+        """The hover name for *key*: the page's label, else a fragment of the key."""
+        if self._label_resolver is not None:
+            label = self._label_resolver(key)
+            if label:
+                return label
+        return self._humanize_key(key)
+
     def _humanize_key(self, key: str) -> str:
-        """Short human label for a series key (used by the crosshair hover)."""
+        """Short fallback label for a series key, for a series the resolver
+        does not know."""
         if key.startswith("sensor:"):
             return key.removeprefix("sensor:").split(":")[-1]
         parts = key.split(":")
@@ -774,15 +802,16 @@ class TimelineChart(QWidget):
 
     # ── Event annotations (DEC-181) ──────────────────────────────────
 
-    def add_annotation(self, ts_monotonic: float, label: str) -> None:
-        """Record a poll-diff event to draw as a vertical line at ``ts_monotonic``
-        (same monotonic time-base as the series, so it lands at the right x).
+    def add_annotation(self, ts: float, label: str) -> None:
+        """Record a poll-diff event to draw as a vertical line at ``ts``, a
+        ``HistoryStore.now()`` stamp (the series' time base, so it lands at the
+        right x).
 
         Bounded to the most recent ``_MAX_ANNOTATIONS``; overflow items are torn
         down so they can never accumulate. Rendered lazily on the next
         ``update_chart`` (no immediate scene mutation from a poll handler)."""
         self._annotation_seq += 1
-        self._annotations.append((self._annotation_seq, float(ts_monotonic), str(label)))
+        self._annotations.append((self._annotation_seq, float(ts), str(label)))
         if len(self._annotations) > _MAX_ANNOTATIONS:
             overflow = self._annotations[:-_MAX_ANNOTATIONS]
             self._annotations = self._annotations[-_MAX_ANNOTATIONS:]
@@ -847,3 +876,28 @@ class TimelineChart(QWidget):
         for ann_id in list(self._annotation_items):
             self._remove_annotation_item(ann_id)
         self._annotations.clear()
+
+
+def _sample_near(xd, yd, x: float) -> float | None:
+    """The value a hover at *x* reports for one series, or None to omit it (GSA-i).
+
+    Between two samples, the nearer one — unless either is a NaN break, which
+    means *x* sits in a gap and no sample describes it. Beyond either end of the
+    data, the end sample only while it is within half a break width, so a hover
+    left of a series' first point does not report that point as its past.
+    """
+    if xd is None or yd is None or len(xd) == 0:
+        return None
+    n = len(xd)
+    hi = int(np.searchsorted(xd, x, side="left"))
+    if 0 < hi < n:
+        lo = hi - 1
+        if not (np.isfinite(yd[lo]) and np.isfinite(yd[hi])):
+            return None
+        idx = lo if x - xd[lo] <= xd[hi] - x else hi
+    else:
+        idx = 0 if hi == 0 else n - 1
+        if abs(xd[idx] - x) > HISTORY_GAP_BREAK_S / 2:
+            return None
+    value = float(yd[idx])
+    return value if np.isfinite(value) else None

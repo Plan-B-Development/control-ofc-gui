@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -626,6 +625,8 @@ class DashboardPage(QWidget):
         if self._settings_service:
             self._sensor_panel.hide_igpu = self._settings_service.settings.hide_igpu_sensors
         self._sensor_panel.set_chart(self._chart, self._settings_service)
+        # GSA-i: the hover readout names a series exactly as the rail row does.
+        self._chart.set_label_resolver(self._sensor_panel.label_for_series_key)
         self._inspector = DashboardInspector(self._sensor_panel)
         self._h_splitter.addWidget(self._inspector)
 
@@ -783,8 +784,8 @@ class DashboardPage(QWidget):
         )
 
     def _annotate(self, label: str) -> None:
-        """Add a poll-diff event line to the chart at the current monotonic time."""
-        self._chart.add_annotation(time.monotonic(), label)
+        """Add a poll-diff event line to the chart at the current chart time."""
+        self._chart.add_annotation(self._history.now(), label)
 
     def _on_capabilities_updated(self, caps: Capabilities) -> None:
         vm = build_capabilities_vm(caps)

@@ -133,9 +133,17 @@ The **Range** dropdown selects the time window:
 | 1h, 2h | Reviewing longer-term patterns |
 
 The default time range (15m) is configurable in Settings. Each visible series carries a
-coloured **latest-value marker** on the right edge, and **hovering** the chart shows a
-crosshair and a themed tooltip listing every series value at that moment. The
-tooltip-plate and crosshair colours are themeable on the **Theme** page.
+coloured **latest-value marker** at its newest reading, and **hovering** the chart shows a
+crosshair and a themed tooltip listing each visible series' reading at that moment, named
+as in the Sensors panel. A series with no reading there — before it started, or in a gap —
+is left out rather than reporting a neighbouring one. The tooltip-plate and crosshair
+colours are themeable on the **Theme** page.
+
+Readings are placed at the time the daemon took them. A sensor the daemon stops
+refreshing adds no new points, so its line ends where its data ends; a line also breaks
+across a gap of more than about seven seconds (a disconnect, or a fan that stopped
+reporting RPM). The time axis keeps counting while the computer sleeps, so after a resume
+the readings from before it sit where they belong — or have aged out of the window.
 
 ## Sensors panel
 
@@ -145,7 +153,10 @@ searchable tree of every **sensor and fan**, grouped
 into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboard, Disk,
 and Fans (by source: D-GPU, hwmon, OpenFan). Liquid-cooler pump and radiator fans are
 tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's checkbox to
-show/hide its line on the chart; toggle a whole group to declutter. Hidden series persist
+show/hide its line on the chart; toggle a whole group to declutter. A reading the daemon
+has not refreshed for more than about seven seconds — where its chart line breaks — is
+marked **· stale** (hover the value to see how old it is), and a group's **max** counts
+only current readings — **max —** when none are. Hidden series persist
 across sessions — including for a fan that is currently stopped or a device that is
 switched off, which come back hidden rather than reappearing on the chart. Nothing is
 forgotten automatically; **Settings → "Settings for missing hardware"** is what clears

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.widgets.timeline_chart import TimelineChart
@@ -19,7 +17,7 @@ class TestChartableKeysFallback:
         qtbot.addWidget(chart)
 
         # Add data to history but don't seed selection
-        history._append("sensor:cpu0", time.monotonic(), 45.0)
+        history._append("sensor:cpu0", history.now(), 45.0)
 
         keys = chart._chartable_keys()
         assert "sensor:cpu0" in keys
@@ -30,8 +28,8 @@ class TestChartableKeysFallback:
         chart = TimelineChart(history, selection=selection)
         qtbot.addWidget(chart)
 
-        history._append("sensor:cpu0", time.monotonic(), 45.0)
-        history._append("sensor:igpu", time.monotonic(), 30.0)
+        history._append("sensor:cpu0", history.now(), 45.0)
+        history._append("sensor:igpu", history.now(), 30.0)
         selection.update_known_keys(["sensor:cpu0"])  # Only cpu0
 
         keys = chart._chartable_keys()
@@ -43,7 +41,7 @@ class TestChartableKeysFallback:
         chart = TimelineChart(history, selection=None)
         qtbot.addWidget(chart)
 
-        history._append("sensor:cpu0", time.monotonic(), 45.0)
+        history._append("sensor:cpu0", history.now(), 45.0)
 
         keys = chart._chartable_keys()
         assert "sensor:cpu0" in keys

@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **The dashboard chart no longer shows a frozen sensor as live.** Every reading was plotted as taken
+  "now" however old it was, so a sensor the daemon had stopped refreshing kept drawing a flat line at its
+  last value and counted in its group's **max**. Readings are now placed at the time the daemon took
+  them: a frozen sensor's line stops where its data stops, its row in the Sensors panel is marked
+  **· stale**, and it is left out of the group max. A gap of more than about seven seconds (a disconnect,
+  a fan that lost its RPM) now breaks the line instead of joining it with a straight segment, the hover
+  tooltip leaves out a series with no reading under the cursor instead of reporting a neighbouring one,
+  and it names each series as the Sensors panel does.
+- **The chart keeps time across sleep.** Its clock paused while the computer was suspended, so readings
+  from before a sleep were drawn as seconds old, outlived the two-hour history, and the daemon's history
+  sent after a resume was drawn a second time beside them. The chart now counts sleep time, so those
+  readings sit where they belong and the daemon's copy fills only the gaps.
 - **The support bundle no longer carries your OpenFAN board's serial number or your disk ids.** The
   daemon journal it includes named the board's USB serial — in a `/dev/serial/by-id/` port name and when a
   board came back after a firmware update — and the bundle copied the whole kernel command line, with its

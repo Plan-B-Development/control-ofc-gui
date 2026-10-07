@@ -122,7 +122,7 @@ class TestWindowedSeriesParity:
     def test_incremental_ticks_match_naive(self, qtbot):
         store = HistoryStore()
         key = "sensor:cpu"
-        base = time.monotonic()
+        base = store.now()
         _seed(store, key, _readings(*[(base + i, 40.0 + i) for i in range(10)]))
         chart = self._chart(qtbot, store)
 
@@ -144,14 +144,14 @@ class TestWindowedSeriesParity:
         store = HistoryStore()
         store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=55.0, age_ms=10)])
         chart = self._chart(qtbot, store)
-        now = time.monotonic()
+        now = store.now()
         assert chart._windowed_series("sensor:cpu", now)[0] is not None  # cache built
 
         now_ms = int(time.time() * 1000)
         store.prefill_sensor(
             "cpu", [HistoryPoint(ts=now_ms - 3000, v=40.0), HistoryPoint(ts=now_ms - 2000, v=42.0)]
         )
-        x, y = chart._windowed_series("sensor:cpu", time.monotonic())
+        x, y = chart._windowed_series("sensor:cpu", store.now())
         assert len(x) == 3, "merged prefill points must reach the plotted window"
         assert list(y) == [40.0, 42.0, 55.0]
         chart.cleanup()
@@ -160,9 +160,9 @@ class TestWindowedSeriesParity:
         store = HistoryStore()
         store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=55.0, age_ms=10)])
         chart = self._chart(qtbot, store)
-        assert chart._windowed_series("sensor:cpu", time.monotonic())[0] is not None
+        assert chart._windowed_series("sensor:cpu", store.now())[0] is not None
         store.clear()
-        x, y = chart._windowed_series("sensor:cpu", time.monotonic())
+        x, y = chart._windowed_series("sensor:cpu", store.now())
         assert x is None and y is None
         assert "sensor:cpu" not in chart._series_cache  # dropped, not stale
         chart.cleanup()
@@ -170,7 +170,8 @@ class TestWindowedSeriesParity:
 
 class TestChartIntegration:
     def test_update_chart_plots_windowed_data_incrementally(self, qtbot):
-        store = HistoryStore()
+        t = [1000.0]
+        store = HistoryStore(clock=lambda: t[0])
         store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=50.0, age_ms=10)])
         chart = TimelineChart(store)
         qtbot.addWidget(chart)
@@ -179,6 +180,7 @@ class TestChartIntegration:
         _, y = chart._temp_items["sensor:cpu"].getOriginalDataset()
         assert list(y) == [50.0]
 
+        t[0] += 1.0  # the next 1 Hz poll
         store.record_sensors([SensorReading(id="cpu", kind="cpu_temp", value_c=51.0, age_ms=10)])
         chart.update_chart()  # steady-state incremental tick
         _, y = chart._temp_items["sensor:cpu"].getOriginalDataset()

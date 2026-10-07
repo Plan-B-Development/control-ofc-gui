@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import FanReading, SensorReading
+from control_ofc.constants import HISTORY_GAP_BREAK_S
 from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
 from control_ofc.services.app_state import AIO_SUFFIX
 from control_ofc.services.series_selection import SeriesSelectionModel
@@ -62,6 +63,38 @@ _GROUP_ORDER = [
 # their own, so callers slice these off rather than splitting on ":".
 _FAN_KEY_PREFIX = "fan:"
 _FAN_KEY_SUFFIX = ":rpm"
+_SENSOR_KEY_PREFIX = "sensor:"
+
+# GSA-i: a reading the daemon has stopped refreshing is marked, never shown as
+# current. "Stopped" is judged on the chart's own break width, not
+# `Freshness.FRESH`'s 2 s: the daemon cadence is admin-configurable up to 6 s, at
+# which a healthy reading is older than 2 s for two thirds of every cycle (the
+# DEC-270 lesson, see CPU_HEDGE_STALE_AFTER_MS). So a row is marked exactly when
+# its chart line breaks.
+_STALE_SUFFIX = " \u00b7 stale"
+
+
+def _is_stale(reading: SensorReading | FanReading) -> bool:
+    return reading.age_ms / 1000 > HISTORY_GAP_BREAK_S
+
+
+def _value_text(text: str, reading: SensorReading | FanReading) -> str:
+    return f"{text}{_STALE_SUFFIX}" if _is_stale(reading) else text
+
+
+def _value_tooltip(reading: SensorReading | FanReading) -> str:
+    if not _is_stale(reading):
+        return ""
+    return f"No new reading for {reading.age_ms / 1000:.0f} s"
+
+
+def _sensor_value_text(s: SensorReading) -> str:
+    return _value_text(f"{s.value_c:.1f}\u00b0C", s)
+
+
+def _fan_value_text(f: FanReading) -> str:
+    return _value_text(f"{f.rpm} RPM", f) if f.rpm is not None else "\u2014"
+
 
 _GROUP_LABELS = {
     "cpu": "CPU",
@@ -320,13 +353,13 @@ class SensorSeriesPanel(QFrame):
                 group_key, group_label = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))
                 group_item = self._ensure_group(group_key, group_label)
 
-                series_key = f"sensor:{s.id}"
+                series_key = f"{_SENSOR_KEY_PREFIX}{s.id}"
                 label = s.label or s.id
-                value = f"{s.value_c:.1f}\u00b0C"
 
                 item = QTreeWidgetItem(group_item)
                 item.setText(0, label)
-                item.setText(1, value)
+                item.setText(1, _sensor_value_text(s))
+                item.setToolTip(1, _value_tooltip(s))
                 item.setToolTip(0, self._build_sensor_tooltip(s))
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -353,13 +386,19 @@ class SensorSeriesPanel(QFrame):
         for s in sensors:
             item = self._sensor_items.get(s.id)
             if item:
-                value = f"{s.value_c:.1f}\u00b0C"
+                value = _sensor_value_text(s)
                 if item.text(1) != value:
                     item.setText(1, value)
                 item.setToolTip(0, self._build_sensor_tooltip(s))
+                item.setToolTip(1, _value_tooltip(s))
 
     def _update_group_summaries(self, sensors: list[SensorReading]) -> None:
-        """Update group header text with count and max value."""
+        """Update group header text with count and max value.
+
+        The max is over current readings only (GSA-i): a stale sensor's last
+        value is not the group's current maximum. With none current it reads
+        "max —".
+        """
         # Group sensors by group key
         groups: dict[str, list[SensorReading]] = {}
         for s in sensors:
@@ -374,10 +413,10 @@ class SensorSeriesPanel(QFrame):
                 group_item = self._group_items.get(group_key)
                 if group_item:
                     count = len(group_sensors)
-                    max_val = max(s.value_c for s in group_sensors)
+                    fresh = [s.value_c for s in group_sensors if not _is_stale(s)]
                     label = _GROUP_LABELS.get(group_key, group_key)
                     group_item.setText(0, f"{label} ({count})")
-                    group_item.setText(1, f"max {max_val:.1f}\u00b0C")
+                    group_item.setText(1, f"max {max(fresh):.1f}\u00b0C" if fresh else "max \u2014")
 
     def _build_sensor_tooltip(self, s: SensorReading) -> str:
         """Build a rich tooltip using the sensor knowledge base."""
@@ -444,6 +483,20 @@ class SensorSeriesPanel(QFrame):
         if key.startswith(_FAN_KEY_PREFIX) and key.endswith(_FAN_KEY_SUFFIX):
             return key[len(_FAN_KEY_PREFIX) : -len(_FAN_KEY_SUFFIX)]
         return ""
+
+    def label_for_series_key(self, key: str) -> str | None:
+        """The row name shown for a chart series key, or None if no row has it.
+
+        The chart's hover readout names series through this (GSA-i), so it
+        carries the sensor label, fan alias and "(AIO)" tag the rail shows.
+        """
+        if key.startswith(_SENSOR_KEY_PREFIX):
+            item = self._sensor_items.get(key[len(_SENSOR_KEY_PREFIX) :])
+        elif key.startswith(_FAN_KEY_PREFIX) and key.endswith(_FAN_KEY_SUFFIX):
+            item = self._fan_items.get(key[len(_FAN_KEY_PREFIX) : -len(_FAN_KEY_SUFFIX)])
+        else:
+            item = None
+        return item.text(0) if item is not None else None
 
     def fan_id_for_index(self, index: QModelIndex) -> str:
         """Fan id behind a model index, or "" if it is not a fan row."""
@@ -534,11 +587,11 @@ class SensorSeriesPanel(QFrame):
                 group_item = self._ensure_group(group_key, group_label)
 
                 series_key = f"{_FAN_KEY_PREFIX}{f.id}{_FAN_KEY_SUFFIX}"
-                rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
 
                 item = QTreeWidgetItem(group_item)
                 item.setText(0, self._fan_row_label(f.id))
-                item.setText(1, rpm_text)
+                item.setText(1, _fan_value_text(f))
+                item.setToolTip(1, _value_tooltip(f))
                 item.setToolTip(0, f"ID: {f.id}\nDouble-click or press F2 to rename")
                 item.setData(0, Qt.ItemDataRole.UserRole, series_key)
                 # DEC-227: fan rows are renamable in place; sensor rows are not
@@ -565,9 +618,10 @@ class SensorSeriesPanel(QFrame):
         for f in fans:
             item = self._fan_items.get(f.id)
             if item:
-                rpm_text = f"{f.rpm} RPM" if f.rpm is not None else "\u2014"
+                rpm_text = _fan_value_text(f)
                 if item.text(1) != rpm_text:
                     item.setText(1, rpm_text)
+                item.setToolTip(1, _value_tooltip(f))
                 # Re-resolve the name in case an alias changed. Must go through
                 # _fan_row_label \u2014 recomputing a bare fan_display_name here is
                 # what used to erase the "(AIO)" tag on the second poll.

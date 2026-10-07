@@ -18,8 +18,6 @@ All deterministic and hardware-free.
 
 from __future__ import annotations
 
-import time
-
 import pyqtgraph as pg
 from PySide6.QtGui import QColor
 
@@ -40,7 +38,7 @@ RPM_KEY = "fan:openfan:ch00:rpm"
 
 def _seed_history(history: HistoryStore, key: str, n: int = 10, base: float = 40.0) -> None:
     """Append *n* points (base, base+1, …) for *key*; last value is base+n-1."""
-    now = time.monotonic()
+    now = history.now()
     for i in range(n):
         history._append(key, now - (n - i), base + i)
 
@@ -86,7 +84,7 @@ class TestPerItemAntialiasing:
         """Guards a future refactor that recreates items each cycle without
         re-passing antialias=True (the current setData(x, y) path keeps it)."""
         chart, history, _ = _make_chart(qtbot, {TEMP_KEY: 45.0})
-        history._append(TEMP_KEY, time.monotonic(), 99.0)
+        history._append(TEMP_KEY, history.now(), 99.0)
         chart.update_chart()
         assert chart._temp_items[TEMP_KEY].opts["antialias"] is True
 
