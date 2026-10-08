@@ -833,7 +833,8 @@ class _OpenFanFirmwareWorker(_SocketWorker):
     began; ``start_unconfirmed`` when no answer came — a timeout or a lost
     connection — and the request may have started a run all the same. A failed
     read after a ``202`` is ``run_error``: the run is the daemon's, and the next
-    poll finds it.
+    poll finds it. A cancel the daemon refused or never answered is
+    ``cancel_failed``, apart from a failed read, so the window can offer it again.
 
     DEC-483: ``do_stage`` hands the daemon the checked file's bytes and answers
     ``staged`` with its verdict, or ``stage_failed`` naming the file by its
@@ -853,6 +854,7 @@ class _OpenFanFirmwareWorker(_SocketWorker):
     started = Signal(str)  # the run id the daemon's 202 named
     start_failed = Signal(str, str)  # category, message
     start_unconfirmed = Signal(str, str)  # category, message
+    cancel_failed = Signal(str, str)  # category, message
 
     def _guard(self, call, what: str, emit_error) -> None:
         from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
@@ -992,12 +994,19 @@ class _OpenFanFirmwareWorker(_SocketWorker):
 
     @Slot()
     def do_cancel(self) -> None:
+        cancelled = False
+
         def call() -> None:
+            nonlocal cancelled
             client = self._ensure_client()
             client.cancel_openfan_maintenance()
+            cancelled = True
             self.run_updated.emit(client.openfan_maintenance_status())
 
-        self._guard(call, "cancellation", self.run_error.emit)
+        def failed(category: str, message: str) -> None:
+            (self.run_error if cancelled else self.cancel_failed).emit(category, message)
+
+        self._guard(call, "cancellation", failed)
 
 
 class _ValidationWorker(_SocketWorker):

@@ -593,13 +593,16 @@ class TestClient:
 
 
 class _FakeClient:
-    def __init__(self, *, start_error=None, status_error=None, no_run=False) -> None:
+    def __init__(
+        self, *, start_error=None, status_error=None, no_run=False, cancel_error=None
+    ) -> None:
         self.calls: list[str] = []
         self.staged = None
         self.stage_error = None
         self._start_error = start_error
         self._status_error = status_error
         self._no_run = no_run
+        self._cancel_error = cancel_error
 
     def openfan_device(self):
         self.calls.append("device")
@@ -626,6 +629,8 @@ class _FakeClient:
 
     def cancel_openfan_maintenance(self):
         self.calls.append("cancel")
+        if self._cancel_error:
+            raise self._cancel_error
 
 
 def _worker(fake) -> tuple[_OpenFanFirmwareWorker, dict]:
@@ -638,12 +643,14 @@ def _worker(fake) -> tuple[_OpenFanFirmwareWorker, dict]:
         "device": [],
         "started": [],
         "unconfirmed": [],
+        "cancel_failed": [],
     }
     worker.run_updated.connect(got["run"].append)
     worker.run_error.connect(lambda c, m: got["run_error"].append((c, m)))
     worker.start_failed.connect(lambda c, m: got["start_failed"].append((c, m)))
     worker.started.connect(got["started"].append)
     worker.start_unconfirmed.connect(lambda c, m: got["unconfirmed"].append((c, m)))
+    worker.cancel_failed.connect(lambda c, m: got["cancel_failed"].append((c, m)))
     worker.device_ready.connect(got["device"].append)
     return worker, got
 
@@ -700,6 +707,22 @@ class TestWorker:
         worker.do_device()
         assert fake.calls == ["cancel", "status", "device"]
         assert len(got["run"]) == 1 and got["device"][0].usb.serial == SERIAL
+        assert got["cancel_failed"] == [] and got["run_error"] == []
+
+    def test_a_refused_cancel_is_told_apart_from_a_failed_read(self, qapp):
+        refusal = DaemonError(code="conflict", message="past the point", status=409)
+        worker, got = _worker(_FakeClient(cancel_error=refusal))
+        worker.do_cancel()
+        assert got["cancel_failed"] == [("error", "past the point")]
+        assert got["run_error"] == [] and got["run"] == []
+
+    def test_a_failed_read_after_a_cancel_is_not_a_failed_cancel(self, qapp):
+        worker, got = _worker(
+            _FakeClient(status_error=DaemonError(code="internal", message="boom", status=500))
+        )
+        worker.do_cancel()
+        assert got["run_error"] == [("error", "boom")]
+        assert got["cancel_failed"] == [], "the daemon took the cancel"
 
 
 # ── DEC-482: one alert for the update ────────────────────────────────────────
@@ -959,10 +982,12 @@ class TestWindowFollowsARun:
         assert text.startswith("The update start ended with an unexpected error")
         assert "log). The update may have started" in text
 
-    def test_a_start_with_no_answer_and_no_run_fails_on_a_fresh_answer(
+    def test_a_start_with_no_answer_and_no_run_fails_once_it_had_time(
         self, qtbot, tmp_path, monkeypatch
     ):
         dialog = _ready(qtbot, tmp_path, monkeypatch)
+        clock = [NOW]
+        dialog._now_ms = lambda: clock[0]
         old = _finished("no_firmware_change", run_id="old", started_unix_ms=NOW - 9)
         dialog.apply_run(old)
         dialog._confirm.setChecked(True)
@@ -970,12 +995,25 @@ class TestWindowFollowsARun:
         status = dialog.findChild(QLabel, "OfwDialog_Label_status")
         start.click()
         dialog.apply_start_unconfirmed("unavailable", "The daemon did not answer in time.")
-        # This answer may be to a poll sent before the start reached the daemon.
-        dialog.apply_run(old)
-        assert "may have started" in status.text() and start.isEnabled() is False
+        # A daemon still working on the start can make the run after answering
+        # these: every answer inside the wait leaves it open.
+        for _ in range(5):
+            clock[0] += dlg_mod.UNCONFIRMED_WAIT_MS // 5 - 1
+            dialog.apply_run(old)
+            assert "may have started" in status.text() and start.isEnabled() is False
+        clock[0] = NOW + dlg_mod.UNCONFIRMED_WAIT_MS
         dialog.apply_run(old)
         assert "did not start" in status.text()
         assert start.isEnabled() is True and dialog.mode == dlg_mod.MODE_SETUP
+
+    def test_a_refusal_of_no_start_of_this_window_is_ignored(self, qtbot, tmp_path, monkeypatch):
+        dialog = _ready(qtbot, tmp_path, monkeypatch)
+        dialog._confirm.setChecked(True)
+        start = dialog.findChild(QPushButton, "OfwDialog_Btn_start")
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        assert start.isEnabled() is True, "precondition: not starting"
+        dialog.apply_start_error("unavailable", "a calibration runs")
+        assert not status.isVisibleTo(dialog) and dialog.mode == dlg_mod.MODE_SETUP
 
     def test_a_window_opened_mid_update_picks_it_up(self, qtbot, tmp_path):
         dialog = _dialog(qtbot, tmp_path)
@@ -1025,11 +1063,65 @@ class TestWindowFollowsARun:
         dialog.apply_run(_record(stage="parking", cancellable=True))
         button.click()
         assert button.isEnabled() is False
-        dialog.apply_run_error("error", "the daemon did not answer")
+        dialog.apply_cancel_error("unavailable", "the daemon did not answer")
         assert button.isEnabled() is True, "a cancel lost in transit can be retried"
+        button.click()
         dialog.apply_run(_record(stage="entering_bootloader", cancellable=False))
-        dialog.apply_run_error("error", "the update is past the point where it can be stopped")
+        dialog.apply_cancel_error("error", "the update is past the point where it can be stopped")
         assert button.isEnabled() is False
+
+    def test_cancel_stays_off_while_a_cancel_stands(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        button = dialog.findChild(QPushButton, "OfwDialog_Btn_cancel")
+        cancellable = _record(stage="parking", cancellable=True)
+        dialog.apply_run(cancellable)
+        assert button.isEnabled() is True, "precondition: the run offers Cancel"
+        button.click()
+        dialog.apply_run(cancellable)
+        assert button.isEnabled() is False, "the daemon took it; the run has yet to stop"
+        dialog.apply_run_error("unavailable", "Daemon unavailable during the status read.")
+        assert button.isEnabled() is False, "a failed read is not a failed cancel"
+
+    def test_a_failed_read_is_cleared_by_the_next_good_one(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        dialog.apply_run(_record())
+        dialog.apply_run_error("unavailable", "Daemon unavailable during the status read.")
+        assert status.text().startswith("Daemon unavailable") and status.isVisibleTo(dialog)
+        dialog.apply_run(_record())
+        assert not status.isVisibleTo(dialog)
+
+    def test_a_failed_read_during_a_cancel_gives_way_to_it_again(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        cancellable = _record(stage="parking", cancellable=True)
+        dialog.apply_run(cancellable)
+        dialog.findChild(QPushButton, "OfwDialog_Btn_cancel").click()
+        dialog.apply_run_error("unavailable", "Daemon unavailable during the status read.")
+        assert status.text().startswith("Daemon unavailable")
+        dialog.apply_run(cancellable)
+        assert status.text() == "Cancelling…"
+
+    def test_a_failed_cancel_stands_until_the_run_ends(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        dialog.apply_run(_record(stage="parking", cancellable=True))
+        dialog.findChild(QPushButton, "OfwDialog_Btn_cancel").click()
+        dialog.apply_cancel_error("error", "past the point")
+        dialog.apply_run(_record(stage="entering_bootloader", cancellable=False))
+        assert status.text() == "past the point", "a read does not answer for the cancel"
+        dialog.apply_run(_finished("firmware_copied_board_not_back"))
+        assert not status.isVisibleTo(dialog), "the result says what became of the run"
+        dialog.apply_cancel_error("unavailable", "late")
+        assert not status.isVisibleTo(dialog), "a cancel answered after the end is moot"
+
+    def test_a_failed_controller_read_is_cleared_by_the_next_good_one(self, qtbot, tmp_path):
+        dialog = _dialog(qtbot, tmp_path)
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        dialog.apply_device_error("unavailable", "Daemon unavailable.")
+        assert "could not be read" in status.text() and status.isVisibleTo(dialog)
+        dialog.apply_device(_device())
+        assert not status.isVisibleTo(dialog)
 
     def test_the_end_shows_the_result_and_stops_polling(self, qtbot, tmp_path):
         dialog = _dialog(qtbot, tmp_path)
@@ -1182,6 +1274,25 @@ class TestHardwarePage:
         assert len(page.findChildren(OpenFanFirmwareDialog)) == 1
         first.findChild(QPushButton, "OfwDialog_Btn_close").click()
         assert page._ofw_dialog is None
+
+    def test_a_failed_cancel_reaches_the_window(self, qtbot, monkeypatch, tmp_path):
+        page = _page(qtbot)
+        fake = _FakeClient()
+
+        def ensure(_worker, _thread, cls, connect):
+            # The real wiring, minus the thread: queued calls run on this one.
+            worker = cls("/nonexistent.sock")
+            worker._client = fake
+            connect(worker)
+            return worker, None, True
+
+        monkeypatch.setattr(page, "_ensure_worker", ensure)
+        _button(page).click()
+        dialog = page._ofw_dialog
+        qtbot.waitUntil(lambda: dialog.mode == dlg_mod.MODE_RUN)
+        page._ofw_worker.cancel_failed.emit("error", "past the point")
+        status = dialog.findChild(QLabel, "OfwDialog_Label_status")
+        qtbot.waitUntil(lambda: status.text() == "past the point")
 
     def test_runs_reach_the_window_and_the_support_bundle(self, qtbot, monkeypatch, tmp_path):
         page = _page(qtbot)

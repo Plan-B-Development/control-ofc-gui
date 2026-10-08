@@ -52,6 +52,7 @@ from control_ofc.api.models import (
     OpenFanMaintenanceSummary,
     OpenFanSilentBoardEntry,
 )
+from control_ofc.constants import API_TIMEOUT_S
 from control_ofc.services.openfan_firmware_view import (
     BOARD_CONNECTED,
     CANCEL_TOO_LATE,
@@ -105,6 +106,15 @@ from control_ofc.ui.components.tables import apply_dense_table
 from control_ofc.ui.qt_util import set_chip_class
 
 POLL_INTERVAL_MS = 1000
+#: How long a start that got no answer is checked for before it is called
+#: "did not start": twice the request's own timeout, for a daemon that was
+#: still working on it when the GUI stopped waiting.
+UNCONFIRMED_WAIT_MS = int(2 * API_TIMEOUT_S * 1000)
+
+#: What a status-line error is about, and so which answer clears it.
+_ERR_READ = "read"  # a status read: the next one that succeeds
+_ERR_DEVICE = "device"  # a controller read: the next one that succeeds
+_ERR_CANCEL = "cancel"  # a cancel: the run's end, or the next cancel
 
 MODE_SETUP = "setup"
 MODE_RUN = "run"
@@ -261,11 +271,17 @@ class OpenFanFirmwareDialog(ModalDialog):
         #: The start got no answer and may have made a run anyway: the daemon's
         #: next answers decide (``apply_run``).
         self._unconfirmed = False
-        self._unconfirmed_misses = 0
+        self._unconfirmed_ms = 0
         self._poll_in_flight = False
-        #: Cancel was clicked for the run this window follows: until that run
-        #: ends, the status line says what became of the cancel.
+        #: Cancel was clicked for the run this window follows and the daemon
+        #: did not refuse it: until that run ends, Cancel stays off and the
+        #: status line says what became of the cancel.
         self._cancel_sent = False
+        #: The status line: a note about the window's own step, and over it an
+        #: error the answer named by ``_error_source`` clears.
+        self._note = ""
+        self._error = ""
+        self._error_source = ""
         self._last_record: OpenFanMaintenanceRecord | None = None
 
         body = self.body_layout()
@@ -515,6 +531,7 @@ class OpenFanFirmwareDialog(ModalDialog):
     @Slot(object)
     def apply_device(self, device: OpenFanDevice) -> None:
         self._device = device
+        self._clear_error(_ERR_DEVICE)
         self._render_device()
         self._render_findings()
         self._render_write_plan()
@@ -522,7 +539,7 @@ class OpenFanFirmwareDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_device_error(self, _category: str, message: str) -> None:
-        self._show_status(f"The controller could not be read: {message}")
+        self._show_error(_ERR_DEVICE, f"The controller could not be read: {message}")
 
     def _board(self) -> str:
         """Which board an update started now is for (DEC-484)."""
@@ -710,7 +727,6 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._start_clicked_ms = self._now_ms()
         self._started_run_id = ""
         self._unconfirmed = False
-        self._unconfirmed_misses = 0
         self._show_status("Starting…")
         self._refresh_start()
         write = self._data if self._plan().method == WRITE_DAEMON else None
@@ -729,7 +745,13 @@ class OpenFanFirmwareDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_start_error(self, _category: str, message: str) -> None:
-        """The daemon answered and refused the start: nothing began."""
+        """The daemon answered and refused the start: nothing began.
+
+        Only while this window is starting: one reopened since, or a run the
+        poll already found, is not this refusal's.
+        """
+        if not self._starting:
+            return
         self._end_start(f"The update did not start: {message}")
 
     @Slot(str, str)
@@ -738,7 +760,7 @@ class OpenFanFirmwareDialog(ModalDialog):
         if not self._starting:
             return  # a poll has already found the run this Start made
         self._unconfirmed = True
-        self._unconfirmed_misses = 0
+        self._unconfirmed_ms = self._now_ms()
         # A sentence from the transport, or the backstop's bare clause.
         said = message.rstrip(".")
         said = said[:1].upper() + said[1:]
@@ -789,14 +811,16 @@ class OpenFanFirmwareDialog(ModalDialog):
     def apply_run(self, record: OpenFanMaintenanceRecord | None) -> None:
         """Render the daemon's current or last run. ``None``: it has none."""
         self._poll_in_flight = False
+        self._clear_error(_ERR_READ)
         if self._starting:
             if record is None or not self._is_this_start(record):
-                if self._unconfirmed:
-                    # The first answer may be to a poll sent before the start
-                    # reached the daemon; a second, sent after it, settles it.
-                    self._unconfirmed_misses += 1
-                    if self._unconfirmed_misses >= 2:
-                        self._end_start("The update did not start: the daemon has no run from it.")
+                # A daemon still working on the start when the GUI stopped
+                # waiting can make the run after answering a later poll, so a
+                # miss settles it only once that has had time to happen.
+                if self._unconfirmed and (
+                    self._now_ms() - self._unconfirmed_ms >= UNCONFIRMED_WAIT_MS
+                ):
+                    self._end_start("The update did not start: the daemon has no run from it.")
                 return
             self._starting = False
             self._unconfirmed = False
@@ -832,19 +856,39 @@ class OpenFanFirmwareDialog(ModalDialog):
 
     @Slot(str, str)
     def apply_run_error(self, _category: str, message: str) -> None:
-        """A failed read or cancel. A followed run is the daemon's: keep polling.
+        """A failed read. A followed run is the daemon's: keep polling.
+
+        The error stands until a read succeeds.
+        """
+        self._poll_in_flight = False
+        self._cancel_btn.setEnabled(self._can_cancel())
+        if self._unconfirmed:
+            message = f"Still checking whether the update started: {message}"
+        self._show_error(_ERR_READ, message)
+
+    @Slot(str, str)
+    def apply_cancel_error(self, _category: str, message: str) -> None:
+        """The cancel was refused or got no answer, so the run goes on.
 
         Cancel comes back only while the run last seen was still cancellable, so
         a cancel refused as too late is not offered again.
         """
-        self._poll_in_flight = False
+        self._cancel_sent = False
+        if self._mode != MODE_RUN:
+            return  # the run ended first, and its result says what became of it
+        self._cancel_btn.setEnabled(self._can_cancel())
+        self._show_status("")  # no longer "Cancelling…"
+        self._show_error(_ERR_CANCEL, message)
+
+    def _can_cancel(self) -> bool:
+        """Cancel is offered: the run last seen allows it and none is pending."""
         record = self._last_record
-        self._cancel_btn.setEnabled(
-            self._mode == MODE_RUN and record is not None and record.cancellable
+        return (
+            self._mode == MODE_RUN
+            and record is not None
+            and record.cancellable
+            and not self._cancel_sent
         )
-        if self._unconfirmed:
-            message = f"Still checking whether the update started: {message}"
-        self._show_status(message)
 
     def _render_last(self) -> None:
         record = self._last_record
@@ -878,12 +922,14 @@ class OpenFanFirmwareDialog(ModalDialog):
             self._render_prepared(path, missing_sha="" if path else sha)
         else:
             self._prepared_box.setVisible(False)
-        self._cancel_btn.setEnabled(view.can_cancel)
+        self._cancel_btn.setEnabled(view.can_cancel and not self._cancel_sent)
         self._cancel_btn.setToolTip(
             ""
             if view.can_cancel
             else "Once the board is asked to enter update mode, the update cannot be cancelled."
         )
+        if not view.running:
+            self._clear_error(_ERR_CANCEL)
         if self._cancel_sent:
             if not view.running:
                 # The result says what became of it.
@@ -1003,6 +1049,26 @@ class OpenFanFirmwareDialog(ModalDialog):
         self._refresh_start()
 
     def _show_status(self, text: str) -> None:
+        """Say where this window's own step stands; it replaces any error."""
+        self._note = text
+        self._error = ""
+        self._error_source = ""
+        self._render_status()
+
+    def _show_error(self, source: str, text: str) -> None:
+        """Show a failure over the note, until *source*'s next success."""
+        self._error = text
+        self._error_source = source
+        self._render_status()
+
+    def _clear_error(self, source: str) -> None:
+        if self._error_source == source:
+            self._error = ""
+            self._error_source = ""
+            self._render_status()
+
+    def _render_status(self) -> None:
+        text = self._error or self._note
         self._status.setText(text)
         self._status.setVisible(bool(text))
 

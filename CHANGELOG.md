@@ -13,6 +13,11 @@
   sensor table now flags only a live reading at or above the sensor's critical threshold, and the sensor
   detail dialog marks the alarm and fault bits *(at daemon start)*.
 
+- **The OpenFAN firmware window no longer keeps a stale error.** One failed status or controller read left
+  its error beside the live progress, and the result, until something else replaced it; the next good read
+  now clears it. **Cancel** stays off once a cancel is sent, until the cancel is refused or lost or the update ends,
+  and a refusal for a start the window did not make is no longer shown. A start that got no answer is
+  called "did not start" only after ten seconds without a run, not after two status reads.
 - **Demo mode names its hardware as a real daemon does.** The demo's motherboard chips were listed under
   a description ("ITE IT8696E") instead of the device name a daemon reports, and its fan and voltage ids
   disagreed with its sensor ids about that name. They now use the device names of the board they imitate

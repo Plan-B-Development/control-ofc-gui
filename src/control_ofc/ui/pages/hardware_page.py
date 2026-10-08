@@ -2042,6 +2042,11 @@ class HardwarePage(QWidget):
         if self._ofw_dialog is not None:
             self._ofw_dialog.apply_run_error(category, message)
 
+    @Slot(str, str)
+    def _on_ofw_cancel_failed(self, category: str, message: str) -> None:
+        if self._ofw_dialog is not None:
+            self._ofw_dialog.apply_cancel_error(category, message)
+
     @Slot(str)
     def _on_ofw_started(self, run_id: str) -> None:
         if self._ofw_dialog is not None:
@@ -2724,6 +2729,7 @@ class HardwarePage(QWidget):
             w.stage_failed.connect(self._on_ofw_stage_failed, Qt.ConnectionType.QueuedConnection)
             w.run_updated.connect(self._on_ofw_run, Qt.ConnectionType.QueuedConnection)
             w.run_error.connect(self._on_ofw_run_error, Qt.ConnectionType.QueuedConnection)
+            w.cancel_failed.connect(self._on_ofw_cancel_failed, Qt.ConnectionType.QueuedConnection)
             w.started.connect(self._on_ofw_started, Qt.ConnectionType.QueuedConnection)
             w.start_failed.connect(self._on_ofw_start_failed, Qt.ConnectionType.QueuedConnection)
             w.start_unconfirmed.connect(
