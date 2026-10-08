@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The Hardware Compatibility guide lists the Gigabyte Z390 / Z490 / W480 boards the daemon now expects two
+  sensor chips on** (DC-cp): the Z390 AORUS XTREME, the Z490 AORUS PRO AX, ULTRA and XTREME, the Z490
+  VISION D and the W480 VISION D, on the it87 sensor catalogue's evidence alone. It also names the Z490 AORUS
+  MASTER WATERFORCE, which the daemon already covered, and says a Z390 board's primary chip may be an
+  IT8686E rather than an IT8688E.
+
 ### Fixed
 
 - **A coolant emergency no longer shows the CPU's limit.** On System State, the Safety & GPU Limits

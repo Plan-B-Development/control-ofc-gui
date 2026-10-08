@@ -326,7 +326,7 @@ Fred78290/nct6687d source, the it87 SIV catalogue, ASRock manuals).
 
 | Generation | Typical Vendors | Typical Hwmon Chip(s) | Driver Path |
 |---|---|---|---|
-| **LGA1151 / LGA1200** (Z390 / Z490) | Gigabyte Z390 AORUS MASTER (incl. G2 EDITION) / PRO (incl. PRO WIFI) / ULTRA (incl. -CF), Z490 AORUS MASTER | **IT8688E + IT8792E** (dual-chip; the SIV catalogue gives each board an `it8688` and an `it8792` stanza) | out-of-tree `it87-dkms-git` |
+| **LGA1151 / LGA1200** (Z390 / Z490 / W480) | Gigabyte Z390 AORUS MASTER (incl. G2 EDITION) / PRO (incl. PRO WIFI) / ULTRA (incl. -CF), Z490 AORUS MASTER, and — per the SIV catalogue alone — Z390 AORUS XTREME (incl. WATERFORCE / 5G), Z490 AORUS MASTER WATERFORCE / PRO AX / ULTRA (incl. G2) / XTREME (incl. WATERFORCE), Z490 VISION D and W480 VISION D | **IT8688E + IT8792E** (dual-chip; the SIV catalogue gives each board an `it8688` and an `it8792` stanza). The Z390 boards' SIVs also have an `it8686` stanza, so their primary may bind as IT8686E; the daemon accepts either | out-of-tree `it87-dkms-git` |
 | **LGA1700 600-series** (Z690 / B660 / H670) | ASUS (ROG MAXIMUS Z690 FORMULA, ROG STRIX Z690-A GAMING WIFI D4 / Z690-E GAMING WIFI, TUF GAMING Z690-PLUS) | NCT6798D (reports `0xd42b`) + `asus_ec_sensors` enrichment on listed ROG boards | mainline `nct6775` for PWM; `asus_ec_sensors` for sensor enrichment |
 | | MSI (MAG Z690 TOMAHAWK WIFI, MPG Z690 EDGE WIFI) | NCT6687D, **default** register map — no `msi_alt1` | out-of-tree `nct6687d-dkms-git`, with `nct6683` blacklisted |
 | | Gigabyte Z690 AORUS PRO / MASTER | **IT8689E + IT87952E** (dual-chip) | out-of-tree `it87-dkms-git`; 2026-03+ builds default MMIO on (older builds need `mmio=on`) |

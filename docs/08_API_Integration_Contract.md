@@ -1785,6 +1785,11 @@ and the GUI parser defaults to `[]`:
   then remove mains power; the `mmio=on` modprobe.d line only on pre-2026-03
   driver builds). Since daemon 2.56.1 (DEC-421) a few single-chip Gigabyte boards are listed
   with **one** chip, so the list is not always a pair. The comparison is exact.
+  The list is resolved against the bound chips in one case: where a board's row
+  accepts an alternative primary (today the Gigabyte Z390 AORUS boards, whose
+  firmware ID the it87 catalogue gives both an `it8688` and an `it8686` stanza;
+  `DC-cp`), the alternative replaces the listed primary when it is in
+  `chips_detected` and the listed one is not. The shape is unchanged.
   From daemon 3.0.0 (DEC-442) `chips_detected[].chip_name` is canonical, so an
   it87 v2.0 chip (`it8696_a008090a`, 2026-09-09 builds) matches; each entry also
   carries `sysfs_chip_name`, the name as sysfs published it, for display and
