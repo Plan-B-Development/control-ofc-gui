@@ -1940,6 +1940,302 @@
         "info"
       ],
       "note": "Enrolled by DEC-481 (the OpenFAN firmware update): services/openfan_firmware_view.py and ui/widgets/openfan_firmware_dialog.py read it. What the GUI sent with the start (services/uf2.py::Uf2Inspection.claim); a reopened window finds the prepared copy by sha256."
+    },
+    {
+      "daemon": "StatusResponse",
+      "gui": "DaemonStatus",
+      "endpoints": [
+        "GET /status",
+        "GET /poll .status"
+      ],
+      "fields": [
+        "api_version",
+        "daemon_version",
+        "overall_status",
+        "subsystems",
+        "uptime_seconds",
+        "thermal_state",
+        "overrides",
+        "fan_identify",
+        "unavailable_sensors",
+        "skipped_controls",
+        "control_outputs",
+        "runtime_config_degraded",
+        "validation_session",
+        "active_profile_id",
+        "active_profile_name",
+        "has_active_profile",
+        "readiness",
+        "verify_active",
+        "emergency_causes",
+        "pump_stalls",
+        "advisories",
+        "openfan_link",
+        "openfan_maintenance",
+        "openfan_silent_board"
+      ],
+      "must_be_read": [
+        "daemon_version",
+        "overall_status",
+        "subsystems",
+        "uptime_seconds",
+        "thermal_state",
+        "overrides",
+        "fan_identify",
+        "unavailable_sensors",
+        "skipped_controls",
+        "control_outputs",
+        "runtime_config_degraded",
+        "validation_session",
+        "active_profile_id",
+        "active_profile_name",
+        "has_active_profile",
+        "readiness",
+        "verify_active",
+        "emergency_causes",
+        "pump_stalls",
+        "advisories",
+        "openfan_link",
+        "openfan_maintenance",
+        "openfan_silent_board"
+      ],
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin.",
+      "not_assertable": {
+        "api_version": "Shared with other declared structs, so a name-based check cannot tell which one a read belongs to (DEC-405's shared-name rule). No GUI code reads DaemonStatus.api_version; every read is Capabilities.api_version."
+      }
+    },
+    {
+      "daemon": "SubsystemStatus",
+      "gui": "SubsystemStatus",
+      "endpoints": [
+        "GET /status .subsystems[]",
+        "GET /poll .status.subsystems[]"
+      ],
+      "fields": [
+        "name",
+        "status",
+        "age_ms",
+        "reason"
+      ],
+      "must_be_read": [
+        "status",
+        "age_ms",
+        "reason"
+      ],
+      "not_assertable": {
+        "name": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "OverrideStatusEntry",
+      "gui": "OverrideStatusEntry",
+      "endpoints": [
+        "GET /status .overrides[]",
+        "GET /poll .status.overrides[]"
+      ],
+      "fields": [
+        "control_id",
+        "pwm_percent",
+        "expires_in_secs"
+      ],
+      "must_be_read": [
+        "control_id",
+        "pwm_percent",
+        "expires_in_secs"
+      ],
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "UnavailableSensorEntry",
+      "gui": "UnavailableSensor",
+      "endpoints": [
+        "GET /status .unavailable_sensors[]",
+        "GET /poll .status.unavailable_sensors[]"
+      ],
+      "fields": [
+        "id",
+        "label",
+        "reason",
+        "unavailable_for_ms"
+      ],
+      "must_be_read": [
+        "reason",
+        "unavailable_for_ms"
+      ],
+      "not_assertable": {
+        "id": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)",
+        "label": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "SkippedControlEntry",
+      "gui": "SkippedControl",
+      "endpoints": [
+        "GET /status .skipped_controls[]",
+        "GET /poll .status.skipped_controls[]"
+      ],
+      "fields": [
+        "control_id",
+        "control_name",
+        "reason",
+        "skipped_for_ms"
+      ],
+      "must_be_read": [
+        "control_id",
+        "control_name",
+        "reason",
+        "skipped_for_ms"
+      ],
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "ControlOutputEntry",
+      "gui": "ControlOutput",
+      "endpoints": [
+        "GET /status .control_outputs[]",
+        "GET /poll .status.control_outputs[]"
+      ],
+      "fields": [
+        "control_id",
+        "output_pct"
+      ],
+      "must_be_read": [
+        "control_id",
+        "output_pct"
+      ],
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "ThermalSafetyInfo",
+      "gui": "ThermalSafetyInfo",
+      "endpoints": [
+        "GET /diagnostics/hardware .thermal_safety"
+      ],
+      "fields": [
+        "state",
+        "cpu_sensor_found",
+        "emergency_threshold_c",
+        "release_threshold_c",
+        "coolant_limit_c",
+        "coolant_release_c"
+      ],
+      "must_be_read": [
+        "cpu_sensor_found",
+        "emergency_threshold_c",
+        "release_threshold_c",
+        "coolant_limit_c",
+        "coolant_release_c"
+      ],
+      "not_assertable": {
+        "state": "the name is too common to prove a read site; it matches unrelated code everywhere (see test_not_assertable_names_are_really_ambiguous)"
+      },
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "FeatureFlags",
+      "gui": "FeatureFlags",
+      "endpoints": [
+        "GET /capabilities .features"
+      ],
+      "fields": [
+        "openfan_write_supported",
+        "hwmon_write_supported"
+      ],
+      "must_be_read": [
+        "openfan_write_supported",
+        "hwmon_write_supported"
+      ],
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin."
+    },
+    {
+      "daemon": "ControlCapability",
+      "gui": "ControlCapability",
+      "endpoints": [
+        "GET /capabilities .control"
+      ],
+      "fields": [
+        "profile_storage",
+        "curve_evaluation",
+        "manual_override",
+        "fan_identify",
+        "autonomous_control",
+        "min_supported_gui",
+        "openfan_rescan",
+        "profile_search_dir_remove",
+        "header_roles",
+        "pwm_characterization",
+        "pwm_behaviour_characterization",
+        "cooling_devices",
+        "validation_sessions",
+        "control_path_discovery",
+        "thermal_observation",
+        "validation_auto_stop",
+        "exit_floor",
+        "diagnostic_preflight",
+        "gpu_fan_verify",
+        "hardware_readiness",
+        "superio_port_probe",
+        "preferred_sensors",
+        "daemon_config_report",
+        "duty_reconciliation",
+        "stall_probe",
+        "openfan_calibration",
+        "canonical_chip_names",
+        "cooling_failure_detection",
+        "pwm_verification_records",
+        "header_role_no_fan",
+        "openfan_header_roles",
+        "cpu_fan_role_floor",
+        "openfan_firmware_maintenance",
+        "openfan_firmware_write",
+        "openfan_firmware_silent_update",
+        "curve_hysteresis"
+      ],
+      "must_be_read": [
+        "profile_storage",
+        "manual_override",
+        "fan_identify",
+        "autonomous_control",
+        "min_supported_gui",
+        "openfan_rescan",
+        "cooling_devices"
+      ],
+      "inert": {
+        "curve_evaluation": "advertised since daemon 1.19.0 and never gated on: control.autonomous_control is the GUI's control gate (DEC-165)",
+        "duty_reconciliation": "in the daemon_supports registry, but no GUI feature asks for it: the duty_corrections / duty_not_holding header fields it announces are optional and rendered by presence",
+        "diagnostic_preflight": "in the daemon_supports registry, but the GUI probes GET /diagnostics/preflight instead of gating on the flag (deliberate, justified at DaemonClient.diagnostic_preflight; P8-as) and names the feature only in its 404 wording"
+      },
+      "via_capability_registry": {
+        "profile_search_dir_remove": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "header_roles": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "pwm_characterization": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "pwm_behaviour_characterization": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "validation_sessions": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "control_path_discovery": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "thermal_observation": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "validation_auto_stop": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "exit_floor": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "gpu_fan_verify": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "hardware_readiness": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "superio_port_probe": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "preferred_sensors": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "daemon_config_report": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "stall_probe": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "openfan_calibration": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "canonical_chip_names": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "cooling_failure_detection": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "pwm_verification_records": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "header_role_no_fan": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "openfan_header_roles": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "cpu_fan_role_floor": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "openfan_firmware_maintenance": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "openfan_firmware_write": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "openfan_firmware_silent_update": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)",
+        "curve_hysteresis": "read through services/daemon_features.py::daemon_supports, keyed by the feature id DAEMON_FEATURE_CAPABILITY_FLAGS maps to this flag (checked by test_registry_flags_are_really_gated)"
+      },
+      "note": "Enrolled by the 2026-10-08 GUI-daemon interop audit, batch 7: the status half of /poll had no shared pin. This entry is also the cross-repo pin on capability flag names: every value in the GUI's DAEMON_FEATURE_CAPABILITY_FLAGS must be one of these fields (test_every_registry_flag_is_a_control_capability_field)."
     }
   ]
 }

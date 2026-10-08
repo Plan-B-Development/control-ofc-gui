@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal, Slot
 
+from control_ofc.constants import VERIFY_TIMEOUT_S
 from control_ofc.services.daemon_features import unsupported_feature_message
 
 if TYPE_CHECKING:
@@ -140,7 +141,7 @@ class _SocketWorker(QObject):
 
 
 class _VerifyWorker(_SocketWorker):
-    """Runs in a QThread — executes the blocking ~3s verify_hwmon_pwm call off
+    """Runs in a QThread — executes the blocking ~6 s verify_hwmon_pwm call off
     the UI thread so the rest of the GUI (polling, splitter, menus) keeps
     reacting during the hardware probe."""
 
@@ -168,7 +169,7 @@ class _VerifyWorker(_SocketWorker):
             # prefixing it as a hard "Verify error"; only the message is rewritten.
             self.verify_error.emit(
                 "unavailable",
-                "Verify timed out (>8s). The daemon may have completed the "
+                f"Verify timed out (>{VERIFY_TIMEOUT_S:.0f}s). The daemon may have completed the "
                 "write — re-check the fan and re-run if needed.",
                 header_id,
             )
@@ -220,8 +221,8 @@ class _GpuVerifyWorker(_SocketWorker):
         except DaemonTimeout:
             self.verify_error.emit(
                 "unavailable",
-                "GPU verify timed out (>10s). The daemon may have completed the "
-                "test — re-check the fan and re-run if needed.",
+                f"GPU verify timed out (>{VERIFY_TIMEOUT_S:.0f}s). The daemon may have "
+                "completed the test — re-check the fan and re-run if needed.",
             )
         except DaemonUnavailable:
             self._drop_client()

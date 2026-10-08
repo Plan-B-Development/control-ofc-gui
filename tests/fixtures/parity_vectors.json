@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "CANONICAL cross-stack evaluator parity vectors (DEC-126). Keep byte-identical with control-ofc-daemon/daemon/tests/fixtures/parity_vectors.json. Expected values are a hand-authored oracle, derived from neither implementation. curve_eval compares the stateless curve interpolation (float, tol 0.01); tuning_sequence drives the real headless/GUI entry points over a temp sequence and compares the integer wire PWM per member. A tuning_sequence case carries EITHER 'sensor_id'+'temps' (one sensor over N steps) OR 'sensor_temps' ({id:[..]} maps, equal length — for multi-sensor Mix cases). Multi-control cases (Sync) merge member outputs across all controls; the order controls appear in 'controls' may deliberately NOT match dependency order, to pin the topological sort.",
+  "note": "CANONICAL cross-stack evaluator parity vectors (DEC-126). Keep byte-identical with control-ofc-daemon/daemon/tests/fixtures/parity_vectors.json. Expected values are a hand-authored oracle, derived from neither implementation. curve_eval compares the stateless curve interpolation (float, tol 0.01); tuning_sequence drives the real headless/GUI entry points over a temp sequence and compares the integer wire PWM per member. A tuning_sequence case carries EITHER 'sensor_id'+'temps' (one sensor over N steps) OR 'sensor_temps' ({id:[..]} maps, equal length — for multi-sensor Mix cases). Multi-control cases (Sync) merge member outputs across all controls; the order controls appear in 'controls' may deliberately NOT match dependency order, to pin the topological sort. hysteresis_band compares the band computed from a curve's stored hysteresis_c (absent = the default): the GUI's curve_hysteresis.effective_hysteresis_c after CurveConfig.from_dict vs the daemon's CurveConfig::effective_hysteresis_c. The two *_engine_backstop cases are out of range: the daemon's profile load and validate() reject such a profile, so they pin the engine's own clamp (and the GUI's load clamp), not a value a stored profile can run with.",
   "curve_eval": [
     {
       "name": "graph_mid_segment",
@@ -115,6 +115,12 @@
       "curve": {"id": "t", "name": "T", "type": "trigger", "sensor_id": "cpu", "trigger_idle_temp_c": 40.0, "trigger_load_temp_c": 60.0, "trigger_idle_pct": 30.0, "trigger_load_pct": 80.0},
       "temp": 70.0,
       "expected_pct": 80.0
+    },
+    {
+      "name": "unknown_type_runs_at_the_fallback_not_its_flat_figure",
+      "curve": {"id": "u", "name": "U", "type": "spline_v9", "sensor_id": "cpu", "flat_output_pct": 12.0},
+      "temp": 55.0,
+      "expected_pct": 50.0
     }
   ],
   "tuning_sequence": [
@@ -258,6 +264,36 @@
       },
       "temps": [40.0, 80.0],
       "expected": [{"member_id": "openfan:ch00", "pwm": [80, 80]}, {"member_id": "openfan:ch01", "pwm": [60, 100]}]
+    },
+    {
+      "name": "mix_functions_min_average_sum_subtract",
+      "sensor_temps": {"cpu": [50.0, 50.0], "gpu": [40.0, 70.0]},
+      "profile": {
+        "id": "p_mixfns", "name": "MixFunctions", "version": 7, "description": "",
+        "controls": [
+          {"id": "cmin", "name": "CMIN", "mode": "curve", "curve_id": "mx_min", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0},
+          {"id": "cavg", "name": "CAVG", "mode": "curve", "curve_id": "mx_avg", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch01", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0},
+          {"id": "csum", "name": "CSUM", "mode": "curve", "curve_id": "mx_sum", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch02", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0},
+          {"id": "csub", "name": "CSUB", "mode": "curve", "curve_id": "mx_sub", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch03", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}
+        ],
+        "curves": [
+          {"id": "cv_cpu", "name": "CPU", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0},
+          {"id": "cv_gpu", "name": "GPU", "type": "linear", "sensor_id": "gpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0},
+          {"id": "mx_min", "name": "MX_MIN", "type": "mix", "mix_function": "min", "mix_curve_ids": ["cv_cpu", "cv_gpu"]},
+          {"id": "mx_avg", "name": "MX_AVG", "type": "mix", "mix_function": "average", "mix_curve_ids": ["cv_cpu", "cv_gpu"]},
+          {"id": "mx_sum", "name": "MX_SUM", "type": "mix", "mix_function": "sum", "mix_curve_ids": ["cv_cpu", "cv_gpu"]},
+          {"id": "mx_sub", "name": "MX_SUB", "type": "mix", "mix_function": "subtract", "mix_curve_ids": ["cv_cpu", "cv_gpu"]}
+        ]
+      },
+      "expected": [{"member_id": "openfan:ch00", "pwm": [36, 52]}, {"member_id": "openfan:ch01", "pwm": [44, 68]}, {"member_id": "openfan:ch02", "pwm": [88, 100]}, {"member_id": "openfan:ch03", "pwm": [16, 0]}]
     }
+  ],
+  "hysteresis_band": [
+    {"name": "absent_is_the_default", "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}]}, "expected_c": 2.0},
+    {"name": "zero_is_off", "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}], "hysteresis_c": 0.0}, "expected_c": 0.0},
+    {"name": "in_range_is_kept", "curve": {"id": "l", "name": "L", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0, "hysteresis_c": 3.5}, "expected_c": 3.5},
+    {"name": "the_maximum_is_kept", "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}], "hysteresis_c": 10.0}, "expected_c": 10.0},
+    {"name": "above_the_maximum_engine_backstop", "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}], "hysteresis_c": 15.0}, "expected_c": 10.0},
+    {"name": "below_zero_engine_backstop", "curve": {"id": "g", "name": "G", "type": "graph", "sensor_id": "cpu", "points": [{"temp_c": 30.0, "output_pct": 20.0}, {"temp_c": 80.0, "output_pct": 100.0}], "hysteresis_c": -1.0}, "expected_c": 0.0}
   ]
 }

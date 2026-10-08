@@ -48,6 +48,10 @@ Every declared field now lands in exactly one bucket, and the choice is forced b
 ``unmodelled``
     No GUI slot at all, with the reason. Checked by
     ``test_declared_unmodelled_fields_are_really_absent``.
+``via_capability_registry``
+    ``ControlCapability`` flags only: read through ``daemon_supports`` by a
+    feature id that ``DAEMON_FEATURE_CAPABILITY_FLAGS`` maps to the flag, which a
+    name-based check cannot see. Checked by ``test_registry_flags_are_really_gated``.
 
 Adding a wire field therefore fails this module until someone says which of those
 it is. That is the whole point of the inversion: the guard's reach is now the
@@ -76,13 +80,21 @@ single-repo CI. Coverage is asserted **both ways** on the daemon side — a stru
 declared here with no arm there, or an arm there for a struct not declared here,
 fails.
 
-Scope covers the structs behind ``/sensors``, ``/fans``, ``/poll``,
-``/hwmon/headers``, ``/inventory/hwmon``, ``/inventory/cooling-devices``,
-``/capabilities`` (``Limits``) and ``/diagnostics/hardware`` (``VoltageEntry``) —
-the surfaces where drift has actually happened — plus the Phase 8 diagnostic
-surfaces: preflight, control-path discovery, PWM characterisation, steady state
-and the startup fingerprint. Adding a struct is a fixture edit plus a Rust arm;
-it is not automatic.
+Scope covers the structs behind ``/sensors``, ``/fans``, ``/poll`` (its status
+half included), ``/hwmon/headers``, ``/inventory/hwmon``,
+``/inventory/cooling-devices``, ``/capabilities`` (``Limits``, ``FeatureFlags``,
+``ControlCapability``) and ``/diagnostics/hardware`` (``VoltageEntry``,
+``ThermalSafetyInfo``) — the surfaces where drift has actually happened — plus
+the Phase 8 diagnostic surfaces: preflight, control-path discovery, PWM
+characterisation, steady state and the startup fingerprint, and the OpenFAN
+maintenance surfaces. Adding a struct is a fixture edit plus a Rust arm; it is
+not automatic.
+
+``ControlCapability`` doubles as the cross-repo pin on capability flag **names**
+(2026-10-08 interop audit): every flag the GUI's ``daemon_supports`` registry
+looks up must be one of its declared fields, and the daemon pins those fields to
+what it serialises. A renamed flag reds one side or the other instead of reading
+as "this daemon does not support it".
 """
 
 from __future__ import annotations
@@ -96,6 +108,7 @@ from pathlib import Path
 import pytest
 
 from control_ofc.api import models
+from control_ofc.services.daemon_features import DAEMON_FEATURE_CAPABILITY_FLAGS
 
 FIXTURE = Path(__file__).parent / "fixtures" / "wire_fields.json"
 SRC = Path(__file__).resolve().parents[1] / "src" / "control_ofc"
@@ -146,6 +159,9 @@ def _declared() -> list[dict]:
         assert s["fields"], f"{s['daemon']} declares no fields"
     return structs
 
+
+#: Every classification bucket; a declared field sits in exactly one.
+BUCKETS = ("must_be_read", "inert", "not_assertable", "unmodelled", "via_capability_registry")
 
 #: Names that appear in thousands of unrelated lines, so a name-based check can
 #: prove nothing about them. ``must_be_read`` may not contain one and
@@ -338,7 +354,7 @@ def test_classification_names_are_declared_fields() -> None:
     """
     for struct in _declared():
         declared = set(struct["fields"])
-        for bucket in ("must_be_read", "inert", "not_assertable", "unmodelled"):
+        for bucket in BUCKETS:
             stray = sorted(set(struct.get(bucket, [])) - declared)
             assert not stray, f"{struct['daemon']}: {bucket} names not on the wire: {stray}"
 
@@ -380,9 +396,7 @@ def test_every_declared_field_is_classified(struct: dict) -> None:
     the checks below would pass its own half.
     """
     fields = list(struct["fields"])
-    buckets = {
-        b: set(struct.get(b, [])) for b in ("must_be_read", "inert", "not_assertable", "unmodelled")
-    }
+    buckets = {b: set(struct.get(b, [])) for b in BUCKETS}
 
     overlaps = []
     names = sorted(buckets)
@@ -425,6 +439,12 @@ def test_inert_fields_are_really_unread(struct: dict) -> None:
     inert = struct.get("inert", {})
     if not inert:
         pytest.skip("nothing declared inert")
+    if struct["daemon"] == "ControlCapability":
+        # A registry flag's read is a gate, judged by
+        # test_inert_registry_flags_are_really_ungated instead.
+        inert = {
+            k: v for k, v in inert.items() if k not in DAEMON_FEATURE_CAPABILITY_FLAGS.values()
+        }
     now_read = sorted(name for name in inert if name in CONSUMER_NAMES)
     assert not now_read, (
         f"{struct['gui']} declares {now_read} inert, but production code outside "
@@ -490,10 +510,123 @@ def test_every_exemption_carries_a_reason(struct: dict) -> None:
     still holds; without it the fixture records that a check was skipped and not
     why, which is how a skip outlives its cause.
     """
-    for bucket in ("inert", "not_assertable", "unmodelled"):
+    for bucket in ("inert", "not_assertable", "unmodelled", "via_capability_registry"):
         entries = struct.get(bucket, {})
         assert isinstance(entries, dict), (
             f"{struct['daemon']}: '{bucket}' must be a name→reason map"
         )
         blank = sorted(name for name, reason in entries.items() if not str(reason).strip())
         assert not blank, f"{struct['daemon']}: {bucket} entries with no reason: {blank}"
+
+
+# ---------------------------------------------------------------------------
+# Capability flags read through the registry (2026-10-08 interop audit)
+# ---------------------------------------------------------------------------
+
+DAEMON_FEATURES = SRC / "services" / "daemon_features.py"
+
+
+def _control_capability() -> dict:
+    (entry,) = [s for s in _declared() if s["daemon"] == "ControlCapability"]
+    return entry
+
+
+#: Callables that take a feature id and gate on it, with the positional index of
+#: that argument. ``feature_id=`` as a keyword counts wherever it appears (the PWM
+#: report catalogue's specs feed ``daemon_supports(spec.feature_id, …)``).
+GATE_CALLS = {"daemon_supports": 0, "_apply_live_key_support": 1}
+
+
+def _gated_feature_ids() -> set[str]:
+    """Feature ids production code GATES on — never one it only names.
+
+    Only gate positions count: the feature-id argument of a :data:`GATE_CALLS`
+    callable, or a ``feature_id=`` keyword. A literal anywhere else — the
+    wording of ``unsupported_feature_message("x")``, a dict key, a slot
+    constant — says nothing about whether the daemon's flag is consulted, and
+    counting it let a deleted gate stay green.
+    """
+    out: set[str] = set()
+    for path in sorted(SRC.rglob("*.py")):
+        if path in (MODELS, DAEMON_FEATURES):
+            continue
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if (
+                    kw.arg == "feature_id"
+                    and isinstance(kw.value, ast.Constant)
+                    and isinstance(kw.value.value, str)
+                ):
+                    out.add(kw.value.value)
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            index = GATE_CALLS.get(name)
+            if index is not None and len(node.args) > index:
+                arg = node.args[index]
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    out.add(arg.value)
+    return out
+
+
+def _gated_flags() -> set[str]:
+    """The ``ControlCapability`` flags behind :func:`_gated_feature_ids`."""
+    return {
+        DAEMON_FEATURE_CAPABILITY_FLAGS[f]
+        for f in _gated_feature_ids()
+        if f in DAEMON_FEATURE_CAPABILITY_FLAGS
+    }
+
+
+def test_every_registry_flag_is_a_control_capability_field() -> None:
+    """The cross-repo pin on capability flag names.
+
+    ``daemon_supports`` looks a flag up by name on ``ControlCapability``; a name
+    the daemon does not send reads as "not supported" and quietly stands a
+    feature down. The daemon pins this fixture entry to what it serialises
+    (``responses.rs::wire_field_surface_is_pinned``), so a flag missing here is a
+    rename or a typo on one side.
+    """
+    declared = set(_control_capability()["fields"])
+    unknown = sorted(set(DAEMON_FEATURE_CAPABILITY_FLAGS.values()) - declared)
+    assert not unknown, f"registry flags the daemon does not send: {unknown}"
+
+
+def test_registry_flags_are_really_gated() -> None:
+    """A ``via_capability_registry`` claim is live: the flag is a registry value,
+    and production code names a feature id that maps to it."""
+    registry = _control_capability().get("via_capability_registry", {})
+    assert registry, "precondition: the bucket is populated"
+    not_registered = sorted(set(registry) - set(DAEMON_FEATURE_CAPABILITY_FLAGS.values()))
+    assert not not_registered, f"not values of DAEMON_FEATURE_CAPABILITY_FLAGS: {not_registered}"
+    unasked = sorted(set(registry) - _gated_flags())
+    assert not unasked, (
+        f"no production code asks daemon_supports about {unasked}; classify them "
+        f"'inert' with the reason, or wire the feature up"
+    )
+
+
+def test_inert_registry_flags_are_really_ungated() -> None:
+    """The ``inert`` claim on a registry flag is checked against gate positions.
+
+    ``test_inert_fields_are_really_unread`` cannot do it: a gate passes the
+    feature id as a call argument, which its name check does not count, and a
+    flag can share its name with an unrelated method (``client.diagnostic_preflight``).
+    So for these flags a gate is the read, and none may exist.
+    """
+    entry = _control_capability()
+    inert_registry = set(entry.get("inert", {})) & set(DAEMON_FEATURE_CAPABILITY_FLAGS.values())
+    assert inert_registry, "precondition: some registry flag is declared inert"
+    now_gated = sorted(inert_registry & _gated_flags())
+    assert not now_gated, f"declared inert but now gated on: {now_gated} — reclassify them"
+
+
+def test_the_registry_bucket_is_confined_to_control_capability() -> None:
+    """Only ``ControlCapability`` fields are read through the registry."""
+    elsewhere = [
+        s["daemon"]
+        for s in _declared()
+        if s.get("via_capability_registry") and s["daemon"] != "ControlCapability"
+    ]
+    assert not elsewhere

@@ -8,6 +8,7 @@ headless behaviour are pinned together — silent drift (the cause of DEC-096 /
 DEC-119) fails on at least one side.
 
 - ``curve_eval``: stateless ``CurveConfig.interpolate`` vs ``evaluate_curve``.
+- ``hysteresis_band``: ``effective_hysteresis_c`` vs ``CurveConfig::effective_hysteresis_c``.
 - ``tuning_sequence``: the floor-bearing invariants only. The GUI's stateful
   tuning pipeline moved to the daemon at the 2.0 flip (DEC-165), so sequence
   parity is pinned daemon-side; here the GUI's member classification and load
@@ -21,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from control_ofc.services.curve_hysteresis import HYSTERESIS_MAX_C, effective_hysteresis_c
 from control_ofc.services.profile_service import (
     CONTROL_ROLE_CPU_PUMP,
     CONTROL_ROLE_GPU,
@@ -71,6 +73,24 @@ def test_curve_eval_parity(case):
     curve = CurveConfig.from_dict(case["curve"])
     result = curve.interpolate(case["temp"])
     assert result == pytest.approx(case["expected_pct"], abs=0.01)
+
+
+@pytest.mark.parametrize("case", _VECTORS["hysteresis_band"], ids=_id)
+def test_hysteresis_band_parity(case):
+    """The band the daemon applies to a curve's stored ``hysteresis_c``: absent is
+    the default, anything else clamped into range. The GUI's default and maximum
+    are hand copies of the daemon's constants; this holds both to one oracle."""
+    curve = CurveConfig.from_dict(case["curve"])
+    assert effective_hysteresis_c(curve) == pytest.approx(case["expected_c"], abs=1e-9)
+
+
+def test_the_hysteresis_oracle_reaches_both_bounds():
+    """Precondition: the section's INPUTS reach the default and both clamps, so
+    renaming a case cannot leave a bound untested."""
+    stored = [c["curve"].get("hysteresis_c") for c in _VECTORS["hysteresis_band"]]
+    assert None in stored
+    assert any(v is not None and v > HYSTERESIS_MAX_C for v in stored)
+    assert any(v is not None and v < 0 for v in stored)
 
 
 # The GUI's full tuning/hysteresis pipeline moved to the daemon at the 2.0 flip

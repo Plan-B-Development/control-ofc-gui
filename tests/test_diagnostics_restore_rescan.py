@@ -398,3 +398,25 @@ def test_a_dead_socket_in_the_trailing_openfan_leg_drops_the_stale_client():
     assert got == [([], "")], "the hwmon result still stands"
     assert worker._client is None, "a dead socket must not be reused by the next call"
     client.close.assert_called_once()
+
+
+def test_a_verify_timeout_names_the_wait_the_client_used():
+    """Both verify timeouts state ``VERIFY_TIMEOUT_S``, the budget the client
+    actually gave the call; they said 8 s and 10 s while it was 12 s."""
+    from control_ofc.api.errors import DaemonTimeout
+    from control_ofc.constants import VERIFY_TIMEOUT_S
+    from control_ofc.ui.pages.diagnostics_workers import _VerifyWorker
+
+    hwmon = _VerifyWorker("/tmp/x.sock")
+    hwmon._client = MagicMock(verify_hwmon_pwm=MagicMock(side_effect=DaemonTimeout("slow")))
+    gpu = _GpuVerifyWorker("/tmp/x.sock")
+    gpu._client = MagicMock(verify_gpu_fan=MagicMock(side_effect=DaemonTimeout("slow")))
+    said: list[str] = []
+    hwmon.verify_error.connect(lambda _cat, msg, _hid: said.append(msg))
+    gpu.verify_error.connect(lambda _cat, msg: said.append(msg))
+
+    hwmon.do_verify("hwmon:nct6798:pci0:pwm1")
+    gpu.do_verify("0000:2d:00.0")
+
+    assert len(said) == 2
+    assert all(f"(>{VERIFY_TIMEOUT_S:.0f}s)" in msg for msg in said)

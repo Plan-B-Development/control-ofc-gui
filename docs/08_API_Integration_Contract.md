@@ -2117,8 +2117,9 @@ one orders its own calls.
     **Unavailable is the normal case for a motherboard-connected AIO** and is not an error, not a
     readiness item, and not a warning state.
   - `device_policy` — the resolved policy: `id`, `display_name`, `minimum_safe_pwm_pct`,
-    `supports_stop`, and the optional `startup_override_seconds` / `expected_rpm_min` /
-    `expected_rpm_max` / `internal_control_possible`. Read-only; see the trust note below.
+    `supports_stop`, `internal_control_possible` (always sent), and the optional
+    `startup_override_seconds` / `expected_rpm_min` / `expected_rpm_max`. Read-only; see the
+    trust note below.
 - `available_policies: list` — every policy this daemon ships, same shape, so a client offers the
   real choices rather than hardcoding a list that drifts from the binary.
 
@@ -3512,17 +3513,15 @@ same id ever diverge, activation applies the **local** copy — not necessarily 
 - `GET /profile/active` — returns current active profile or `{"active": false}`
   - GUI queries on connect/reconnect (`PollingService._PollWorker`), and the
     response carries both `profile_id` and `profile_name`.
-  - **Only `profile_name` is consumed today** (`polling.py::_on_active_profile`
-    → `AppState.set_active_profile`), which feeds the status banner. The
-    `profile_id` is logged and discarded: nothing reconciles it into
-    `ProfileService._active_id`, which is seeded to the first profile in the
-    store (`_load_from_daemon` / `_load_from_local`) and thereafter changed only
-    by a GUI-initiated `activate()`. The sidebar's "Active Profile" selector and
-    the Controls page both read *that* value, so they can name a different
-    profile from the banner beside them. Corrected 2026-09-11 — this block
-    previously claimed the query "prevents stale widget state from misleading
-    user", which is true of one widget and false of the two that matter most.
-    Register rows `CTRL-d` / `CTRL-b`.
+  - **Both are consumed** (`polling.py::_on_active_profile`): `profile_name`
+    feeds the status banner (`AppState.set_active_profile`), and `profile_id`
+    goes to `AppState.set_active_profile_id`, which the profile service follows
+    — so the sidebar, the Controls page's "Editing:" label and the
+    save-then-re-apply decision name the profile the daemon runs. A missing id
+    means none runs. Between polls the same pair arrives on `/status`
+    (`has_active_profile`, `active_profile_id`), and a change there is applied
+    the same way. (Until the 2026-10 fix this block said the id was logged and
+    discarded, which was true then — register rows `CTRL-d` / `CTRL-b`.)
 
 ### Manual override (DEC-163, daemon ≥ 1.21.0)
 
@@ -3532,8 +3531,11 @@ daemon's clock); a stale token cannot re-pin (fencing).
 
 - `POST /control/{control_id}/override` — body `{"pwm_percent": 0..100, "ttl_secs"?: N}` →
   `200 {"control_id","override_token","pwm_percent","ttl_secs","renew_secs","expires_in_secs"}`.
+  `ttl_secs` is clamped into `1..=15` and defaults to 15; the grant's `ttl_secs` is the clamped value.
   `404` (wire code `validation_error`, not `not_found`) if the control is not in the active profile;
-  `400` if `pwm_percent` out of range; `409 validation_error`, retryable, with
+  `400 validation_error` if `pwm_percent` is 101–255. `pwm_percent` is a `u8`, so a negative,
+  fractional or larger number, like any body the typed extractor cannot read, is axum's plain-text
+  `422`, not the error envelope. `409 validation_error`, retryable, with
   `details.reason: "openfan_maintenance"` while an OpenFAN firmware update holds the controller and the
   control drives an OpenFan channel (DEC-481).
   The override PWM is still clamped by the daemon's hard pump/CPU floor (≥30 %) and GPU 0 % floor.
@@ -3542,7 +3544,8 @@ daemon's clock); a stale token cannot re-pin (fencing).
   lifts it. The GUI says why for a take's `404` and the OpenFAN-update `409`; a renew's
   `404 override_expired` stays a quiet revert.
 - `POST /control/{control_id}/override/renew` — body `{"override_token": N}` →
-  `200 {"control_id","override_token","ttl_secs","expires_in_secs"}`. Renew at ~`renew_secs`
+  `200 {"control_id","override_token","ttl_secs","expires_in_secs"}`. A renew always grants the
+  full 15 s, whatever `ttl_secs` the take asked for. Renew at ~`renew_secs`
   (≈5 s, ⅓ of the 15 s TTL). `409 stale_fencing_token` if superseded; `404 override_expired` if it
   already lapsed (re-take, don't renew).
 - `DELETE /control/{control_id}/override` — body `{"override_token": N}` →
@@ -3555,8 +3558,10 @@ renewing GUI holds indefinitely.
 **Activating a profile clears all active control-overrides (DEC-189, daemon ≥ 2.2.2 — merged as 2.2.1, which was never published).** A
 `POST /profile/activate` — including a same-id re-apply — reverts every pinned control to its curve,
 so an override taken against the previous profile cannot bleed onto a same-id control in the new one.
-The GUI is poll-only and already drops its Manual cards when `/poll` no longer reports the override;
-no client action is required. Fan-identify holds (below) are per physical fan and are **not** cleared
+No client action is required: the GUI's own Manual card reverts when its next renew is refused
+`404 override_expired` (within one renew, ~5 s), and an External chip for another client's override
+clears on the first `/poll` that no longer lists it. (The GUI itself releases its overrides before
+it rebuilds the cards for a profile switch.) Fan-identify holds (below) are per physical fan and are **not** cleared
 by an activation — with one exception (DEC-394, daemons after 2.51.0): an identify **stop** on a header
 the newly-activated profile names a pump (a member whose label names one) is released, because its
 `0` was chosen before the profile existed to protect it. It is the activation twin of the release a
@@ -3809,7 +3814,7 @@ All errors use a standard nested envelope:
 ```
 
 Error codes and HTTP statuses:
-- 400 `validation_error` (source: `"validation"`, retryable: false) — a malformed request, or a profile that fails daemon-owned validation (DEC-160). Profile validation attaches a structured `details.field_violations: [{field, reason, description, severity}]` array (additive superset; `reason` is UPPER_SNAKE_CASE — e.g. `OUT_OF_RANGE`, `TRIGGER_IDLE_GE_LOAD`, `UNKNOWN_CURVE_REF`, `FLOOR_TOO_LOW` when a control with a pump/CPU member declares `minimum_pct` below the 30% hard pump floor (DEC-162), `PUMP_STOP_FORBIDDEN` when a control with a pump/CPU member declares a non-zero `stop_pct` — a pump must never be configured to stop (DEC-167) — and `TOO_MANY_CURVES` / `TOO_MANY_CONTROLS` when a profile exceeds 256 of either. Those two are recursion bounds, not taste limits: Mix/Sync dependency resolution recurses once per link, and a deep but perfectly *acyclic* chain passes the cycle check, so an unbounded one overflowed the daemon's stack. The GUI mirrors the same caps at its parse boundary). All violations are collected before responding; clients map `reason` and must never string-match `description`. **One 400 is retryable**: the stall probe with no fresh CPU temperature (`error.details.reason: "no_cpu_temperature"`), because its rise gate needs one and the next poll may bring it.
+- 400 `validation_error` (source: `"validation"`, retryable: false) — a malformed request, or a profile that fails daemon-owned validation (DEC-160). Profile validation attaches a structured `details.field_violations: [{field, reason, description, severity}]` array (additive superset; `reason` is UPPER_SNAKE_CASE — e.g. `OUT_OF_RANGE`, `TRIGGER_IDLE_GE_LOAD`, `UNKNOWN_CURVE_REF`, `FLOOR_TOO_LOW` when a control with a pump/CPU member declares `minimum_pct` below the 30% hard pump floor (DEC-162), `PUMP_STOP_FORBIDDEN` when a control with a pump/CPU member declares a non-zero `stop_pct` — a pump must never be configured to stop (DEC-167) — and `TOO_MANY_CURVES` / `TOO_MANY_CONTROLS` when a profile exceeds 256 of either. Those two are recursion bounds, not taste limits: Mix/Sync dependency resolution recurses once per link, and a deep but perfectly *acyclic* chain passes the cycle check, so an unbounded one overflowed the daemon's stack. The GUI mirrors the same caps at its parse boundary). All violations are collected before responding; clients map `reason` and must never string-match `description`. **Two 400s are retryable**, both with `error.details.reason: "no_cpu_temperature"`: the stall probe and OpenFan calibration (both routes) with no fresh CPU temperature, because their rise gate needs one and the next poll may bring it.
 - 400 `feature_unavailable` (source: `"validation"`, retryable: false) — the endpoint exists and the addressed device exists, but that device does not support the requested operation. Currently surfaced by:
   - the GPU fan verify and reset when the GPU has neither a PMFW `fan_curve` nor legacy `pwm1` write path (DEC-098); and
   - control-path discovery and the stall probe on a header whose discovered `is_writable` is `false` — and the stall probe on one with no tach as well (`error.details.reason` says which). **Not** a profile that binds such a header: the daemon accepts it and never writes the header (§ `GET /hwmon/headers` → `is_writable`).
@@ -3981,8 +3986,12 @@ The GUI must reflect these constraints honestly.
 
 ### Ongoing cadence
 - **Primary data (sensors/fans/status):** 1 Hz via `GET /poll` (combined batch endpoint)
-- **Capabilities/headers:** startup, on reconnect, and every `CAPABILITIES_REFRESH_INTERVAL_S`
-  (300 s, DEC-146). `/hwmon/headers` is also re-read within one poll of the active profile
+- **Capabilities/headers:** startup, on reconnect, every `CAPABILITIES_REFRESH_INTERVAL_S`
+  (300 s, DEC-146), and on the next cycle after `/status` shows the daemon restarted while the
+  GUI stayed connected (`uptime_seconds` went down, or `daemon_version` changed). Each capabilities
+  fetch also re-reads `GET /config` for the running `polling.poll_interval_ms` (which sets the
+  GUI's freshness thresholds, docs/07) and `GET /diagnostics/hardware` (trip points, coolant
+  limit), which is fetched again after the GUI changes the coolant limit. `/hwmon/headers` is also re-read within one poll of the active profile
   changing on `/poll` (`has_active_profile` / `active_profile_id`) and after the GUI's own
   daemon-confirmed activation, which covers a re-apply of the same profile (`TS-ae`, DEC-416) —
   since DEC-384 `stop_permitted` and `effective_min_pwm_pct` follow the active profile.
@@ -4076,8 +4085,11 @@ repo, compared by a byte-identity test when both are checked out as siblings and
 declared field must be classified, and adding one fails the GUI suite until it is:
 `must_be_read` (a production read site must exist), `inert` (nothing reads it — with the
 reason), `not_assertable` (the name is too common for a name-based check to prove
-anything, e.g. `id`/`label`/`source`), or `unmodelled` (no GUI slot — with the reason).
-`inert` is checked the other way round as well, so a field that acquires a consumer has
+anything, e.g. `id`/`label`/`source`), `unmodelled` (no GUI slot — with the reason), or,
+for `ControlCapability` only, `via_capability_registry` (read through `daemon_supports` by
+a feature id the GUI's `DAEMON_FEATURE_CAPABILITY_FLAGS` maps to the flag; the test
+requires a gate on that id — a `daemon_supports` argument, a `feature_id=` keyword or an
+`_apply_live_key_support` argument — and an `inert` registry flag to have none). `inert` is checked the other way round as well, so a field that acquires a consumer has
 to be reclassified rather than quietly keeping a stale exemption. "A read" means an
 attribute access, a keyword, a binding, or a string in **argument** position
 (`getattr(o, "f", d)`, `d.get("f")`, `d["f"]`) — a string sitting in a dict-literal key
@@ -4087,12 +4099,15 @@ declares a table entry and is not a read, which is what three fields known only 
 **Adding a field to a pinned struct means updating the fixture — both copies — and this
 document.** Adding a *struct* additionally needs an arm in the Rust test; the fixture and
 the arms are asserted to cover the same set, in both directions, so forgetting either half
-fails rather than passing quietly. Coverage is 36 structs (the fixture's `structs` table),
-among them those behind `/sensors`,
-`/fans`, `/poll`, `/hwmon/headers`, `/inventory/hwmon`, `/inventory/cooling-devices`,
-`/capabilities` (`Limits`) and `/diagnostics/hardware` (`VoltageEntry`), plus the Phase 8
-diagnostic surfaces — preflight, control-path discovery, PWM characterisation, steady
-state and the startup fingerprint. It is still partial by design: a struct not listed
+fails rather than passing quietly. Coverage is 66 wire structs in 67 entries (the fixture's
+`structs` table; `PwmHeaderEntry` has one entry per GUI model), among them those behind
+`/sensors`, `/fans`, `/poll` (its status half included), `/hwmon/headers`,
+`/inventory/hwmon`, `/inventory/cooling-devices`, `/capabilities` (`Limits`,
+`FeatureFlags`, `ControlCapability`) and `/diagnostics/hardware` (`VoltageEntry`,
+`ThermalSafetyInfo`), plus the Phase 8 diagnostic surfaces — preflight, control-path
+discovery, PWM characterisation, steady state and the startup fingerprint — and the
+OpenFAN maintenance surfaces. `ControlCapability` is also the cross-repo pin on capability
+flag names: every flag in `DAEMON_FEATURE_CAPABILITY_FLAGS` must be one of its fields. It is still partial by design: a struct not listed
 there is unchecked rather than failing.
 
 **Until v2.67.1 this was a workflow, not an interlock.** The daemon declared its own
@@ -4126,11 +4141,12 @@ Do not treat these as application crashes.
 ### /capabilities drives feature gating
 Examples:
 - disable hwmon write controls if unsupported
-- validate interval fields against reported ranges
+- show the "daemon upgrade required" banner when `control.autonomous_control` is absent (DEC-165)
+- `/capabilities` reports no ranges for interval settings: the GUI bounds those fields to the
+  ranges this document gives for each setter, and the daemon refuses a value outside them
 
 ### /status drives control-gate + thermal messaging
 Examples:
-- show the "daemon upgrade required" banner when `control.autonomous_control` is absent (DEC-165)
 - show the poll-driven thermal-protection banner from `thermal_state` (DEC-165)
 - reflect daemon-held overrides from `/status.overrides[]` on Controls cards — a read-only
   "External" chip for foreign overrides (no token → display-only + explicit take-over) (DEC-169).
@@ -4212,7 +4228,7 @@ The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `defau
     run on this cadence, so a tiny value is a self-inflicted DoS on the hardware
     the daemon exists to protect. **The ceiling is [SAFETY]**: this drives the
     sensor poll loop, and the thermal-emergency rule's staleness budget is derived from it
-    (5×, DEC-267 — see § Freshness above; the leg is *not* unfiltered, and this
+    (5×, DEC-267 — see § GET /status above, the `no_sensor_fallback` stale-reading trigger; the leg is *not* unfiltered, and this
     ceiling bounds that budget rather than substituting for it). The API is
     tighter than the admin file because it is reachable by any local user (0666
     socket). The admin file's own range is **100–6000 ms**: past 6000 the budget

@@ -163,8 +163,9 @@ class DaemonClient:
     # -- helpers --
     #
     # ``timeout`` is per-call: pass an explicit value for endpoints whose
-    # daemon-side latency is known to exceed the global default (verify is
-    # ~3 s plus IPC). Per-call timeouts reuse the connection pool — see HTTPX docs:
+    # daemon-side latency is known to exceed the global default (verify waits
+    # 6 s between its write and the readback, plus IPC). Per-call timeouts
+    # reuse the connection pool — see HTTPX docs:
     #   https://www.python-httpx.org/advanced/timeouts/
     # ``httpx.TimeoutException`` is now mapped to ``DaemonTimeout`` so the
     # UI can distinguish "daemon is slow" from "daemon is gone" — a verify

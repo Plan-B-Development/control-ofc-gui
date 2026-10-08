@@ -12,8 +12,11 @@ class DaemonError(Exception):
 
     ``details`` is the envelope's optional structured payload. The daemon types
     it as ``Option<serde_json::Value>`` but every value it actually emits is a
-    JSON **object** — today the sole producer is ``validation_with_details``,
-    which sends ``{"field_violations": [...]}`` (DEC-160). The annotation
+    JSON **object**: ``validation_with_details`` sends
+    ``{"field_violations": [...]}`` (DEC-160), and the refusals that carry a
+    stable token — the stall probe, OpenFan calibration, the OpenFAN firmware
+    routes and maintenance window, a busy hwmon controller — send
+    ``{"reason": "<token>", ...}``. The annotation
     records that contract rather than the wider ``Any`` it replaced (OPEN-02
     item 02-d, from the DEC-091 P3 review): ``Any`` told a reader nothing, and
     the one consumer in the GUI —

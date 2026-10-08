@@ -28,6 +28,8 @@
   first curve with that id and the daemon's engine the last. The repeat now gets a new id on load, so every
   fan role follows the first, and the next save gives the daemon one curve per id. Until that save the
   daemon runs its own copy, so such a profile no longer counts as published.
+- **A fan verify that times out now says how long the GUI waited** (12 s). The message said 8 s for a
+  motherboard header and 10 s for a GPU fan.
 - **A Flat curve no longer offers or shows a sensor.** A Flat curve is a constant, and control-ofc-daemon
   4.2.0 commands it without reading any sensor. Earlier daemons skipped a Flat curve with no sensor set, so
   an AIO pump set to **Fixed** in Configure AIO, or a curve made with **Add Flat Curve**, was never driven.
