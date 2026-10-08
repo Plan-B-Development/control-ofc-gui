@@ -42,12 +42,14 @@ class TestProfileImportValidation:
         assert profile.controls == []
         assert profile.curves == []
 
-    def test_invalid_control_mode_raises(self):
+    def test_non_string_control_mode_raises(self):
+        """An unknown mode *string* is a newer format and loads (batch 6); a
+        non-string ``mode`` is not a mode at all."""
         data = {
-            "controls": [{"mode": "not_a_real_mode"}],
+            "controls": [{"mode": ["not", "a", "mode"]}],
             "curves": [],
         }
-        with pytest.raises(ValueError, match="not_a_real_mode"):
+        with pytest.raises((TypeError, ValueError)):
             Profile.from_dict(data)
 
     def test_non_dict_curve_points_raises(self):
@@ -55,7 +57,7 @@ class TestProfileImportValidation:
             "curves": [{"points": ["not", "dicts"]}],
             "controls": [],
         }
-        with pytest.raises(TypeError):
+        with pytest.raises(ValueError, match="curve point"):
             Profile.from_dict(data)
 
     def test_non_dict_control_member_raises(self):
@@ -489,8 +491,8 @@ class TestSettingsPageImportValidation:
                 "curves": [],
             },
             "bad": {
-                "controls": [{"mode": "invalid_mode_value"}],
-                "curves": [],
+                "controls": [],
+                "curves": [{"points": ["not", "dicts"]}],
             },
             "also_bad": "not a dict",
         }

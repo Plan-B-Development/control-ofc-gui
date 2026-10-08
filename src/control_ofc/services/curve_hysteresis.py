@@ -95,5 +95,7 @@ def hysteresis_card_text(curve: CurveConfig, supported: bool) -> str:
 
 def curve_meta_text(curve: CurveConfig, supported: bool = False) -> str:
     """The curve card's type line: the type, then the band where one was set."""
+    if curve.unknown_type is not None:
+        return curve.unknown_type
     band = hysteresis_card_text(curve, supported)
     return f"{curve.type.value} · {band}" if band else curve.type.value

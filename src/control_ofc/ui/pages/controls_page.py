@@ -1850,6 +1850,12 @@ class ControlsPage(QWidget):
                 self._on_delete_control(control_id)
                 return
             control.name = result["name"]
+            if result["mode"] != control.mode or result["curve_id"] != control.curve_id:
+                # The user chose a mode or a curve. The daemon validates and orders
+                # only a control whose mode is exactly "curve" (a Sync target's
+                # dependency, a curve reference), so a kept unknown mode must not
+                # ride along onto a curve the user picked.
+                control.unknown_mode = None
             control.mode = result["mode"]
             control.curve_id = result["curve_id"]
             control.manual_output_pct = result.get("manual_output_pct", control.manual_output_pct)
@@ -2145,6 +2151,18 @@ class ControlsPage(QWidget):
             return
         curve = profile.get_curve(curve_id)
         if not curve:
+            return
+        if curve.is_unsupported:
+            # Its fields are not ones this build models, and it saves as the
+            # document it came from — an edit here would be thrown away.
+            QMessageBox.information(
+                self,
+                "Curve not editable",
+                f"“{curve.name or curve.id}” is a {curve.unknown_type!r} curve, a type this "
+                "version cannot edit. It is kept exactly as it is and saved unchanged; "
+                "rename, duplicate, unlink or delete it here, or edit it with a newer "
+                "version.",
+            )
             return
 
         # Parameter/composite curves open a modal dialog; Graph/Stepped use the

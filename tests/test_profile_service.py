@@ -8,6 +8,7 @@ import pytest
 
 from control_ofc.services.profile_service import (
     PROFILE_SCHEMA_VERSION,
+    UNKNOWN_CURVE_TYPE_OUTPUT_PCT,
     ControlMember,
     ControlMode,
     CurveConfig,
@@ -211,7 +212,9 @@ def test_unknown_curve_type_falls_back_to_flat():
     data = {"id": "future", "name": "Future", "type": "spline", "flat_output_pct": 42.0}
     curve = CurveConfig.from_dict(data)
     assert curve.type == CurveType.FLAT
-    assert curve.interpolate(50.0) == 42.0
+    # At the daemon's fallback, not the document's own flat figure, which the
+    # daemon never reads for a type it does not know (batch 6).
+    assert curve.interpolate(50.0) == UNKNOWN_CURVE_TYPE_OUTPUT_PCT != data["flat_output_pct"]
 
 
 def test_mix_and_sync_are_known_types():

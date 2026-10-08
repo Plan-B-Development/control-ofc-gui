@@ -1015,6 +1015,12 @@ class TestOfflineDraftUX:
         ps.set_active("p1")
         page = ControlsPage(state=app_state, profile_service=ps, client=client)
         qtbot.addWidget(page)
+        # Held on the test instance, which pytest keeps until teardown ends: a
+        # page held only by the test's locals is cyclic garbage once the test
+        # returns, and a collection that fires during teardown destroyed its
+        # curve editor's ViewBox before the AxisItem painted over it (DEC-230's
+        # out-of-order destruction). This way qtbot's deleteLater takes it down.
+        self._page = page
         shown: list[tuple[str, str]] = []
         monkeypatch.setattr(
             QMessageBox,

@@ -21,7 +21,7 @@ import logging
 import math
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -140,6 +140,18 @@ def _opt(data: dict, key: str, default: float) -> object:
     return default if value is None else value
 
 
+def _unknown_keys(data: dict, known: frozenset[str]) -> dict:
+    """The keys of a profile document this build does not model, kept verbatim.
+
+    A profile written by a newer GUI or daemon can carry fields this one has
+    never heard of. Dropping them on load meant the next save — and every
+    activation, which saves first — sent the daemon a reduced profile. Each
+    level that parses a document keeps what it did not consume and writes it
+    back under its own known keys (`to_dict`), so a round trip loses nothing.
+    """
+    return {k: v for k, v in data.items() if k not in known}
+
+
 # ---------------------------------------------------------------------------
 # Curve types
 # ---------------------------------------------------------------------------
@@ -163,6 +175,27 @@ MIX_FUNCTIONS: tuple[str, ...] = ("max", "min", "average", "sum", "subtract")
 class CurvePoint:
     temp_c: float
     output_pct: float
+    #: Keys a newer format added to a point, written back unchanged.
+    extra_fields: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        return {**self.extra_fields, "temp_c": self.temp_c, "output_pct": self.output_pct}
+
+    @staticmethod
+    def from_dict(data: object) -> CurvePoint:
+        """One point. Extra keys are kept (they used to raise ``TypeError`` from
+        ``CurvePoint(**p)`` and fail the whole profile); the two values must be
+        finite numbers, which ``CurveConfig.from_dict`` checks."""
+        if not isinstance(data, dict):
+            raise ValueError("curve point must be an object")
+        return CurvePoint(
+            temp_c=data.get("temp_c"),  # type: ignore[arg-type]  # checked by the caller
+            output_pct=data.get("output_pct"),  # type: ignore[arg-type]
+            extra_fields=_unknown_keys(data, _CURVE_POINT_KEYS),
+        )
+
+
+_CURVE_POINT_KEYS = frozenset({"temp_c", "output_pct"})
 
 
 @dataclass
@@ -212,6 +245,21 @@ class CurveConfig:
     # (``services/curve_hysteresis.py``).
     hysteresis_c: float | None = None
 
+    #: Keys of this curve's document this build does not model (`_unknown_keys`).
+    extra_fields: dict = field(default_factory=dict)
+    #: The ``type`` string when this build does not know it (a newer format).
+    #: Such a curve is shown and evaluated as a Flat fallback but is never
+    #: edited, and it saves as the document it was loaded from (``raw_document``)
+    #: — never as the fallback, which would hand the daemon a Flat 50 % in its
+    #: place.
+    unknown_type: str | None = None
+    raw_document: dict = field(default_factory=dict)
+
+    @property
+    def is_unsupported(self) -> bool:
+        """True for a curve of a type this build cannot edit (``unknown_type``)."""
+        return self.unknown_type is not None
+
     @property
     def reads_sensor(self) -> bool:
         """Whether the daemon evaluates this curve at its own ``sensor_id``.
@@ -219,7 +267,13 @@ class CurveConfig:
         Flat is a constant and Mix/Sync combine or mirror other curves, so none
         of them reads one. They keep whatever ``sensor_id`` they last had (a type
         change, an older GUI that offered a sensor for Flat), which must be
-        neither offered for editing nor shown as if it drove the curve."""
+        neither offered for editing nor shown as if it drove the curve.
+
+        A curve of a type this build does not know does read one: the daemon
+        evaluates it at its ``sensor_id`` and skips the control while that sensor
+        does not read."""
+        if self.unknown_type is not None:
+            return True
         return self.type in (
             CurveType.GRAPH,
             CurveType.STEPPED,
@@ -300,14 +354,19 @@ class CurveConfig:
         return self.trigger_idle_pct
 
     def to_dict(self) -> dict:
+        if self.unknown_type is not None:
+            # Verbatim, but under the id and name this profile now gives it
+            # (a duplicate's new id, a rename).
+            return {**self.raw_document, "id": self.id, "name": self.name}
         d: dict = {
+            **self.extra_fields,
             "id": self.id,
             "name": self.name,
             "type": self.type.value,
             "sensor_id": self.sensor_id,
         }
         if self.type in (CurveType.GRAPH, CurveType.STEPPED):
-            d["points"] = [asdict(p) for p in self.points]
+            d["points"] = [p.to_dict() for p in self.points]
         elif self.type == CurveType.LINEAR:
             d["start_temp_c"] = self.start_temp_c
             d["start_output_pct"] = self.start_output_pct
@@ -336,16 +395,26 @@ class CurveConfig:
 
     @staticmethod
     def from_dict(data: dict) -> CurveConfig:
+        original = data
         type_str = data.get("type", "graph")
+        if not isinstance(type_str, str):
+            raise ValueError(f"curve type must be a string, got {type_str!r}")
+        unknown_type: str | None = None
         try:
             curve_type = CurveType(type_str)
         except ValueError:
-            log.warning("Unknown curve type '%s', falling back to flat", type_str)
+            # Shown and previewed as Flat — the daemon evaluates an unknown type
+            # at 50 % — but kept verbatim for saving (``to_dict``).
+            log.warning("Unknown curve type '%s' — kept as is, shown as flat", type_str)
             curve_type = CurveType.FLAT
-        raw_points = data.get("points", [])
+            unknown_type = type_str
+            data = {**data, "flat_output_pct": UNKNOWN_CURVE_TYPE_OUTPUT_PCT}
+        raw_points = data.get("points") or []
+        if not isinstance(raw_points, list):
+            raise ValueError("curve points must be a list")
         if len(raw_points) > MAX_CURVE_POINTS:
             raise ValueError(f"curve has too many points: {len(raw_points)} > {MAX_CURVE_POINTS}")
-        points = [CurvePoint(**p) for p in raw_points]
+        points = [CurvePoint.from_dict(p) for p in raw_points]
         for p in points:
             if not _is_finite(p.temp_c) or not _is_finite(p.output_pct):
                 raise ValueError("curve point has non-finite or non-numeric values")
@@ -378,9 +447,13 @@ class CurveConfig:
             trigger_load_pct=_require_finite(
                 _opt(data, "trigger_load_pct", 80.0), "trigger_load_pct"
             ),
-            mix_function=data.get("mix_function", "max"),
-            mix_curve_ids=list(data.get("mix_curve_ids", [])),
-            sync_control_id=data.get("sync_control_id", ""),
+            # ``null`` reads as "not set" here (`max`, no inputs, no target).
+            # The daemon accepts ``null`` only for ``mix_function``; the other two
+            # are plain fields there, so a save writes them back as values. An
+            # explicit null used to reach the curve card as ``None`` and crash it.
+            mix_function=_opt_str(data, "mix_function", "max"),
+            mix_curve_ids=_opt_str_list(data, "mix_curve_ids"),
+            sync_control_id=_opt_str(data, "sync_control_id", ""),
             sync_offset_pct=_require_finite(_opt(data, "sync_offset_pct", 0.0), "sync_offset_pct"),
             # Optional, and absent stays absent (``None`` = the daemon default):
             # defaulting it to a number here would write that number into every
@@ -393,7 +466,58 @@ class CurveConfig:
                 if data.get("hysteresis_c") is None
                 else _clamp_hysteresis(_require_finite(data["hysteresis_c"], "hysteresis_c"))
             ),
+            extra_fields=_unknown_keys(original, _CURVE_KEYS),
+            unknown_type=unknown_type,
+            raw_document=dict(original) if unknown_type is not None else {},
         )
+
+
+#: What the daemon evaluates a curve of a type it does not know at
+#: (`profile.rs::evaluate_curve`, "defaulting to 50%"), while the curve's
+#: sensor reads — without one the control is skipped. An unknown type is shown
+#: and previewed at this figure, never at the document's own
+#: ``flat_output_pct``, which the daemon would not use.
+UNKNOWN_CURVE_TYPE_OUTPUT_PCT = 50.0
+
+_CURVE_KEYS = frozenset(
+    {
+        "id",
+        "name",
+        "type",
+        "sensor_id",
+        "points",
+        "start_temp_c",
+        "start_output_pct",
+        "end_temp_c",
+        "end_output_pct",
+        "flat_output_pct",
+        "trigger_idle_temp_c",
+        "trigger_load_temp_c",
+        "trigger_idle_pct",
+        "trigger_load_pct",
+        "mix_function",
+        "mix_curve_ids",
+        "sync_control_id",
+        "sync_offset_pct",
+        "hysteresis_c",
+    }
+)
+
+
+def _opt_str(data: dict, key: str, default: str) -> str:
+    """A string field where ``null`` or a non-string means the default."""
+    value = data.get(key)
+    return value if isinstance(value, str) else default
+
+
+def _opt_str_list(data: dict, key: str) -> list[str]:
+    """A list-of-ids field where ``null`` means empty; non-string items are dropped."""
+    value = data.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{key} must be a list")
+    return [v for v in value if isinstance(v, str)]
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +543,8 @@ class ControlMember:
     # default (zero-RPM disabled, fans always spin). Ignored for non-GPU
     # members. See DEC-095 in the GUI ``DECISIONS.md``.
     fan_zero_rpm: bool = False
+    #: Keys of this member's document this build does not model (`_unknown_keys`).
+    extra_fields: dict = field(default_factory=dict)
 
     @property
     def target_id(self) -> str:
@@ -426,7 +552,13 @@ class ControlMember:
         return self.member_id
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {
+            **self.extra_fields,
+            "source": self.source,
+            "member_id": self.member_id,
+            "member_label": self.member_label,
+            "fan_zero_rpm": self.fan_zero_rpm,
+        }
 
     @staticmethod
     def from_dict(data: dict) -> ControlMember:
@@ -435,7 +567,11 @@ class ControlMember:
             member_id=data.get("member_id", ""),
             member_label=data.get("member_label", ""),
             fan_zero_rpm=bool(data.get("fan_zero_rpm", False)),
+            extra_fields=_unknown_keys(data, _MEMBER_KEYS),
         )
+
+
+_MEMBER_KEYS = frozenset({"source", "member_id", "member_label", "fan_zero_rpm"})
 
 
 # ---------------------------------------------------------------------------
@@ -739,11 +875,24 @@ class LogicalControl:
     offset_pct: float = 0.0  # fixed offset added to curve output
     minimum_pct: float = 0.0  # hard floor
 
+    #: Keys of this control's document this build does not model (`_unknown_keys`).
+    extra_fields: dict = field(default_factory=dict)
+    #: A ``mode`` string this build does not know (a newer format). The daemon
+    #: runs anything but ``"manual"`` as a curve, so it is shown as Curve — and
+    #: written back as it came while the control stays in Curve mode.
+    unknown_mode: str | None = None
+
     def to_dict(self) -> dict:
+        mode = (
+            self.unknown_mode
+            if self.unknown_mode is not None and self.mode == ControlMode.CURVE
+            else self.mode.value
+        )
         return {
+            **self.extra_fields,
             "id": self.id,
             "name": self.name,
-            "mode": self.mode.value,
+            "mode": mode,
             "curve_id": self.curve_id,
             "manual_output_pct": self.manual_output_pct,
             "members": [m.to_dict() for m in self.members],
@@ -757,8 +906,19 @@ class LogicalControl:
 
     @staticmethod
     def from_dict(data: dict) -> LogicalControl:
-        mode = ControlMode(data.get("mode", "curve"))
-        members = [ControlMember.from_dict(m) for m in data.get("members", [])]
+        raw_mode = data.get("mode", "curve")
+        if not isinstance(raw_mode, str):
+            raise ValueError(f"control mode must be a string, got {raw_mode!r}")
+        unknown_mode: str | None = None
+        try:
+            mode = ControlMode(raw_mode)
+        except ValueError:
+            # It used to fail the whole profile. The daemon evaluates every mode
+            # but "manual" as a curve (`profile_engine`), so that is what shows.
+            log.warning("Unknown control mode %r — shown as curve, kept as is", raw_mode)
+            mode = ControlMode.CURVE
+            unknown_mode = raw_mode
+        members = [ControlMember.from_dict(m) for m in data.get("members") or []]
         return LogicalControl(
             id=data.get("id", str(uuid.uuid4())[:8]),
             name=data.get("name", ""),
@@ -774,7 +934,27 @@ class LogicalControl:
             stop_pct=_require_finite(data.get("stop_pct", 0.0), "stop_pct"),
             offset_pct=_require_finite(data.get("offset_pct", 0.0), "offset_pct"),
             minimum_pct=_require_finite(data.get("minimum_pct", 0.0), "minimum_pct"),
+            extra_fields=_unknown_keys(data, _CONTROL_KEYS),
+            unknown_mode=unknown_mode,
         )
+
+
+_CONTROL_KEYS = frozenset(
+    {
+        "id",
+        "name",
+        "mode",
+        "curve_id",
+        "manual_output_pct",
+        "members",
+        "step_up_pct",
+        "step_down_pct",
+        "start_pct",
+        "stop_pct",
+        "offset_pct",
+        "minimum_pct",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -793,6 +973,14 @@ class Profile:
     controls: list[LogicalControl] = field(default_factory=list)
     curves: list[CurveConfig] = field(default_factory=list)
     version: int = PROFILE_SCHEMA_VERSION
+    #: Keys of the profile document this build does not model (`_unknown_keys`).
+    extra_fields: dict = field(default_factory=dict)
+
+    @property
+    def has_unsupported_content(self) -> bool:
+        """True when part of this profile is a newer format than this build edits:
+        a curve of an unknown type. It still loads, shows and saves faithfully."""
+        return any(c.is_unsupported for c in self.curves)
 
     def get_curve(self, curve_id: str) -> CurveConfig | None:
         for c in self.curves:
@@ -856,6 +1044,7 @@ class Profile:
 
     def to_dict(self) -> dict:
         return {
+            **self.extra_fields,
             "id": self.id,
             "name": self.name,
             "description": self.description,
@@ -866,7 +1055,7 @@ class Profile:
 
     @staticmethod
     def from_dict(data: dict) -> Profile:
-        version = data.get("version", 1)
+        version = profile_schema_version(data)
 
         # DEC-223: reject an unsafe id at the parse boundary, before either
         # construction path below — the id becomes an on-disk filename under
@@ -902,8 +1091,8 @@ class Profile:
         # current value is lower, ensuring CPU/pump members never run below
         # 30% on legacy profiles authored before the safety policy existed.
 
-        controls = [LogicalControl.from_dict(c) for c in data.get("controls", [])]
-        curves = [CurveConfig.from_dict(c) for c in data.get("curves", [])]
+        controls = [LogicalControl.from_dict(c) for c in data.get("controls") or []]
+        curves = _unique_curve_ids([CurveConfig.from_dict(c) for c in data.get("curves") or []])
 
         # DEC-442: an id carrying the it87 v2.0 chip suffix is brought to the id
         # the daemon publishes now, before the floor passes below classify the
@@ -944,8 +1133,74 @@ class Profile:
             description=data.get("description", ""),
             controls=controls,
             curves=curves,
-            version=PROFILE_SCHEMA_VERSION,
+            # A newer document keeps its own number: re-labelling it as this
+            # build's schema would claim a format it may not be.
+            version=max(version, PROFILE_SCHEMA_VERSION),
+            extra_fields=_unknown_keys(data, _PROFILE_KEYS),
         )
+
+
+_PROFILE_KEYS = frozenset({"id", "name", "description", "controls", "curves", "version"})
+
+
+def profile_schema_version(data: dict) -> int:
+    """A profile document's schema version.
+
+    An absent ``version`` is the current schema, as the daemon reads it
+    (`profile.rs::default_version`) — except for the v1 shape, which is
+    recognised by its ``assignments`` and never carried a number. It used to
+    read as v1 whatever the document held, so a versionless profile from other
+    tooling went through the v4 floor pass here and nowhere else: a chassis
+    role set to 0 % came back at 20 %. The pump/CPU floor does not depend on
+    this; ``heal_pump_floor`` raises it on every load whatever the version.
+    """
+    raw = data.get("version")
+    if raw is None:
+        return 1 if "assignments" in data else PROFILE_SCHEMA_VERSION
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"profile version must be an integer, got {raw!r}")
+    return raw
+
+
+def _unique_curve_ids(curves: list[CurveConfig]) -> list[CurveConfig]:
+    """Give a curve whose id repeats an earlier one's a new id.
+
+    A hand-edited or imported profile can repeat a curve id, and nothing
+    upstream rejects it. Every GUI lookup takes the first match, and so does the
+    daemon's per-curve lookup, but its engine index takes the last — so the
+    same document could drive a control from one curve in the GUI and another
+    in the daemon. A repeat is re-identified here, which leaves every reference
+    on the first, and the next save hands the daemon a document with one answer.
+    Until then the daemon still runs its own copy, so a loader marks such a
+    profile unpublished (:func:`repeats_curve_ids`).
+
+    The new id is derived (``<id>-2``, ``-3``, …), never random, so the same
+    document gets the same ids on every load.
+    """
+    taken = {c.id for c in curves}
+    seen: set[str] = set()
+    for curve in curves:
+        if curve.id in seen:
+            n = 2
+            while f"{curve.id}-{n}" in taken:
+                n += 1
+            fresh = f"{curve.id}-{n}"
+            taken.add(fresh)
+            log.warning(
+                "Profile repeats curve id %r; the repeat (%r) is now %r",
+                curve.id,
+                curve.name,
+                fresh,
+            )
+            curve.id = fresh
+        seen.add(curve.id)
+    return curves
+
+
+def repeats_curve_ids(document: dict) -> bool:
+    """Whether a profile document repeats a curve id (see :func:`_unique_curve_ids`)."""
+    ids = [c.get("id") for c in document.get("curves") or [] if isinstance(c, dict)]
+    return len(set(ids)) != len(ids)
 
 
 # ---------------------------------------------------------------------------
@@ -1117,6 +1372,7 @@ def unlink_curve(profile: Profile, curve_id: str) -> bool:
         if control.curve_id == curve_id:
             control.curve_id = ""
             control.mode = ControlMode.MANUAL
+            control.unknown_mode = None  # the user chose a mode
             changed = True
     return changed
 
@@ -1749,7 +2005,7 @@ def _migrate_v1_profile(data: dict) -> Profile:
 
     for i, a in enumerate(data.get("assignments", [])):
         curve_data = a.get("curve", {})
-        points = [CurvePoint(**p) for p in curve_data.get("points", [])]
+        points = [CurvePoint.from_dict(p) for p in curve_data.get("points", [])]
         curve_id = f"migrated_{i}"
         curve = CurveConfig(
             id=curve_id,
@@ -2190,7 +2446,7 @@ class ProfileService(QObject):
             return None
 
         errors: list[tuple[str, str]] = []
-        hydrated: list[Profile] = []
+        hydrated: list[tuple[Profile, bool]] = []
         for summary in summaries:
             ident = summary.get("id") if isinstance(summary, dict) else None
             if not ident:
@@ -2222,16 +2478,27 @@ class ProfileService(QObject):
                 log.warning("Failed to parse daemon profile %s: %s", ident, e)
                 errors.append((str(ident), str(e)))
                 continue
-            hydrated.append(profile)
+            hydrated.append((profile, repeats_curve_ids(document)))
 
         # Commit only fully-hydrated profiles. A failed fetch/parse leaves the
         # existing local mirror untouched, so a transient per-profile error
         # can't clobber a previously-good cached copy (DEC-175).
-        for profile in hydrated:
+        for profile, curve_ids_deduplicated in hydrated:
             self._profiles[profile.id] = profile
             self._daemon_ids.add(profile.id)
-            self._unpublished.discard(profile.id)
             self._forget_upload_outcome(profile.id)
+            if curve_ids_deduplicated:
+                # The GUI now follows the first of the repeated curves; the daemon
+                # still holds the document whose engine follows the last. Not
+                # "published" until a save sends it the re-identified one.
+                self._unpublished.add(profile.id)
+                log.warning(
+                    "Daemon profile %s repeats a curve id; it differs from the daemon's "
+                    "copy until it is saved",
+                    profile.id,
+                )
+            else:
+                self._unpublished.discard(profile.id)
             # Mirror to the local cache (write only — never re-upload) so the
             # profile stays editable while offline.
             self._write_local(profile)
@@ -2289,7 +2556,7 @@ class ProfileService(QObject):
                 # Re-save if migrated from any earlier schema version. The
                 # v4 migration may also raise ``minimum_pct`` on disk so the
                 # change persists across restarts.
-                schema_migrated = data.get("version", 1) < PROFILE_SCHEMA_VERSION
+                schema_migrated = profile_schema_version(data) < PROFILE_SCHEMA_VERSION
                 # DEC-102: also re-save when load-time sanitization dropped
                 # any members, so the cleanup persists. Without this,
                 # every restart would re-detect and re-warn forever.
@@ -2305,7 +2572,14 @@ class ProfileService(QObject):
                 ids_canonicalised = not members_sanitized and (
                     pre_sanitize_member_ids != post_sanitize_member_ids
                 )
-                if schema_migrated or members_sanitized or ids_canonicalised:
+                # A repeated curve id was re-identified by from_dict; persist it.
+                curve_ids_deduplicated = repeats_curve_ids(data)
+                if (
+                    schema_migrated
+                    or members_sanitized
+                    or ids_canonicalised
+                    or curve_ids_deduplicated
+                ):
                     # Local-only write: load() never re-uploads (no auto-sync).
                     self._write_local(profile)
                     if schema_migrated:
@@ -2320,6 +2594,8 @@ class ProfileService(QObject):
                             "Profile %s persisted with canonical hwmon chip names (DEC-442)",
                             profile.name,
                         )
+                    if curve_ids_deduplicated:
+                        log.info("Profile %s persisted with unique curve ids", profile.name)
                 loaded = True
             except Exception as e:
                 log.warning("Failed to load profile %s: %s", path, e)

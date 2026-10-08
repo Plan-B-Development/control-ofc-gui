@@ -13,6 +13,21 @@
 
 ### Fixed
 
+- **Saving or activating a profile no longer changes parts of it you did not touch.** A curve of a type this
+  version does not know used to be saved as a Flat 50 % curve, and activating the profile (which saves
+  first) handed the daemon that stand-in. Now the curve is kept exactly as it was, and its card names the
+  type and shows its sensor and the 50 % the daemon runs it at while that sensor reads. **Edit** explains
+  that this version cannot edit it. Fields this version does not know are kept at
+  every level of the profile instead of dropped. A profile no longer fails to load because of an unknown
+  control mode (it shows as Curve, as the daemon runs it) or an extra field on a curve point, and an empty
+  Mix function no longer crashes the curve card.
+- **A profile with no `version` is no longer treated as a very old one.** It is read as the current
+  format, as the daemon reads it, so a chassis fan you set below 20 % stays where you set it. Pump and CPU
+  fans still get their 30 % floor on every load.
+- **A profile that repeats a curve id is no longer read two ways without warning.** The GUI followed the
+  first curve with that id and the daemon's engine the last. The repeat now gets a new id on load, so every
+  fan role follows the first, and the next save gives the daemon one curve per id. Until that save the
+  daemon runs its own copy, so such a profile no longer counts as published.
 - **A Flat curve no longer offers or shows a sensor.** A Flat curve is a constant, and control-ofc-daemon
   4.2.0 commands it without reading any sensor. Earlier daemons skipped a Flat curve with no sensor set, so
   an AIO pump set to **Fixed** in Configure AIO, or a curve made with **Add Flat Curve**, was never driven.

@@ -147,7 +147,25 @@ applies it. Demo mode does not
 simulate the band and says so.
 
 A profile that uses a curve type an older build doesn't recognise degrades
-safely (the GUI falls back to flat; the daemon to 50%).
+safely: the daemon runs it at 50% while its sensor reads (without one it skips the
+control, as for any curve), and the GUI shows it at that 50%, with the type and its
+sensor on its card. The GUI cannot edit such a curve (**Edit** explains why), and
+it keeps the curve exactly as loaded: rename, duplicate, unlink and delete work,
+and a save or an activation sends the daemon the original curve, never a Flat
+stand-in.
+
+**Document fidelity.** Loading and saving a profile changes only what the user
+changed. Keys this build does not model are kept at every level (profile, control,
+member, curve, curve point) and written back. An unknown control `mode` is shown as
+**Curve**, as the daemon runs it, and is written back until the user picks a mode
+or a curve for that fan role. The GUI reads an explicit `null` for `mix_function`,
+`mix_curve_ids` or `sync_control_id` as "not set" and saves a value; the daemon
+accepts `null` only for `mix_function`. A curve id that repeats an earlier curve's
+gets a derived id on load (`<id>-2`, …), so every fan role follows the first curve
+with that id; the daemon's engine follows the last until the profile is saved, and
+a profile fetched from the daemon in that state counts as unpublished. A `type` or
+`mode` that is not a string (`null` included), a curve point that is not an object,
+and a non-integer `version` still fail the load.
 
 **GPU compatibility.** Every curve type is supported on AMD GPU fans. The daemon
 collapses whatever a curve produces into a single output percentage per cycle
@@ -315,7 +333,10 @@ floor via a `Min: NN%` badge on each role card.
 Profile schema v4 (introduced with GUI v1.10.0 / daemon v1.6.0)
 migrates v3-or-older profiles on load: any control whose members
 include a CPU/PUMP header gets `minimum_pct ← max(minimum_pct, 30)`;
-chassis-only controls are raised to 20%.
+chassis-only controls are raised to 20%. A document with no `version` is
+read as the current schema, as the daemon reads it, so it is not migrated
+— except the v1 shape, recognised by its `assignments`. The pump/CPU
+floor does not depend on the version: it is healed on every load.
 
 #### Per-member flooring — GPU members are never floored (DEC-119)
 `minimum_pct` is a single control-wide value, but the floor is applied

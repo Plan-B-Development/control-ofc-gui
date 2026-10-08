@@ -71,6 +71,8 @@ class CurvePreview(QWidget):
         curve = self._curve
         if curve is None:
             return ""
+        if curve.is_unsupported:
+            return f"Not editable here · {curve.unknown_type}"
         if curve.type == CurveType.LINEAR:
             return (
                 f"{curve.start_temp_c:.0f}°C→{curve.end_temp_c:.0f}°C: "
