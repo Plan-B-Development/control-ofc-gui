@@ -111,6 +111,11 @@ The GUI surfaces freshness for display, not for control gating (the daemon owns 
 - surface a warning
 - not present a stale value as live
 
+A reading is fresh below twice the daemon's running poll interval and stale below five times it
+(never tighter than 2 s / 10 s), the daemon's own rule; the GUI learns the interval from
+`GET /config`. While the daemon is not connected nothing is shown fresh, and the Controls cards
+show no output figure (`docs/07 § Freshness thresholds`).
+
 ## History retention
 The GUI stores only the last **2 hours** of polling history in an in-memory ring buffer; nothing is written to disk, so history starts empty at every launch. Avoid building a heavy telemetry database.
 

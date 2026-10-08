@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
     AmdGpuCapability,
     Capabilities,
     FanReading,
@@ -172,7 +173,7 @@ class TestOverrideAndState:
     def test_stale_reading_marks_the_card(self):
         control = _control(member_ids=("f1",))
         fan = _fan("f1", age_ms=60_000)
-        assert fan.freshness is not Freshness.FRESH
+        assert fan.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) is not Freshness.FRESH
         card = _cards([fan], active_profile=_profile(control), overrides=[])[0]
         assert card.state is FanState.STALE
 

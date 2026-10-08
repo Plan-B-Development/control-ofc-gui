@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
     FanReading,
     Freshness,
     SensorReading,
@@ -319,7 +320,7 @@ def test_parse_sensors():
     assert len(sensors) == 1
     assert sensors[0].id == "hwmon:k10temp:Tctl"
     assert sensors[0].value_c == 45.5
-    assert sensors[0].freshness == Freshness.FRESH
+    assert sensors[0].freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.FRESH
     # DEC-193: a sensor with no control_eligible field defaults to selectable.
     assert sensors[0].control_eligible is True
 
@@ -367,17 +368,17 @@ def test_parse_fans():
 
 def test_sensor_freshness_stale():
     s = SensorReading(id="test", age_ms=5000)
-    assert s.freshness == Freshness.STALE
+    assert s.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.STALE
 
 
 def test_sensor_freshness_invalid():
     s = SensorReading(id="test", age_ms=15000)
-    assert s.freshness == Freshness.INVALID
+    assert s.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.INVALID
 
 
 def test_fan_freshness():
     f = FanReading(id="test", age_ms=500)
-    assert f.freshness == Freshness.FRESH
+    assert f.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.FRESH
 
 
 def test_parse_sensor_history():

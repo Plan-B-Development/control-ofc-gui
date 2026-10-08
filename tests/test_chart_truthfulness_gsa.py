@@ -19,7 +19,12 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QTreeWidgetItem
 
-from control_ofc.api.models import FanReading, HistoryPoint, SensorReading
+from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
+    FanReading,
+    HistoryPoint,
+    SensorReading,
+)
 from control_ofc.constants import HISTORY_GAP_BREAK_S
 from control_ofc.services.app_state import AppState
 from control_ofc.services.history_store import HistoryStore, TimestampedReading, boottime_s
@@ -70,7 +75,7 @@ class TestSampleTimeStamping:
             clocks.advance(1.0)
             frozen = _cpu(50.0, age_ms=age_ms)
             store.record_sensors([frozen])
-        assert frozen.freshness.name == "STALE"
+        assert frozen.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS).name == "STALE"
         assert len(store.get_series("sensor:cpu")) == 1
 
         # The sensor recovers: a new sample is a new point.
@@ -130,7 +135,9 @@ class TestRailStaleness:
         """At a 6 s daemon cadence a healthy reading is often 5 s old: it is
         current, so it is neither marked nor dropped from the max (DEC-270)."""
         slow = SensorReading(id="b", kind="cpu_temp", label="B", value_c=90.0, age_ms=5000)
-        assert slow.freshness.name == "STALE"  # the 2 s rule would have marked it
+        assert (
+            slow.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS).name == "STALE"
+        )  # the 2 s rule would have marked it
         panel.update_sensors([slow])
         assert panel._sensor_items["b"].text(1) == "90.0\u00b0C"
         assert _group_item(panel, "cpu").text(1) == "max 90.0\u00b0C"

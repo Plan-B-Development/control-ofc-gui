@@ -42,8 +42,12 @@ def test_ribbon_thermal_state_shows_and_hides(qtbot):
     assert ribbon._thermal_pill.state() == "critical"
     ribbon.set_thermal_state(None)
     assert ribbon._thermal_pill.isHidden()
-    ribbon.set_thermal_state("unrecognised")  # unknown -> stays hidden, not shown blank
-    assert ribbon._thermal_pill.isHidden()
+    # A token this build does not know (a newer daemon) shows as a neutral chip
+    # with the daemon's own word — never hidden, never blank, never an alarm.
+    ribbon.set_thermal_state("throttle_assist")
+    assert not ribbon._thermal_pill.isHidden()
+    assert ribbon._thermal_pill.text() == "THERMAL: THROTTLE_ASSIST"
+    assert ribbon._thermal_pill.state() == "info"
 
 
 def test_ribbon_thermal_pill_text_reflects_state(qtbot):

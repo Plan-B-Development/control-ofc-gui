@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.api.models import default_reading_freshness
 from control_ofc.knowledge.sensor_knowledge import (
     BOARD_SENSOR_OVERRIDES,
     kernel_doc_url_for_chip,
@@ -38,6 +39,7 @@ from control_ofc.ui.theme import active_theme
 if TYPE_CHECKING:
     from control_ofc.api.models import (
         BoardInfo,
+        Freshness,
         InventoryTempSensor,
         SensorReading,
         SensorThresholds,
@@ -142,8 +144,13 @@ def build_sensor_detail_html(
     daemon_classification: InventoryTempSensor | None = None,
     *,
     classification: SensorClassification,
+    freshness: Freshness | None = None,
 ) -> str:
     """Build the full self-contained HTML document for the detail dialog.
+
+    ``freshness`` is the caller's judgement (``AppState.display_freshness``,
+    which follows the daemon's cadence and the connection); without one the
+    daemon's default cadence is assumed.
 
     ``classification`` is the caller's — in the app, ``AppState.classify_sensor``,
     so the board vendor and the user's "Treat as coolant" override reach this
@@ -194,7 +201,7 @@ def build_sensor_detail_html(
     state_rows: list[tuple[str, str]] = [
         ("Value", f"{sensor.value_c:.1f} °C"),
         ("Age", f"{sensor.age_ms} ms"),
-        ("Freshness", sensor.freshness.value),
+        ("Freshness", (freshness or default_reading_freshness(sensor)).value),
     ]
     trend = _trend_arrow(sensor.rate_c_per_s)
     if trend is not None:
@@ -357,6 +364,7 @@ class SensorDetailDialog(QDialog):
         parent: QWidget | None = None,
         *,
         classification: SensorClassification,
+        freshness: Freshness | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Diagnostics_SensorDetail_Dialog")
@@ -371,7 +379,11 @@ class SensorDetailDialog(QDialog):
         self._browser.setOpenExternalLinks(True)
         self._browser.setHtml(
             build_sensor_detail_html(
-                sensor, board, daemon_classification, classification=classification
+                sensor,
+                board,
+                daemon_classification,
+                classification=classification,
+                freshness=freshness,
             )
         )
         layout.addWidget(self._browser, 1)
@@ -391,6 +403,7 @@ class SensorDetailDialog(QDialog):
         daemon_classification: InventoryTempSensor | None = None,
         *,
         classification: SensorClassification,
+        freshness: Freshness | None = None,
     ) -> None:
         """Replace contents in place — used when the dialog is reopened on a
         different row of the table without rebuilding the widget."""
@@ -398,6 +411,10 @@ class SensorDetailDialog(QDialog):
         self.setWindowTitle(f"Sensor Detail — {title}")
         self._browser.setHtml(
             build_sensor_detail_html(
-                sensor, board, daemon_classification, classification=classification
+                sensor,
+                board,
+                daemon_classification,
+                classification=classification,
+                freshness=freshness,
             )
         )

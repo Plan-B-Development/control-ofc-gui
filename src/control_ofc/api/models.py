@@ -33,6 +33,50 @@ class Freshness(Enum):
     INVALID = "invalid"
 
 
+#: The daemon's poll interval when the GUI has not learned it (`GET /config`'s
+#: ``polling.poll_interval_ms``): the daemon's own default.
+DEFAULT_DAEMON_POLL_INTERVAL_MS = 1000
+
+#: The fixed floors the cadence-scaled limits never go below — the GUI's limits
+#: before they followed the daemon's cadence, still right at its default.
+_FRESH_FLOOR_MS = 2000
+_INVALID_FLOOR_MS = 10000
+
+_FRESHNESS_ORDER = (Freshness.FRESH, Freshness.STALE, Freshness.INVALID)
+
+
+def freshness_for_age(age_ms: int, poll_interval_ms: int) -> Freshness:
+    """How current a reading of ``age_ms`` is, judged against the daemon's cadence.
+
+    The daemon's own rule (`health/staleness.rs`): fresh within two poll intervals,
+    stale up to five, then worse. Its interval is admin-configurable up to 6 s, and
+    a reading's age naturally runs up to one full interval, so a fixed 2 s limit
+    called every healthy reading stale for most of each cycle at a slow cadence,
+    and at 2 s raised and cleared a "stale" alert every few seconds. The limits
+    never drop below the old fixed 2 s / 10 s.
+    """
+    interval = max(1, int(poll_interval_ms))
+    if age_ms < max(_FRESH_FLOOR_MS, 2 * interval):
+        return Freshness.FRESH
+    if age_ms < max(_INVALID_FLOOR_MS, 5 * interval):
+        return Freshness.STALE
+    return Freshness.INVALID
+
+
+def default_reading_freshness(reading: SensorReading | FanReading) -> Freshness:
+    """A reading's freshness at the daemon's default cadence, connected.
+
+    The fallback for a view builder given no ``freshness`` judge (tests, previews);
+    a live page passes ``AppState.display_freshness``.
+    """
+    return reading.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS)
+
+
+def at_least(freshness: Freshness, floor: Freshness) -> Freshness:
+    """The worse of two freshness values."""
+    return max(freshness, floor, key=_FRESHNESS_ORDER.index)
+
+
 # ---------------------------------------------------------------------------
 # Capabilities
 # ---------------------------------------------------------------------------
@@ -1021,13 +1065,13 @@ class SensorReading:
     # pre-2.3.0 daemon that omits the field leaves every sensor selectable.
     control_eligible: bool = True
 
-    @property
-    def freshness(self) -> Freshness:
-        if self.age_ms < 2000:
-            return Freshness.FRESH
-        if self.age_ms < 10000:
-            return Freshness.STALE
-        return Freshness.INVALID
+    def freshness_at(self, poll_interval_ms: int) -> Freshness:
+        """This reading's freshness at the daemon's cadence (:func:`freshness_for_age`).
+
+        Read it through ``AppState.reading_freshness`` / ``display_freshness``,
+        which know the cadence and the connection.
+        """
+        return freshness_for_age(self.age_ms, poll_interval_ms)
 
 
 @dataclass
@@ -1092,13 +1136,13 @@ class FanReading:
     # command changes. `None` = not reported (older daemon / non-hwmon).
     duty_not_holding: bool | None = None
 
-    @property
-    def freshness(self) -> Freshness:
-        if self.age_ms < 2000:
-            return Freshness.FRESH
-        if self.age_ms < 10000:
-            return Freshness.STALE
-        return Freshness.INVALID
+    def freshness_at(self, poll_interval_ms: int) -> Freshness:
+        """This reading's freshness at the daemon's cadence (:func:`freshness_for_age`).
+
+        Read it through ``AppState.reading_freshness`` / ``display_freshness``,
+        which know the cadence and the connection.
+        """
+        return freshness_for_age(self.age_ms, poll_interval_ms)
 
     def requested_duty(self) -> tuple[int | None, bool]:
         """The duty the daemon asked for, and whether it is an approximation.
@@ -2661,7 +2705,10 @@ def parse_sensors(data: dict) -> list[SensorReading]:
         # wraps this in DaemonError handling so a clear error surfaces to
         # the user rather than an empty list. Tests pin this behaviour.
         raise TypeError(f"expected 'sensors' to be a list, got {type(sensors).__name__}")
-    return [_parse_sensor_reading(s) for s in sensors]
+    # A non-object element is skipped, as `parse_fans` skips one. Handing it to
+    # `_parse_sensor_reading` made a blank sensor — id "", 0 °C, age 0, so
+    # "fresh" — that the tables and the history then showed as a real reading.
+    return [_parse_sensor_reading(s) for s in sensors if isinstance(s, dict)]
 
 
 def _parse_sensor_reading[T: SensorReading](raw: dict, cls: type[T] = SensorReading) -> T:
@@ -2705,7 +2752,9 @@ def parse_fans(data: dict) -> list[FanReading]:
 
 
 def parse_hwmon_headers(data: dict) -> list[HwmonHeader]:
-    return [_hwmon_header_from(h) for h in data.get("headers", [])]
+    # A non-object element is skipped, as `parse_fans` does: `_hwmon_header_from`
+    # calls `.get` on it, and the AttributeError stopped every later poll update.
+    return [_hwmon_header_from(h) for h in data.get("headers", []) if isinstance(h, dict)]
 
 
 def _hwmon_header_from(h: dict) -> HwmonHeader:

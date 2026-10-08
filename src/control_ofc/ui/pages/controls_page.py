@@ -1313,6 +1313,12 @@ class ControlsPage(QWidget):
             # stale "Not controlled" chip, and a disconnected GUI does not know
             # whether the control is still skipped.
             self._clear_all_skipped()
+            # The same for "Now: N%": with the daemon gone it may already have
+            # handed the fans back to firmware, so the last figure is not what
+            # they run at. Absence renders "—", as for a control the daemon did
+            # not report (277-k).
+            for card in self._control_cards.values():
+                card.clear_output()
 
     # ─── Refresh all ─────────────────────────────────────────────────
 

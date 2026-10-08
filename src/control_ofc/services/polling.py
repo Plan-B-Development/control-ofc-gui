@@ -63,6 +63,11 @@ class _PollWorker(QObject):
     openfan_roles_ready = Signal(list)  # list[OpenFanRole]
     active_profile_ready = Signal(object)  # ActiveProfileInfo | None
     hw_diagnostics_ready = Signal(object)  # HardwareDiagnosticsResult
+    #: The daemon's running poll interval in ms (`GET /config`).
+    poll_interval_ready = Signal(int)
+    #: The daemon restarted between two successful polls (its uptime went back,
+    #: or its version changed) without a poll failing in between.
+    daemon_restarted = Signal()
 
     # Connection state
     connected = Signal()
@@ -77,11 +82,21 @@ class _PollWorker(QObject):
         self._client: DaemonClient | None = None
         self._poll_count = 0
         self._consecutive_failures = 0
-        # DEC-229: latches once /diagnostics/hardware has been fetched. DMI
-        # board identity cannot change without a reboot, so one success per
-        # process is enough — but a *failed* attempt must not latch, or a GUI
-        # started before the daemon would never learn the board.
-        self._hw_diag_sent = False
+        # DEC-229: /diagnostics/hardware carries the DMI board identity, which
+        # keys fan names. It is re-read on every capabilities cycle (~0.6 ms per
+        # 300 s), on a reconnect and after a restart, not latched once per
+        # process: it also carries the thermal trip point and the coolant limit
+        # System State shows beside the live thermal state, and a latched copy
+        # kept a limit the user had since changed, or the fallback trip point of
+        # a daemon that had not finished its first tick. A request (a coolant
+        # limit write) re-reads it on the next cycle.
+        self._hw_diag_refresh_pending = False
+        # Restart detection: the last successful poll's daemon uptime and version.
+        # A restart quick enough that no poll failed leaves capabilities, headers
+        # and the active profile up to 300 s stale otherwise.
+        self._last_uptime_s: int | None = None
+        self._last_daemon_version: str | None = None
+        self._caps_refresh_pending = False
         self._caps_interval = max(1, CAPABILITIES_REFRESH_INTERVAL_S * 1000 // POLL_INTERVAL_MS)
         self._history = history
         # P2-D: dirs already announced to the daemon. Logged at INFO the
@@ -113,6 +128,11 @@ class _PollWorker(QObject):
         # a verify or sweep persists its verdict after it releases the pause.
         self._last_verify_active = False
         self._headers_refresh_next_cycle = False
+
+    def request_hw_diagnostics_refresh(self) -> None:
+        """Re-read ``/diagnostics/hardware`` on the next cycle (queued from
+        ``AppState``, like :meth:`request_headers_refresh`)."""
+        self._hw_diag_refresh_pending = True
 
     def request_headers_refresh(self) -> None:
         """Re-read ``/hwmon/headers`` on the next cycle (`TS-ae`).
@@ -164,7 +184,8 @@ class _PollWorker(QObject):
             # gain/lose hardware or profiles without a reconnect; periodic
             # re-fetch keeps capabilities, headers, and the active profile
             # from going stale between reconnects).
-            if self._poll_count % self._caps_interval == 0:
+            if self._poll_count % self._caps_interval == 0 or self._caps_refresh_pending:
+                self._caps_refresh_pending = False
                 caps = client.capabilities()
                 self.capabilities_ready.emit(caps)
                 self.headers_ready.emit(client.hwmon_headers())
@@ -199,27 +220,8 @@ class _PollWorker(QObject):
                 # names correct from the first poll; previously nothing outside
                 # the System State page ever asked, so the board stayed unknown
                 # until the user happened to visit that page.
-                if not self._hw_diag_sent:
-                    try:
-                        self.hw_diagnostics_ready.emit(client.hardware_diagnostics())
-                        self._hw_diag_sent = True
-                    except Exception as e:
-                        # Deliberately broader than the poll cycle's own handler.
-                        # This is a cosmetic naming lookup; it must never be able
-                        # to affect telemetry. `parse_hardware_diagnostics` does
-                        # bare `data.get(...)`, so a well-formed 200 carrying a
-                        # malformed body raises AttributeError/TypeError — which
-                        # the narrow tuple missed. AttributeError escaped BOTH
-                        # handlers, and because it raised before `_poll_count +=
-                        # 1` the caps branch re-fired every tick: no status /
-                        # sensors / fans, no connected or disconnected emit (so
-                        # no backoff and no state change), and one CRITICAL per
-                        # second into the bounded event deque the support bundle
-                        # reads. TypeError merely reached the outer handler and
-                        # faked a disconnect. Neither is reachable against a
-                        # well-formed daemon, but the blast radius is the whole
-                        # GUI and the cost of catching broadly here is nil.
-                        log.debug("Hardware diagnostics prefetch failed: %s", e)
+                self._hw_diag_refresh_pending = True
+                self._fetch_poll_interval(client, caps)
                 # Register the GUI's profile directory with the daemon so
                 # POST /profile/activate accepts GUI-owned profile paths. Runs
                 # on this worker thread to avoid stalling the Qt main loop on
@@ -228,6 +230,28 @@ class _PollWorker(QObject):
                 # restarted with a stale search-dir list. The endpoint is
                 # additive and deduplicated.
                 self._register_profile_search_dir(client)
+
+            if self._hw_diag_refresh_pending:
+                self._hw_diag_refresh_pending = False
+                try:
+                    self.hw_diagnostics_ready.emit(client.hardware_diagnostics())
+                except Exception as e:
+                    # Deliberately broader than the poll cycle's own handler.
+                    # This is a cosmetic naming lookup; it must never be able
+                    # to affect telemetry. `parse_hardware_diagnostics` does
+                    # bare `data.get(...)`, so a well-formed 200 carrying a
+                    # malformed body raises AttributeError/TypeError — which
+                    # the narrow tuple missed. AttributeError escaped BOTH
+                    # handlers, and because it raised before `_poll_count +=
+                    # 1` the caps branch re-fired every tick: no status /
+                    # sensors / fans, no connected or disconnected emit (so
+                    # no backoff and no state change), and one CRITICAL per
+                    # second into the bounded event deque the support bundle
+                    # reads. TypeError merely reached the outer handler and
+                    # faked a disconnect. Neither is reachable against a
+                    # well-formed daemon, but the blast radius is the whole
+                    # GUI and the cost of catching broadly here is nil.
+                    log.debug("Hardware diagnostics prefetch failed: %s", e)
 
             # Use batch endpoint to reduce HTTP overhead (3 calls → 1)
             # (sensors list needed for history pre-fill below)
@@ -249,6 +273,7 @@ class _PollWorker(QObject):
             self.sensors_ready.emit(sensors)
             self.fans_ready.emit(fans)
             self._refresh_headers_if_due(client, status)
+            self._note_daemon_identity(status)
 
             # Pre-fill history from daemon on first successful poll
             if self._poll_count == 0 and self._history and sensors:
@@ -264,7 +289,20 @@ class _PollWorker(QObject):
                 self._poll_count += 1
             self._consecutive_failures = 0
 
-        except (DaemonError, ConnectionError, OSError, KeyError, ValueError, TypeError) as e:
+        except (
+            DaemonError,
+            ConnectionError,
+            OSError,
+            KeyError,
+            ValueError,
+            TypeError,
+            AttributeError,
+        ) as e:
+            # `AttributeError` too: a list element of the wrong shape (a string
+            # where a header object belongs) raises it from a parser's
+            # `.get(...)`, and escaping here stopped every later update while the
+            # GUI still showed "connected".
+            #
             # P3-1: parse-shaped exceptions (KeyError/ValueError/TypeError from
             # a malformed-but-200 payload) and raw transport errors from the
             # fallback legs / capabilities() previously
@@ -281,6 +319,56 @@ class _PollWorker(QObject):
             self.disconnected.emit()
             # Drop client so it reconnects next attempt
             self._close_client()
+
+    def _note_daemon_identity(self, status: DaemonStatus) -> None:
+        """Notice a daemon restart between two successful polls.
+
+        A restart that completes while this GUI's requests simply wait in the
+        socket's queue fails no poll, so the reconnect path never runs and
+        capabilities stay as the old daemon described them for up to 300 s —
+        after a downgrade, offering settings the running daemon ignores. Its
+        uptime going back, or its version changing, says it restarted: the next
+        cycle re-reads everything a reconnect would.
+        """
+        # Only well-formed values count: a malformed status must not fake a restart.
+        uptime = status.uptime_seconds
+        if isinstance(uptime, bool) or not isinstance(uptime, int):
+            uptime = None
+        version = status.daemon_version if isinstance(status.daemon_version, str) else None
+        version = version or None
+        restarted = (
+            uptime is not None and self._last_uptime_s is not None and uptime < self._last_uptime_s
+        ) or (
+            version is not None
+            and self._last_daemon_version is not None
+            and version != self._last_daemon_version
+        )
+        if uptime is not None:
+            self._last_uptime_s = uptime
+        if version is not None:
+            self._last_daemon_version = version
+        if restarted:
+            log.info("Daemon restarted (uptime %ss, version %s); re-reading", uptime, version)
+            self._caps_refresh_pending = True
+            self.daemon_restarted.emit()
+
+    def _fetch_poll_interval(self, client: DaemonClient, caps: Capabilities) -> None:
+        """Learn the daemon's running poll interval, which freshness scales with.
+
+        Best-effort: a daemon that does not report its configuration, or a read
+        that fails, leaves the last known interval (the daemon default at first).
+        """
+        if daemon_supports("daemon_config_report", caps) is False:
+            return
+        try:
+            key = client.get_daemon_config().get("polling.poll_interval_ms")
+        except Exception as e:
+            # Display-only, like the diagnostics prefetch: never fail a poll over it.
+            log.debug("Daemon config read for the poll interval failed: %s", e)
+            return
+        running = key.running_value if key is not None else None
+        if isinstance(running, int) and not isinstance(running, bool) and running > 0:
+            self.poll_interval_ready.emit(running)
 
     def _refresh_headers_if_due(self, client: DaemonClient, status: DaemonStatus) -> None:
         """Re-read the headers when the active profile moved, a diagnostic ended,
@@ -422,6 +510,11 @@ class PollingService(QObject):
         self._worker.openfan_roles_ready.connect(state.set_openfan_roles)
         self._worker.active_profile_ready.connect(self._on_active_profile)
         self._worker.hw_diagnostics_ready.connect(self._on_hw_diagnostics)
+        state.hw_diagnostics_refresh_requested.connect(
+            self._worker.request_hw_diagnostics_refresh, Qt.ConnectionType.QueuedConnection
+        )
+        self._worker.poll_interval_ready.connect(state.set_daemon_poll_interval)
+        self._worker.daemon_restarted.connect(self._on_daemon_restarted)
         self._worker.connected.connect(self._on_connected)
         self._worker.disconnected.connect(self._on_disconnected)
 
@@ -547,6 +640,16 @@ class PollingService(QObject):
         """
         if self._diag is not None:
             self._diag.set_hw_diagnostics(result)
+
+    def _on_daemon_restarted(self) -> None:
+        """A restart noticed without a failed poll (``_note_daemon_identity``).
+
+        The same session-scoped reset a reconnect does: the session min/max
+        describe a daemon session that has ended.
+        """
+        self._state.reset_session_stats()
+        if self._diag is not None:
+            self._diag.log_event("info", "polling", "Daemon restarted")
 
     def _on_disconnected(self) -> None:
         was_connected = self._was_connected

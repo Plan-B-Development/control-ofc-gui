@@ -1840,6 +1840,10 @@ class SettingsPage(QWidget):
         # Re-read rather than trusting the local control: this is what makes the
         # restart-pending annotation the daemon's verdict instead of our memory.
         self._refresh_daemon_config()
+        if key == "safety.coolant_limit_c" and self._state is not None:
+            # System State shows the limit from `/diagnostics/hardware`; without a
+            # re-read a later coolant emergency named the limit from before.
+            self._state.request_hw_diagnostics_refresh()
 
     def _set_daemon_cfg_result(self, text: str, css: str) -> None:
         self._daemon_cfg_result.setText(text)

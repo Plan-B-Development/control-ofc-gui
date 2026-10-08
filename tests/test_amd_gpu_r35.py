@@ -8,6 +8,7 @@ resolution.
 from __future__ import annotations
 
 from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
     AmdGpuCapability,
     Capabilities,
 )
@@ -253,7 +254,7 @@ class TestSourceLabelHandling:
         from control_ofc.api.models import Freshness, SensorReading
 
         reading = SensorReading(source="amd_gpu", age_ms=500)
-        assert reading.freshness == Freshness.FRESH
+        assert reading.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.FRESH
 
         stale = SensorReading(source="amd_gpu", age_ms=5000)
-        assert stale.freshness == Freshness.STALE
+        assert stale.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.STALE

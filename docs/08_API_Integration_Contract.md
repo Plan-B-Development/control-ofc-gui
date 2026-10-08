@@ -651,7 +651,8 @@ This endpoint feeds:
 
 `overall_status` and each subsystem `status` is one of `"ok" | "warn" | "crit"`
 (overall is the worst of all subsystems). The GUI treats `"ok"` as healthy and any
-other value as a warning; an absent/unparseable field falls back to `"unknown"`.
+other value — a token a newer daemon adds included — as a warning; an absent/unparseable field
+falls back to `"unknown"`, shown neutral.
 Emitted by the daemon's `HealthStatus::Display` and pinned on both sides by
 `health_status_display_wire_strings` (daemon) and the dashboard health tests (GUI).
 

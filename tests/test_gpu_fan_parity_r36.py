@@ -7,6 +7,7 @@ GPU fan entries, GPU Status event log button, fan role source compatibility.
 from __future__ import annotations
 
 from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
     AmdGpuCapability,
     Capabilities,
     ConnectionState,
@@ -156,7 +157,7 @@ class TestFanSourceCompatibility:
         from control_ofc.api.models import Freshness
 
         fan = _gpu_fan()
-        assert fan.freshness == Freshness.FRESH
+        assert fan.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.FRESH
 
     def test_gpu_fan_stale(self):
         from control_ofc.api.models import Freshness
@@ -167,7 +168,7 @@ class TestFanSourceCompatibility:
             rpm=0,
             age_ms=5000,
         )
-        assert fan.freshness == Freshness.STALE
+        assert fan.freshness_at(DEFAULT_DAEMON_POLL_INTERVAL_MS) == Freshness.STALE
 
     def test_gpu_fan_id_format(self):
         fan = _gpu_fan()

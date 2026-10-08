@@ -51,6 +51,26 @@
 - **"Daemon unavailable — not saved." is shown when it applies.** Saving a daemon setting, a profile
   search directory or a preferred sensor while the daemon was unreachable reported a generic failure
   instead. The diagnostic tools also start a fresh connection after the daemon has been unreachable.
+- **Healthy sensors and fans no longer flicker to "stale" when the daemon polls slowly.** The app called a
+  reading stale after a fixed 2 seconds, while the daemon allows twice its poll interval, which can be set
+  as slow as 6 seconds. At a slow interval healthy readings showed stale most of the time, and at 2 seconds
+  a "Sensor … stale" alert came and went every few seconds. The app now reads the daemon's interval and
+  uses the daemon's own rule.
+- **Readings are no longer shown as live after the daemon stops.** The Overview fan table kept its
+  "fresh" pills and the Controls cards kept "Now: N%" while nothing was updating them, and the daemon may
+  already have handed the fans back to the motherboard. They now say "stale" and "—" until the daemon is
+  back.
+- **A daemon restart is noticed even when no poll failed.** Capabilities, fan headers and the active
+  profile could stay as the previous daemon described them for up to five minutes; after a downgrade, the
+  curve editor still offered settings the running daemon ignores. The app now re-reads them as soon as the
+  daemon's uptime goes back or its version changes.
+- **System State's coolant limit and thermal trip point stay current.** They were read once per session,
+  so after you changed the coolant limit in Settings a later coolant emergency still named the old limit.
+  They are now re-read after that change, after a reconnect or restart, and every five minutes.
+- **An unknown thermal state still shows on the status ribbon**, as a neutral pill with the daemon's word,
+  instead of the pill disappearing, and an unknown overall status reads as a warning on Overview, as
+  documented. A malformed entry in the daemon's sensor or fan-header list is skipped instead of appearing
+  as a 0 °C sensor or stopping updates.
 
 ## [4.1.1] — 2026-10-08
 

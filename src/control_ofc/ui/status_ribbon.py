@@ -158,11 +158,15 @@ class StatusRibbon(QWidget):
             self._thermal_pill.hide()
 
     def set_thermal_state(self, thermal_state: str | None) -> None:
-        entry = THERMAL_STATES.get(thermal_state or "")
-        if entry is None:
+        if not thermal_state:
+            # No poll has said anything yet.
             self._thermal_pill.hide()
             return
-        label, chip = entry
+        # A token this build does not know (a newer daemon) still shows, as a
+        # neutral chip carrying the daemon's own word — `THERMAL_STATES`' rule,
+        # which the footer already followed. Hiding it left the one bar on
+        # every page silent about a state the daemon took the trouble to report.
+        label, chip = THERMAL_STATES.get(thermal_state, (f"Thermal: {thermal_state}", "InfoChip"))
         self._thermal_pill.set_text(label)
         self._thermal_pill.set_state(_CHIP_TO_PILL.get(chip, "info"))
         self._thermal_pill.show()

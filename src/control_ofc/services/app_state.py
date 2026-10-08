@@ -11,6 +11,7 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from control_ofc.api.models import (
+    DEFAULT_DAEMON_POLL_INTERVAL_MS,
     BoardInfo,
     Capabilities,
     ConnectionState,
@@ -24,6 +25,7 @@ from control_ofc.api.models import (
     OpenFanSilentBoardEntry,
     OperationMode,
     SensorReading,
+    at_least,
 )
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
 from control_ofc.knowledge.sensor_knowledge import SensorClassification, classify_reading
@@ -108,6 +110,9 @@ class AppState(QObject):
     # `stop_permitted` without changing the active id (DEC-384: re-applying one
     # profile after editing which member it names a pump).
     hwmon_headers_refresh_requested = Signal()
+    #: Ask the poll worker to re-read ``/diagnostics/hardware`` — after a write
+    #: that changes what it reports, such as the coolant limit.
+    hw_diagnostics_refresh_requested = Signal()
     cooling_devices_updated = Signal(object)  # CoolingDeviceInventory
     active_profile_changed = Signal(str)  # profile name
     active_profile_id_changed = Signal(str)  # active profile id
@@ -142,6 +147,9 @@ class AppState(QObject):
         self.daemon_status: DaemonStatus | None = None
         self.sensors: list[SensorReading] = []
         self.fans: list[FanReading] = []
+        #: The daemon's running poll interval, which every freshness judgement
+        #: scales with (`GET /config`, refreshed with the capabilities).
+        self.daemon_poll_interval_ms: int = DEFAULT_DAEMON_POLL_INTERVAL_MS
         # DEC-482: the update the daemon reported in the poll that delivered
         # `fans` — what the stand-in for their staleness reads (`set_fans`).
         self._fans_update: OpenFanMaintenanceSummary | None = None
@@ -333,6 +341,44 @@ class AppState(QObject):
     def set_hwmon_headers(self, headers: list[HwmonHeader]) -> None:
         self.hwmon_headers = headers
         self.headers_updated.emit(headers)
+
+    def request_hw_diagnostics_refresh(self) -> None:
+        """Ask the live poll worker to re-read ``/diagnostics/hardware``.
+
+        A request, like :meth:`request_hwmon_headers_refresh`: the worker reads it
+        on its own thread. Nothing listens in demo mode.
+        """
+        self.hw_diagnostics_refresh_requested.emit()
+
+    def set_daemon_poll_interval(self, interval_ms: int) -> None:
+        """Record the daemon's running poll interval (from ``GET /config``)."""
+        if isinstance(interval_ms, bool) or not isinstance(interval_ms, int) or interval_ms <= 0:
+            return
+        if interval_ms == self.daemon_poll_interval_ms:
+            return
+        self.daemon_poll_interval_ms = interval_ms
+        self._update_warnings()
+
+    def reading_freshness(self, reading: SensorReading | FanReading) -> Freshness:
+        """A reading's freshness by its own age, at the daemon's cadence.
+
+        What a staleness alert or a chart annotation asks: has *this* reading
+        stopped refreshing? It ignores the connection, which has its own alert.
+        """
+        return reading.freshness_at(self.daemon_poll_interval_ms)
+
+    def display_freshness(self, reading: SensorReading | FanReading) -> Freshness:
+        """The freshness to *show* beside a reading.
+
+        As :meth:`reading_freshness`, but never "fresh" while the daemon is not
+        connected: no poll is arriving, so a figure on screen is the last one seen,
+        not a live one (`docs/08`: a stale value is never presented as live). Its
+        ``age_ms`` cannot say so — it froze with the last poll.
+        """
+        freshness = self.reading_freshness(reading)
+        if self.connection != ConnectionState.CONNECTED:
+            return at_least(freshness, Freshness.STALE)
+        return freshness
 
     def request_hwmon_headers_refresh(self) -> None:
         """Ask the live poll worker for a fresh ``/hwmon/headers`` (`TS-ae`).
@@ -608,7 +654,8 @@ class AppState(QObject):
         conditions: list[AlertCondition] = []
 
         for s in self.sensors:
-            if s.freshness != Freshness.FRESH:
+            freshness = self.reading_freshness(s)
+            if freshness != Freshness.FRESH:
                 label = s.label or s.id
                 conditions.append(
                     AlertCondition(
@@ -619,10 +666,8 @@ class AppState(QObject):
                         # The freshness word belongs in the title, not only the detail:
                         # _content_signature compares titles, so a stale→invalid
                         # escalation must be visible there to trigger a re-render.
-                        title=f"Sensor '{label}' {s.freshness.name.lower()}",
-                        detail=(
-                            f"Sensor '{label}' is {s.freshness.name.lower()} (age {s.age_ms}ms)"
-                        ),
+                        title=f"Sensor '{label}' {freshness.name.lower()}",
+                        detail=(f"Sensor '{label}' is {freshness.name.lower()} (age {s.age_ms}ms)"),
                     )
                 )
 
@@ -640,7 +685,8 @@ class AppState(QObject):
         silent = ds.openfan_silent_board if ds and not self._thermal_unreachable else None
         fans_silent = None if self._thermal_unreachable else self._fans_silent
         for f in self.fans:
-            if f.freshness != Freshness.FRESH and not suppresses_fan_staleness(
+            fan_freshness = self.reading_freshness(f)
+            if fan_freshness != Freshness.FRESH and not suppresses_fan_staleness(
                 fans_update, f.id, fans_silent
             ):
                 conditions.append(
@@ -649,8 +695,8 @@ class AppState(QObject):
                         level="warning",
                         source="fan",
                         component=f.id,
-                        title=f"Fan '{f.id}' telemetry {f.freshness.name.lower()}",
-                        detail=f"Fan '{f.id}' is {f.freshness.name.lower()} (age {f.age_ms}ms)",
+                        title=f"Fan '{f.id}' telemetry {fan_freshness.name.lower()}",
+                        detail=(f"Fan '{f.id}' is {fan_freshness.name.lower()} (age {f.age_ms}ms)"),
                     )
                 )
             if f.id in self.stalled_fan_ids:

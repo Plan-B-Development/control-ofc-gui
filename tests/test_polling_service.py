@@ -167,22 +167,40 @@ class TestPollWorkerHardwareDiagnosticsPrefetch:
         assert len(spy) == 1
         assert spy[0][0].board.name == "X870E AORUS MASTER"
 
-    def test_prefetch_latches_after_success(self, qtbot):
-        """Board identity cannot change without a reboot — once is enough.
+    def test_prefetch_repeats_on_capabilities_cycles_only(self, qtbot):
+        """Re-read with the capabilities, never on an ordinary cycle.
 
-        Asserted against a forced caps cycle, not just the next poll: without
-        the latch this would re-fetch every `_caps_interval` for the process
-        lifetime.
+        It used to latch once per process. The same response carries the
+        thermal trip point and the coolant limit System State shows beside the
+        live thermal state, so a latched copy kept a limit the user had since
+        changed, or the fallback trip point of a daemon that had not finished
+        its first tick, for the rest of the session.
         """
         mock_client = _make_mock_client()
         worker = _make_worker(mock_client)
         worker.poll()
         mock_client.hardware_diagnostics.reset_mock()
 
+        worker.poll()  # an ordinary cycle
+        mock_client.hardware_diagnostics.assert_not_called()
+
         worker._poll_count = 0  # force another capabilities cycle
         worker.poll()
+        mock_client.hardware_diagnostics.assert_called_once()
 
-        mock_client.hardware_diagnostics.assert_not_called()
+    def test_a_requested_refresh_runs_on_the_next_cycle(self, qtbot):
+        """A coolant-limit write asks for a re-read (`request_hw_diagnostics_refresh`)."""
+        mock_client = _make_mock_client()
+        worker = _make_worker(mock_client)
+        worker.poll()
+        mock_client.hardware_diagnostics.reset_mock()
+
+        worker.request_hw_diagnostics_refresh()
+        worker.poll()  # not a capabilities cycle
+        mock_client.hardware_diagnostics.assert_called_once()
+
+        worker.poll()  # the request is consumed
+        mock_client.hardware_diagnostics.assert_called_once()
 
     def test_failed_prefetch_does_not_latch(self, qtbot):
         """A GUI started before the daemon must still learn the board."""
@@ -245,7 +263,6 @@ class TestPollWorkerHardwareDiagnosticsPrefetch:
         assert len(connected_spy) == 1
         assert worker._consecutive_failures == 0  # no false disconnect
         assert worker._poll_count == 1  # cycle completed → no re-fire wedge
-        assert worker._hw_diag_sent is False  # unlatched, so it retries
 
 
 class TestPollWorkerBatchFallback:
@@ -502,10 +519,10 @@ class TestPollCycleGate:
         """An exception the cycle does not handle must still end the cycle, or
         the service would never request another and polling would stop."""
         client = _make_mock_client()
-        client.capabilities.side_effect = AttributeError("not handled by the cycle")
+        client.capabilities.side_effect = RuntimeError("not handled by the cycle")
         worker = _make_worker(client)
         done = _collect_signal(worker.cycle_done)
-        with pytest.raises(AttributeError):
+        with pytest.raises(RuntimeError):
             worker.poll()
         assert len(done) == 1
 

@@ -466,6 +466,14 @@ These differences are **expected behavior**, not a bug. The GUI poll cycle (1000
 - **WARN**: age > 2× and <= 5× interval
 - **CRIT**: age > 5× interval or never updated
 
+The GUI judges a sensor or fan reading by the same rule (`models.freshness_for_age`): fresh
+below 2 × the daemon's running poll interval, stale below 5 ×, invalid beyond, never tighter than
+2 s / 10 s. It learns the interval from `GET /config` (`polling.poll_interval_ms`'s running value)
+with the capabilities, so a healthy daemon polling every 6 s is not shown stale. While the daemon is
+not connected no reading is shown as fresh: the Overview fan table's Freshness pills and the stale
+count say "stale", and the Controls cards' output reads "—". Per-sensor staleness alerts follow the
+reading's own age only; the disconnect has its own alert.
+
 ## Implementation: Event log + diagnostic probes (DEC-111, redesigned DEC-314)
 
 ### Three distinct concepts

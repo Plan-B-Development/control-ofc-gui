@@ -28,6 +28,7 @@ from control_ofc.api.models import (
     Freshness,
     OperationMode,
     SensorReading,
+    default_reading_freshness,
 )
 from control_ofc.constants import (
     DEFAULT_SOCKET_PATH,
@@ -997,7 +998,8 @@ class DashboardPage(QWidget):
             self._seen_sensors = True
             # Stale-sensor onset → annotation (poll-diff, DEC-181). Onset only,
             # to avoid re-annotating a sensor that stays stale across polls.
-            stale_now = {s.id for s in sensors if s.freshness != Freshness.FRESH}
+            judge = self._state.reading_freshness if self._state else default_reading_freshness
+            stale_now = {s.id for s in sensors if judge(s) != Freshness.FRESH}
             for sid in sorted(stale_now - self._last_stale_sensor_ids):
                 self._annotate(f"Stale: {sid}")
             self._last_stale_sensor_ids = stale_now
@@ -1127,6 +1129,7 @@ class DashboardPage(QWidget):
             sensor_values={s.id: s.value_c for s in (self._state.sensors or [])},
             display_name=self._state.fan_display_name,
             stalled_ids=self._state.stalled_fan_ids,
+            freshness=self._state.display_freshness,
         )
 
         # Keyed by vm.card_key, not vm.control_id: a malformed profile can repeat

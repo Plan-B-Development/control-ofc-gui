@@ -280,10 +280,18 @@ def test_build_daemon_health_severity_arms():
         vm = ov.build_daemon_health_vm(None, DaemonStatus(overall_status=wire, uptime_seconds=0))
         assert vm.status_state == expected, f"daemon '{wire}' must map to {expected}"
 
-    # Unknown values must degrade to neutral rather than raise.
+    # docs/08: anything but "ok" is a warning, so a token a newer daemon adds is
+    # "warn", never a calm grey; it must not raise either. Only "unknown" — the
+    # parser's word for an absent field — stays neutral.
     assert (
         ov.build_daemon_health_vm(
             None, DaemonStatus(overall_status="wat", uptime_seconds=0)
+        ).status_state
+        == "warn"
+    )
+    assert (
+        ov.build_daemon_health_vm(
+            None, DaemonStatus(overall_status="unknown", uptime_seconds=0)
         ).status_state
         == "neutral"
     )

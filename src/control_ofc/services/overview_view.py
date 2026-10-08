@@ -27,6 +27,7 @@ from control_ofc.api.models import (
     HwmonCapability,
     HwmonHeader,
     SensorReading,
+    default_reading_freshness,
 )
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
@@ -398,7 +399,12 @@ def build_daemon_health_vm(
             age_note=_AGE_NOTE,
         )
     status_text = f"Status: {status.overall_status}"
-    status_state = _STATUS_STATE.get(status.overall_status, "neutral")
+    # `docs/08`: anything but "ok" is a warning — so an unrecognised token from a
+    # newer daemon is "warn", not a calm grey. Only "unknown", the parser's word
+    # for an absent field, stays neutral: it reports nothing.
+    status_state = _STATUS_STATE.get(
+        status.overall_status, "neutral" if status.overall_status == "unknown" else "warn"
+    )
     uptime_text = (
         f"Uptime: {format_uptime(status.uptime_seconds)}"
         if status.uptime_seconds is not None
@@ -561,8 +567,14 @@ def build_fan_rows(
     headers: list[HwmonHeader],
     caps: Capabilities | None,
     display_name: Callable[[str], str],
+    freshness: Callable[[FanReading], Freshness] = default_reading_freshness,
 ) -> list[FanRowVM]:
-    """Mirror of `_on_fans`: displayable fans + synthesized PWM-only header rows."""
+    """Mirror of `_on_fans`: displayable fans + synthesized PWM-only header rows.
+
+    ``freshness`` judges each row's Freshness pill; the page passes
+    ``AppState.display_freshness`` (the daemon's cadence, and never "fresh" while
+    disconnected).
+    """
     fan_ids = {f.id for f in fans}
     pwm_only = [h for h in headers if h.id not in fan_ids]
     header_by_id = {h.id: h for h in headers}
@@ -583,8 +595,8 @@ def build_fan_rows(
                 ),
                 rpm_text=_format_rpm_cell(f, presence),
                 pwm_text=str(f.last_commanded_pwm) if f.last_commanded_pwm is not None else "—",
-                freshness_label=f.freshness.value,
-                freshness_state=_FRESHNESS_STATE.get(f.freshness, "neutral"),
+                freshness_label=freshness(f).value,
+                freshness_state=_FRESHNESS_STATE.get(freshness(f), "neutral"),
                 row_tooltip=fan_row_tooltip(f, headers, caps, presence),
                 is_pwm_only=False,
             )
@@ -689,6 +701,7 @@ def build_sensor_summary(
     hidden_count: int,
     unavailable_count: int,
     classify: SensorClassifier,
+    freshness: Callable[[SensorReading], Freshness] = default_reading_freshness,
 ) -> str:
     """Mirror of `_recompute_sensor_summary`: the 'Sensors: N total · …' line."""
     n = len(all_sensors)
@@ -702,7 +715,7 @@ def build_sensor_summary(
     # machine the coolant temperature is arguably the headline number, and it
     # was the one kind with no line in the breakdown.
     coolant = sum(1 for s in all_sensors if s.kind == "coolant_temp")
-    stale = sum(1 for s in all_sensors if s.freshness != Freshness.FRESH)
+    stale = sum(1 for s in all_sensors if freshness(s) != Freshness.FRESH)
     # Classified exactly as the table's rows are, overrides included (`DC-g`) —
     # a sensor the user marked coolant shows high confidence there, so it must
     # not be counted low-confidence here.

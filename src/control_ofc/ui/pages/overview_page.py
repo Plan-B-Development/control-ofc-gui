@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.api.models import default_reading_freshness
 from control_ofc.knowledge.sensor_knowledge import classify_reading
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.overview_view import (
@@ -133,6 +134,9 @@ class OverviewPage(QWidget):
             state.status_updated.connect(self._on_status)
             state.sensors_updated.connect(self._on_sensors)
             state.fans_updated.connect(self._on_fans)
+            # No poll arrives while the daemon is gone, so the tables would keep
+            # their last Freshness pills — "fresh" on figures nothing is updating.
+            state.connection_changed.connect(self._on_connection_changed)
             # A classification override set from any sensor surface (here, or
             # elsewhere) re-renders this table so every surface stays in step.
             state.sensor_class_override_changed.connect(lambda *_: self._render_sensors_table())
@@ -356,11 +360,23 @@ class OverviewPage(QWidget):
         self._all_sensors = list(sensors)
         self._render_sensors_table()
 
+    def _freshness_judge(self):
+        """What the Freshness pills and the stale count are judged by: the
+        daemon's cadence, and never "fresh" while it is not connected."""
+        return self._state.display_freshness if self._state else default_reading_freshness
+
+    def _on_connection_changed(self, _conn) -> None:
+        """Repaint what carries a freshness judgement on a connection edge."""
+        if self._state is None:
+            return
+        self._on_fans(self._state.fans)
+        self._refresh_summary()
+
     def _on_fans(self, fans: list) -> None:
         headers = self._state.hwmon_headers if self._state else []
         caps = self._state.capabilities if self._state else None
         name_fn = self._state.fan_display_name if self._state else (lambda x: x)
-        rows = build_fan_rows(fans, headers, caps, name_fn)
+        rows = build_fan_rows(fans, headers, caps, name_fn, freshness=self._freshness_judge())
         self._clear_cell_widgets(self._fan_table, _FAN_FRESH_COL)
         self._fan_table.setRowCount(len(rows))
         for r, vm in enumerate(rows):
@@ -450,6 +466,7 @@ class OverviewPage(QWidget):
                 hidden_count=sum(1 for s in self._all_sensors if s.id in hidden_ids),
                 unavailable_count=len(self._unavailable_sensors),
                 classify=self._classify,
+                freshness=self._freshness_judge(),
             )
         )
 
@@ -796,14 +813,20 @@ class OverviewPage(QWidget):
         self._ensure_daemon_classifications()
         daemon_cls = self._daemon_classifications.get(sensor_id)
         classification = self._classify(sensor)
+        freshness = self._state.display_freshness(sensor) if self._state else None
         if self._sensor_detail_dialog is None:
             self._sensor_detail_dialog = SensorDetailDialog(
-                sensor, board, daemon_cls, parent=self, classification=classification
+                sensor,
+                board,
+                daemon_cls,
+                parent=self,
+                classification=classification,
+                freshness=freshness,
             )
             self._sensor_detail_dialog.finished.connect(self._on_sensor_detail_closed)
         else:
             self._sensor_detail_dialog.set_sensor(
-                sensor, board, daemon_cls, classification=classification
+                sensor, board, daemon_cls, classification=classification, freshness=freshness
             )
         self._sensor_detail_dialog.show()
         self._sensor_detail_dialog.raise_()

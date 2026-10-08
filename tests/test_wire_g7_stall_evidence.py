@@ -101,7 +101,7 @@ def test_the_retired_wording_is_gone() -> None:
 
 
 def _state(fan: FanReading) -> FanState:
-    return _derive_state(fan, overridden=False, floor=20.0, stalled=False)
+    return _derive_state(fan, overridden=False, floor=20.0, stalled=False, fresh=True)
 
 
 def test_low_rpm_fires_on_a_real_command() -> None:

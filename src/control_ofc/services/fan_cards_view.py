@@ -54,6 +54,7 @@ from control_ofc.api.models import (
     HwmonHeader,
     OpenFanRole,
     OverrideStatusEntry,
+    default_reading_freshness,
 )
 from control_ofc.services.overview_view import fan_control_method
 from control_ofc.services.profile_service import (
@@ -171,7 +172,9 @@ def is_fan_controllable(
     return fan_control_method(fan, headers, caps) not in _READ_ONLY_METHODS
 
 
-def _derive_state(fan: FanReading, *, overridden: bool, floor: float, stalled: bool) -> FanState:
+def _derive_state(
+    fan: FanReading, *, overridden: bool, floor: float, stalled: bool, fresh: bool
+) -> FanState:
     """State for a *present* fan, following the pinned precedence order.
 
     ``stalled`` is ``AppState.stalled_fan_ids`` membership — the held answer
@@ -180,7 +183,7 @@ def _derive_state(fan: FanReading, *, overridden: bool, floor: float, stalled: b
     """
     if stalled:
         return FanState.STALL
-    if fan.freshness != Freshness.FRESH:
+    if not fresh:
         return FanState.STALE
     # LOW_RPM is a soft heuristic and is suppressed for GPU fans: a zero-RPM idle
     # is normal for them (DEC-047), and intel GPU fans report no commanded PWM.
@@ -277,6 +280,7 @@ def build_fan_card_vms(
     sensor_values: dict[str, float] | None = None,
     display_name: Callable[[str], str] | None = None,
     stalled_ids: Collection[str],
+    freshness: Callable[[FanReading], Freshness] = default_reading_freshness,
 ) -> list[FanCardVM]:
     """Build one card VM per *live* logical control, plus one per read-only fan.
 
@@ -305,6 +309,9 @@ def build_fan_card_vms(
         stalled_ids: ``AppState.stalled_fan_ids`` — which fans are stalled, held
             through a missing flag (`TS-bg`). Required, so a caller cannot fall
             back to the raw flag by leaving it out (the DEC-379 trap).
+        freshness: judges each fan's freshness — the Dashboard passes
+            ``AppState.display_freshness``, which scales with the daemon's
+            cadence. The default assumes the daemon's default cadence.
 
     Returns:
         Live controls in profile order, then one card per read-only fan.
@@ -357,7 +364,11 @@ def build_fan_card_vms(
             floor = member_minimum_pct(control, member, floor_roles)
             states.append(
                 _derive_state(
-                    fan, overridden=overridden, floor=floor, stalled=fan.id in stalled_ids
+                    fan,
+                    overridden=overridden,
+                    floor=floor,
+                    stalled=fan.id in stalled_ids,
+                    fresh=freshness(fan) == Freshness.FRESH,
                 )
             )
             if fan.rpm is not None:
@@ -413,7 +424,13 @@ def build_fan_card_vms(
         (f for f in unclaimed if not is_fan_controllable(f, hdrs, caps)),
         key=lambda f: f.id,
     ):
-        state = _derive_state(fan, overridden=False, floor=0.0, stalled=fan.id in stalled_ids)
+        state = _derive_state(
+            fan,
+            overridden=False,
+            floor=0.0,
+            stalled=fan.id in stalled_ids,
+            fresh=freshness(fan) == Freshness.FRESH,
+        )
         cards.append(
             FanCardVM(
                 control_id=f"{READ_ONLY_PREFIX}{fan.id}",
