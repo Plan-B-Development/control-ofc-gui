@@ -178,7 +178,11 @@ with `ProtectSystem=strict`, so outside its private `/tmp` the daemon can write 
 only under `/run/control-ofc` and `/var/lib/control-ofc` (its `RuntimeDirectory=` and
 `StateDirectory=`) and `/sys/devices`. A new location must be added with `ReadWritePaths=` in
 `sudo systemctl edit control-ofc-daemon`, or the daemon cannot create its socket or
-save state there.
+save state there. The socket's directory must be one only root can write: the daemon
+refuses to start (exit 1) if another user can write the directory it goes in — sticky
+bit or not — owns any directory or symlink on the way to it, or can write a directory
+further up that is not sticky (`/tmp`-style `1777` is fine there), because they could
+put a socket there first and keep the daemon from starting.
 
 ### Two config files — `daemon.toml` vs `runtime.toml` (ADR-002)
 
