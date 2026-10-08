@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.1.1] — 2026-10-08
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.1 is
+the matching release. Nothing is removed, and profiles, settings and themes load as before.
+
 ### Changed
 
 - **The Hardware Compatibility guide lists the Gigabyte Z390 / Z490 / W480 boards the daemon now expects two
@@ -20,7 +25,6 @@
   daemon starts, so an alarm latched at boot kept a sensor flagged long after its temperature fell. The
   sensor table now flags only a live reading at or above the sensor's critical threshold, and the sensor
   detail dialog marks the alarm and fault bits *(at daemon start)*.
-
 - **The OpenFAN firmware window no longer keeps a stale error.** One failed status or controller read left
   its error beside the live progress, and the result, until something else replaced it; the next good read
   now clears it. **Cancel** stays off once a cancel is sent, until the cancel is refused or lost or the update ends,
