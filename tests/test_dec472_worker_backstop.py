@@ -106,7 +106,11 @@ CASES = [
      "stage_failed", "staged", unexpected_error_message("the file upload")),
     ("ofw-poll", _OpenFanFirmwareWorker, "do_poll", (), "openfan_maintenance_status",
      "run_error", "run_updated", unexpected_error_message("the status read")),
+    # GSA-h: a cancel that never got an answer is `cancel_failed`, so the window
+    # can offer it again; a failed read after an accepted cancel stays `run_error`.
     ("ofw-cancel", _OpenFanFirmwareWorker, "do_cancel", (), "cancel_openfan_maintenance",
+     "cancel_failed", "run_updated", unexpected_error_message("the cancellation")),
+    ("ofw-cancel-read", _OpenFanFirmwareWorker, "do_cancel", (), "openfan_maintenance_status",
      "run_error", "run_updated", unexpected_error_message("the cancellation")),
     ("val-start", _ValidationWorker, "do_start", ("d", "", [], [], {}, False),
      "start_validation_session", "session_error", "session_updated",
