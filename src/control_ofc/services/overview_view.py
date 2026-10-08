@@ -219,12 +219,16 @@ def features_line_text(caps: Capabilities, writable_headers: int | None) -> str:
 
 
 def is_alarm_active(s: SensorReading) -> bool:
-    """True when the daemon reported an asserted crit_alarm or value ≥ crit (DEC-117)."""
+    """True when the live reading is at or above the sensor's ``crit`` (DEC-117).
+
+    ``crit_alarm`` is deliberately not consulted: the daemon samples the alarm
+    bits once, at discovery, so a bit latched at startup would keep a sensor that
+    has long since cooled flagged "⚠ ALARM" every second. The sensor detail
+    dialog shows the bits, labelled as the startup snapshot they are.
+    """
     t = s.thresholds
     if t is None:
         return False
-    if t.crit_alarm is True:
-        return True
     return t.crit_c is not None and s.value_c >= t.crit_c
 
 

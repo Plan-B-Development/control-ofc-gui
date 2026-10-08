@@ -104,9 +104,11 @@ size (DEC-196):
    classes pass through verbatim for forward compatibility.
 5. **Chip** — kernel driver / chip name (`k10temp`, `nct6798`, …). Em-dash
    when missing.
-6. **Value (°C)** — current reading. When `crit_alarm` is asserted OR the
-   live value has crossed the reported `crit_c`, the cell appends
-   `⚠ ALARM` in `status_crit` colour.
+6. **Value (°C)** — current reading. When the live value has crossed the
+   reported `crit_c`, the cell appends `⚠ ALARM` in `status_crit` colour.
+   `crit_alarm` is not consulted: the daemon samples the alarm bits once, at
+   discovery, so a latched bit would flag a sensor that has since cooled. The
+   sensor detail dialog lists the bits labelled "(at daemon start)".
 7. **Age (ms)** — time since the daemon last polled this sensor.
 8. **Confidence** — classification confidence (`High` / `Medium-High` /
    `Medium` / `Low`).

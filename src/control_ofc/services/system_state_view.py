@@ -20,7 +20,7 @@ same way).
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from html import escape
 from typing import NamedTuple
@@ -1050,10 +1050,31 @@ def _fan_method_state(method: str) -> str:
     return "neutral"
 
 
+def _thermal_limit_text(ts, state_key: str, causes: Sequence[str]) -> str:
+    """The limit beside the thermal state: the one the current emergency tripped.
+
+    The coolant rung (DEC-443) has its own limit, so a coolant-only emergency
+    labelled with the CPU trip point names a number nothing crossed. Which limit
+    applies comes from the live ``emergency_causes``; an empty list (a daemon
+    before 3.0.0, or no emergency) keeps the CPU limit, which is the only one an
+    older daemon has. Values are interpolated from the daemon, never literals.
+    """
+    if ts is None:
+        return ""
+    cpu = f"{ts.emergency_threshold_c:.0f} °C"
+    if state_key != "emergency" or "coolant" not in causes or ts.coolant_limit_c is None:
+        return f"Limit: {cpu}"
+    coolant = f"{ts.coolant_limit_c:.0f} °C"
+    if "cpu" in causes:
+        return f"Limits: CPU {cpu} · coolant {coolant}"
+    return f"Coolant limit: {coolant}"
+
+
 def build_safety_gpu_vm(
     diag: HardwareDiagnosticsResult,
     *,
     live_thermal_state: str | None = None,
+    live_emergency_causes: Sequence[str] = (),
     silence: SilenceState | None = None,
 ) -> SafetyGpuVM:
     """Assemble the Safety & GPU card.
@@ -1069,7 +1090,8 @@ def build_safety_gpu_vm(
 
     The *threshold* stays on the snapshot deliberately — it is configuration,
     not state — and is interpolated from what the daemon reported. Never compare
-    it to a literal: the trip point is per-machine (DEC-308).
+    it to a literal: the trip point is per-machine (DEC-308). Which threshold is
+    shown follows ``live_emergency_causes`` (the poll's ``emergency_causes``).
     """
     silence = silence or SilenceState()
     ack_index, dismiss_index = silence.index(state_rank, known_state)
@@ -1079,7 +1101,7 @@ def build_safety_gpu_vm(
     wire_state = live_thermal_state if live_thermal_state else snapshot_state
     state_key = wire_state.strip().lower()
     thermal_text = wire_state.capitalize() if wire_state else "Unknown"
-    thermal_limit_text = f"Limit: {ts.emergency_threshold_c:.0f} °C" if ts else ""
+    thermal_limit_text = _thermal_limit_text(ts, state_key, live_emergency_causes)
     thermal_state = _THERMAL_STATE.get(state_key, "neutral")
 
     # The thermal row, silenceable by the user's explicit decision (2026-09-11)
@@ -1411,6 +1433,7 @@ def build_system_state_vm(
     allow_acknowledge: bool = True,
     allow_dismiss: bool = True,
     live_thermal_state: str | None = None,
+    live_emergency_causes: Sequence[str] = (),
     silence: SilenceState | None = None,
     duty_drift: DutyDriftState,
 ) -> SystemStateVM:
@@ -1471,7 +1494,10 @@ def build_system_state_vm(
         ),
         interference=interference,
         safety_gpu=build_safety_gpu_vm(
-            diag, live_thermal_state=live_thermal_state, silence=silence
+            diag,
+            live_thermal_state=live_thermal_state,
+            live_emergency_causes=live_emergency_causes,
+            silence=silence,
         ),
         registry_rows=build_registry_rows(diag),
     )

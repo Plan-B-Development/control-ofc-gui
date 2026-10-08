@@ -100,14 +100,17 @@ def _threshold_rows(t: SensorThresholds) -> list[tuple[str, str]]:
         rows.append(("Lower critical", f"{t.lcrit_c:.1f} °C"))
     if t.offset_c is not None:
         rows.append(("Offset", f"{t.offset_c:+.1f} °C"))
+    # The alarm and fault bits are read once, when the daemon discovers the
+    # sensor (`hwmon/types.rs`), never per poll — so each is labelled as that
+    # snapshot rather than rendered as a current state.
     if t.alarm is not None:
-        rows.append(("Alarm", "asserted" if t.alarm else "clear"))
+        rows.append(("Alarm (at daemon start)", "asserted" if t.alarm else "clear"))
     if t.max_alarm is not None:
-        rows.append(("Max alarm", "asserted" if t.max_alarm else "clear"))
+        rows.append(("Max alarm (at daemon start)", "asserted" if t.max_alarm else "clear"))
     if t.crit_alarm is not None:
-        rows.append(("Crit alarm", "asserted" if t.crit_alarm else "clear"))
+        rows.append(("Crit alarm (at daemon start)", "asserted" if t.crit_alarm else "clear"))
     if t.fault is not None:
-        rows.append(("Fault", "asserted" if t.fault else "clear"))
+        rows.append(("Fault (at daemon start)", "asserted" if t.fault else "clear"))
     return rows
 
 

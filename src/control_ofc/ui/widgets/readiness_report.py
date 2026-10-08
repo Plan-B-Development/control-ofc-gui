@@ -894,11 +894,19 @@ def thermal_line(ts) -> str | None:
     # "State: emergency · CPU sensor: NOT found" while the emergency was
     # triggered by a sensor sitting right there in the sensor table.
     found = "reading current" if ts.cpu_sensor_found else "no current reading"
-    return (
+    # DEC-443: the coolant rung has its own limit, and this snapshot does not say
+    # which rung an emergency came from — so each limit is named for its rung
+    # rather than one unqualified "emergency" figure beside "State: emergency".
+    line = (
         f"State: {ts.state} · CPU sensor: {found} · "
-        f"emergency {ts.emergency_threshold_c:.0f}°C · "
+        f"CPU emergency {ts.emergency_threshold_c:.0f}°C · "
         f"release {ts.release_threshold_c:.0f}°C"
     )
+    if ts.coolant_limit_c is not None:
+        line += f" · coolant limit {ts.coolant_limit_c:.0f}°C"
+        if ts.coolant_release_c is not None:
+            line += f" · release {ts.coolant_release_c:.0f}°C"
+    return line
 
 
 def build_readiness_report_html(

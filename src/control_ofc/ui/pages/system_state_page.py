@@ -17,6 +17,7 @@ Presentation-only: no daemon/API/schema/control/safety change.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
@@ -223,6 +224,9 @@ class SystemStatePage(QWidget):
         #: ``THERMAL_STATE_NO_CONNECTION`` while the daemon is unreachable
         #: (:meth:`set_live`, `TS-g`), which falls back to neither.
         self._live_thermal_state = ""
+        #: Live `DaemonStatus.emergency_causes`, beside the state it explains:
+        #: it picks which limit the Safety row names (CPU or coolant, DEC-443).
+        self._live_emergency_causes: tuple[str, ...] = ()
         #: Acknowledgements, SESSION-ONLY (DEC-359, the user's "one rule
         #: everywhere"). Deliberately not persisted: an acknowledgement means
         #: "I have read this now", and one that outlives the session is a
@@ -645,6 +649,7 @@ class SystemStatePage(QWidget):
             duty_drift=self._duty_drift(),
             pwm_control_verified=self._pwm_verified_rendered,
             live_thermal_state=self._live_thermal_state,
+            live_emergency_causes=self._live_emergency_causes,
             silence=SilenceState(
                 acknowledged=frozenset(self._session_acks),
                 dismissed=frozenset(settings.dismissed_health_items),
@@ -702,7 +707,7 @@ class SystemStatePage(QWidget):
         self._rerender_last_diagnostics()
 
     @Slot(str)
-    def set_thermal_state(self, state: str) -> None:
+    def set_thermal_state(self, state: str, emergency_causes: Sequence[str] = ()) -> None:
         """Take the live daemon thermal state (1 Hz, DEC-358).
 
         Re-renders only when the value actually *changes*. The Safety card read
@@ -716,11 +721,16 @@ class SystemStatePage(QWidget):
         string comparison per poll and re-renders nothing. It is also what makes
         DEC-359's thermal-row dismissal safe — an escalation re-ranks the row
         within a second and outranks any silence taken at a quieter state.
+
+        ``emergency_causes`` rides along so the row's limit names the rung that
+        tripped — the coolant limit, not the CPU's, for a coolant emergency.
         """
         state = state or "normal"
-        if state == self._live_thermal_state:
+        causes = tuple(emergency_causes)
+        if state == self._live_thermal_state and causes == self._live_emergency_causes:
             return
         self._live_thermal_state = state
+        self._live_emergency_causes = causes
         self._rerender_last_diagnostics()
 
     @Slot(bool)
@@ -740,6 +750,7 @@ class SystemStatePage(QWidget):
         if live or self._live_thermal_state == THERMAL_STATE_NO_CONNECTION:
             return
         self._live_thermal_state = THERMAL_STATE_NO_CONNECTION
+        self._live_emergency_causes = ()
         # A drift card is live poll state too: with no daemon to ask, "this header
         # is not holding" is no longer a current fact (S4-12).
         self._duty_drift_state = NO_DRIFT

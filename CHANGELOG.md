@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **A coolant emergency no longer shows the CPU's limit.** On System State, the Safety & GPU Limits
+  thermal row named the CPU trip point whatever had tripped the emergency. It now shows the coolant limit
+  for a coolant emergency, and both limits when the CPU and coolant tripped together. The readiness report
+  names the CPU and coolant limits separately.
+- **A sensor no longer shows "⚠ ALARM" after it has cooled.** The chip's alarm bits are read once, when the
+  daemon starts, so an alarm latched at boot kept a sensor flagged long after its temperature fell. The
+  sensor table now flags only a live reading at or above the sensor's critical threshold, and the sensor
+  detail dialog marks the alarm and fault bits *(at daemon start)*.
+
 - **Demo mode names its hardware as a real daemon does.** The demo's motherboard chips were listed under
   a description ("ITE IT8696E") instead of the device name a daemon reports, and its fan and voltage ids
   disagreed with its sensor ids about that name. They now use the device names of the board they imitate
