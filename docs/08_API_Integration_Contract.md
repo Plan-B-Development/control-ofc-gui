@@ -446,7 +446,7 @@ GUI treats every flag as false / old behaviour (AIP-180):
   this is true. Hardcoded `true`. Absent → `false`.
   **GUI use (DEC-489):** registered in `daemon_features` as `curve_hysteresis`; gates the
   **Slow-down band** row in the point editor and the curve dialog, and the band on a curve
-  card's type line. The reverse skew is not detectable: a GUI older than the field (≤ 4.1.1)
+  card's type line. The reverse skew is not detectable: a GUI older than the field (< 4.2.0)
   keeps no unknown curve fields, so saving a profile from it drops `hysteresis_c` and the curve
   returns to the 2 °C default. A GUI clamps a loaded value into 0–10, as the engine does.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes

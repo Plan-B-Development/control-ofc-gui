@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-10-08
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.2.0 is
+the matching release, and the Slow-down band appears only with it. 4.1.1 was prepared but never published;
+its changes are folded in here. Nothing is removed, and profiles, settings and themes load as before.
+
 ### Added
 
 - **A Slow-down band setting on Graph, Stepped and Linear curves** (DEC-489). It sets how far the
@@ -10,6 +16,14 @@
   curve that has a band. A curve card shows a band you set. The setting appears only with a daemon that
   applies it (control-ofc-daemon 4.2.0 or newer, `control.curve_hysteresis`); a profile you never touch
   saves exactly as before. Demo mode does not simulate the band and says so.
+
+### Changed
+
+- **The Hardware Compatibility guide lists the Gigabyte Z390 / Z490 / W480 boards the daemon now expects two
+  sensor chips on** (DC-cp): the Z390 AORUS XTREME, the Z490 AORUS PRO AX, ULTRA and XTREME, the Z490
+  VISION D and the W480 VISION D, on the it87 sensor catalogue's evidence alone. It also names the Z490 AORUS
+  MASTER WATERFORCE, which the daemon already covered, and says a Z390 board's primary chip may be an
+  IT8686E rather than an IT8688E.
 
 ### Fixed
 
@@ -88,22 +102,6 @@
   instead of the pill disappearing, and an unknown overall status reads as a warning on Overview, as
   documented. A malformed entry in the daemon's sensor or fan-header list is skipped instead of appearing
   as a 0 °C sensor or stopping updates.
-
-## [4.1.1] — 2026-10-08
-
-**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.1 is
-the matching release. Nothing is removed, and profiles, settings and themes load as before.
-
-### Changed
-
-- **The Hardware Compatibility guide lists the Gigabyte Z390 / Z490 / W480 boards the daemon now expects two
-  sensor chips on** (DC-cp): the Z390 AORUS XTREME, the Z490 AORUS PRO AX, ULTRA and XTREME, the Z490
-  VISION D and the W480 VISION D, on the it87 sensor catalogue's evidence alone. It also names the Z490 AORUS
-  MASTER WATERFORCE, which the daemon already covered, and says a Z390 board's primary chip may be an
-  IT8686E rather than an IT8688E.
-
-### Fixed
-
 - **A coolant emergency no longer shows the CPU's limit.** On System State, the Safety & GPU Limits
   thermal row named the CPU trip point whatever had tripped the emergency. It now shows the coolant limit
   for a coolant emergency, and both limits when the CPU and coolant tripped together. The readiness report
