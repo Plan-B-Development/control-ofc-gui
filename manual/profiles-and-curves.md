@@ -168,6 +168,18 @@ Graph, Stepped, Linear, and Trigger curves are each bound to one temperature sen
 | GPU fans | GPU temperature |
 | Radiator fans | The **coolant** temperature where your cooler reports one — the radiator's job is to cool the loop. Without a coolant sensor, the temperature of what the loop cools (CPU, or GPU for a GPU loop). A curve drawn for coolant is too aggressive on a CPU sensor, which runs 20–30 °C hotter; see [Configuring an AIO](controls.md#configuring-an-aio--liquid-cooler) |
 
+### Slow-down Band
+
+When the temperature falls, the daemon keeps a curve's fan speed until the temperature has dropped a little below where the speed last changed, so the fans do not step down at every small dip. That distance is the curve's **slow-down band**: 2 °C unless you set your own.
+
+Graph, Stepped and Linear curves have a **Slow-down band** box under the sensor selector (in the curve dialog for Linear). Set 0 to 10 °C in half-degree steps; **Off** (0) follows the curve exactly. A wider band keeps the fans steadier at the cost of slowing down later. **Apply to all curves** copies the value to every Graph, Stepped and Linear curve in the profile; in the curve dialog it is a toggle that takes effect when you click **Save**.
+
+- A rising temperature always speeds the fans up at once — the band only delays slowing down.
+- A steady temperature releases the band after about 30 seconds, so the fans settle to the curve's value.
+- The band never keeps the fans slower than the curve asks for at the current temperature.
+- Trigger curves use their own idle and load temperatures instead; Flat, Mix and Sync curves have no band.
+- The box only appears when your daemon supports it (control-ofc-daemon 4.2.0 or newer). Demo mode does not simulate the band.
+
 ## The Control Loop
 
 The **daemon** runs the control loop every second — the GUI never writes fan speeds. Each second the daemon performs this sequence:
@@ -176,7 +188,7 @@ The **daemon** runs the control loop every second — the GUI never writes fan s
 2. For each fan role in the active profile:
    - If mode is Manual: use the fixed output percentage
    - If mode is Curve: look up the curve, read the bound sensor's temperature, interpolate the output
-3. Apply the **hysteresis deadband** (2 degrees C): when temperature is falling, hold the current PWM until the temperature drops 2 degrees below the last transition point (prevents fan oscillation). A hold never lasts more than 30 seconds in a row: after that the curve is re-read at the current temperature for one tick, so a temperature that settles just inside the band cannot pin the fans at their old speed
+3. Apply the **slow-down band** (hysteresis deadband, 2 °C unless the curve sets its own): when temperature is falling, hold the current PWM until the temperature drops that far below the last transition point (prevents fan oscillation). A hold never lasts more than 30 seconds in a row: after that the curve is re-read at the current temperature for one tick, so a temperature that settles just inside the band cannot pin the fans at their old speed. A hold also never keeps the fans slower than the curve asks for at the current temperature
 4. Write the final PWM values to every fan backend (OpenFan, motherboard hwmon, and AMD GPU PMFW), **coalescing redundant writes**: for OpenFan and hwmon it skips the write when the new PWM is identical to the last commanded value, and for AMD GPU PMFW it skips changes smaller than 5% (to avoid SMU firmware churn). This coalescing is entirely daemon-internal — the GUI itself never writes PWM
 5. For a motherboard header whose write was skipped, **check the speed held**: the daemon reads the header back, and if something else — usually the BIOS's own fan control — has moved it more than 2 points, it writes the curve's value again. After 3 corrections that do not hold it stops fighting and reports the fan on the **System State** page as *"Fan duty is not holding"* (see [Diagnostics](diagnostics.md))
 

@@ -51,7 +51,7 @@ A manual override is **not** a fourth mode — while one is active the banner st
 ### What the daemon's loop does (reference)
 The daemon's `profile_engine` carries the behaviour that used to live in the GUI loop — see `daemon.md` for detail. Each tick it:
 - evaluates the active profile's curves (all curve types incl. Mix/Sync — schema v7)
-- applies the **2 °C falling-temperature deadband** (HYSTERESIS_DEADBAND_C — mirrors the GUI's old behaviour, DEC-096)
+- applies the **falling-temperature deadband** — the curve's own `hysteresis_c` (graph/stepped/linear, 0–10 °C, DEC-489) or the 2 °C default `HYSTERESIS_DEADBAND_C` (DEC-096); a hold never sits below the curve's current output
 - applies the tuning pipeline (offset, step-rate, start/stop) and per-member floors (GPU 0 %, DEC-119; pump/CPU ≥ 30 %, DEC-162; a pump on a DC-mode header ≥ 70 %, DEC-443)
 - coalesces writes (identical PWM skips the write; `pwm_enable` written once per lease — DEC-073; GPU PMFW uses a 5 % threshold — DEC-070), **verifying an hwmon write it coalesces**: the duty is read back and rewritten if it moved more than 2 points from what the header took after the daemon's last write (not from the command, so a coarse or clamping driver is not drift), and after 3 corrections the next tick still contradicts, the header is flagged `duty_not_holding` and left alone until the command changes or the duty holds again (DEC-406, daemon ≥ 2.53.0). Diagnostics are never reconciled, and the thermal force never coalesces
 - manages the hwmon lease internally

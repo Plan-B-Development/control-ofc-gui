@@ -428,6 +428,17 @@ GUI treats every flag as false / old behaviour (AIP-180):
   **GUI use (DEC-484):** registered in `daemon_features` as `openfan_firmware_silent_update`; with
   it the Hardware page shows and enables **Update OpenFAN Firmware…** while
   `status.openfan_silent_board` names a board, with or without a controller present.
+- `curve_hysteresis` (bool, DEC-489, daemon ≥ 4.2.0) — a curve's optional `hysteresis_c` sets its
+  own falling-temperature deadband width, 0 to 10 °C (0 = off; absent = the 2 °C default).
+  `POST`/`PUT /profiles` reject a value outside that range (`OUT_OF_RANGE`, `NON_FINITE`).
+  **Load-bearing for truthfulness:** an older daemon stores the field (profiles are saved
+  losslessly) and silently runs its fixed 2 °C band, so a client offers the setting only when
+  this is true. Hardcoded `true`. Absent → `false`.
+  **GUI use (DEC-489):** registered in `daemon_features` as `curve_hysteresis`; gates the
+  **Slow-down band** row in the point editor and the curve dialog, and the band on a curve
+  card's type line. The reverse skew is not detectable: a GUI older than the field (≤ 4.1.1)
+  keeps no unknown curve fields, so saving a profile from it drops `hysteresis_c` and the curve
+  returns to the 2 °C default. A GUI clamps a loaded value into 0–10, as the engine does.
 - `control_path_discovery` (bool, DEC-333, daemon ≥ 2.39.0) — the daemon exposes
   `POST /hwmon/{id}/discover-control-path` plus the `GET`/`DELETE /diagnostics/control-path`
   pair, and accepts `"control_path_discovery"` in a validation session's `diagnostics[]`.
@@ -4127,7 +4138,7 @@ The daemon's profile engine (`profile_engine.rs`) evaluates fan curves and is th
 
 Profile *storage of record* moved to the daemon at 2.0.0 (DEC-160); the GUI keeps a local draft cache and uploads / validates through the CRUD API.
 
-The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `default_version`). Both evaluators must recognise the same curve `type` values — `graph`, `stepped`, `linear`, `flat`, `trigger`, `mix`, `sync` — and the **composite** types carry extra fields the daemon parses and evaluates: `mix` (`mix_function`, `mix_curve_ids`) combines other curves at their own sensors; `sync` (`sync_control_id`, `sync_offset_pct`) mirrors another control's tuned output via stable topological control ordering (DEC-150/151, retiring the single-sensor rule DEC-014 via DEC-152). The byte-identical `parity_vectors.json` fixture pins GUI ⇄ daemon evaluation agreement (DEC-126). Schema changes are additive: a v7 profile using a new curve type still loads on an older daemon/GUI, which degrades safely (daemon → 50%, GUI → flat) rather than crashing.
+The profile **curve schema is v7** (GUI `PROFILE_SCHEMA_VERSION` / daemon `default_version`). Both evaluators must recognise the same curve `type` values — `graph`, `stepped`, `linear`, `flat`, `trigger`, `mix`, `sync` — and the **composite** types carry extra fields the daemon parses and evaluates: `mix` (`mix_function`, `mix_curve_ids`) combines other curves at their own sensors; `sync` (`sync_control_id`, `sync_offset_pct`) mirrors another control's tuned output via stable topological control ordering (DEC-150/151, retiring the single-sensor rule DEC-014 via DEC-152). `graph`, `stepped` and `linear` curves may carry `hysteresis_c` (°C, optional, DEC-489): the width of that curve's falling-temperature deadband, 0–10, absent = the daemon's 2 °C default, 0 = off. It is additive (no schema bump) and inert on the other types; the daemon never holds a curve's output below what the curve currently asks for, whatever the width. The byte-identical `parity_vectors.json` fixture pins GUI ⇄ daemon evaluation agreement (DEC-126). Schema changes are additive: a v7 profile using a new curve type still loads on an older daemon/GUI, which degrades safely (daemon → 50%, GUI → flat) rather than crashing.
 
 ## Config management
 

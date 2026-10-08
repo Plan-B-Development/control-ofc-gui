@@ -58,7 +58,7 @@
 - [ ] A pre-2.0 daemon (no `control.autonomous_control`) triggers the upgrade-required gate, not silently uncontrolled fans
 - [ ] Live manual control via a daemon override reverts to the curve on release/expiry (DEC-163)
 - [ ] Demo mode drives synthetic fans via the GUI-side `DemoController`
-- [ ] 2°C hysteresis deadband (daemon-side) prevents fan oscillation near curve inflection points
+- [ ] The falling-temperature deadband (daemon-side; 2 °C default, per-curve **Slow-down band** where the daemon advertises `control.curve_hysteresis`, DEC-489) prevents fan oscillation near curve inflection points, and never holds a fan below its curve
 
 ### Settings
 - [ ] Theme import/export works

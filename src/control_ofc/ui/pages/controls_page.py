@@ -65,6 +65,7 @@ from control_ofc.services.cooling_device_view import (
     DEFAULT_COOLING_DEVICE_ID,
     cooling_member_index,
 )
+from control_ofc.services.curve_hysteresis import apply_hysteresis_to_all
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.header_role_writes import apply_role_writes
 from control_ofc.services.profile_service import (
@@ -616,6 +617,7 @@ class ControlsPage(QWidget):
         self._curve_editor = CurveEditor()
         self._curve_editor.setObjectName("Controls_CurveEditor_main")
         self._curve_editor.curve_changed.connect(self._on_curve_changed)
+        self._curve_editor.hysteresis_apply_all.connect(self._on_hysteresis_apply_all)
         self._curve_editor.hide()
         editor_layout.addWidget(self._curve_editor, 1)
         p3_layout.addWidget(self._editor_frame, 1)
@@ -1924,6 +1926,7 @@ class ControlsPage(QWidget):
                 curve,
                 card_size=tier,
                 user_size=self._stored_card_size(curve.id),
+                hysteresis_supported=self._hysteresis_supported(),
             )
             card.edit_requested.connect(self._on_edit_curve)
             card.delete_requested.connect(self._on_delete_curve)
@@ -2111,10 +2114,17 @@ class ControlsPage(QWidget):
                 # stored, so without this the modal branch was the one place a
                 # pump's speed could be authored below its 30% floor.
                 min_output=self._curve_min_output_floor(profile, curve.id),
+                hysteresis_supported=self._hysteresis_supported(),
+                demo=self._is_demo(),
                 parent=self,
             )
             if dlg.exec():
                 dlg.apply_to_curve()
+                band = dlg.hysteresis_apply_all()
+                if band is not None:
+                    apply_hysteresis_to_all(profile, band)
+                    # The point editor may be open on another curve this reached.
+                    self._curve_editor.refresh_hysteresis()
                 self._refresh_curves_grid(profile)
                 self._set_unsaved(True)
         else:
@@ -2126,6 +2136,9 @@ class ControlsPage(QWidget):
             # write time for the stricter role.
             min_floor = self._curve_min_output_floor(profile, curve.id)
             self._curve_editor.set_min_output(min_floor)
+            self._curve_editor.set_hysteresis_supported(
+                self._hysteresis_supported(), demo=self._is_demo()
+            )
             self._curve_editor.set_curve(curve)
             # Always-mounted editor (DEC-214): swap the placeholder for the editor.
             self._editor_placeholder.hide()
@@ -2188,6 +2201,34 @@ class ControlsPage(QWidget):
         """The strictest role floor for a curve — see
         :func:`controls_view.curve_min_output_floor`."""
         return curve_min_output_floor(profile, curve_id)
+
+    def _hysteresis_supported(self, caps=None) -> bool:
+        """Whether the daemon applies a curve's own slow-down band (DEC-489).
+
+        *caps* is the snapshot a capabilities signal carried; otherwise the
+        state's current one."""
+        if caps is None and self._state:
+            caps = getattr(self._state, "capabilities", None)
+        return daemon_supports("curve_hysteresis", caps) is True
+
+    def _is_demo(self) -> bool:
+        return bool(self._state and self._state.mode == OperationMode.DEMO)
+
+    def _on_hysteresis_apply_all(self, value_c: float) -> None:
+        """ "Apply to all curves" from the point editor (DEC-489): the band goes on
+        every curve that has one, and only the cards that changed repaint."""
+        profile = self._get_current_profile()
+        if not profile:
+            return
+        changed = apply_hysteresis_to_all(profile, value_c)
+        if not changed:
+            return
+        for curve_id in changed:
+            card = self._curve_cards.get(curve_id)
+            curve = profile.get_curve(curve_id)
+            if card and curve:
+                card.update_curve(curve)
+        self._set_unsaved(True)
 
     def _on_curve_changed(self) -> None:
         self._set_unsaved(True)
@@ -2487,6 +2528,12 @@ class ControlsPage(QWidget):
         # `ROLE-a`: whether a CPU-fan role lifts the Min badge is capability-gated,
         # and the capabilities can land after the headers did.
         self._refresh_min_pwm_badges()
+        # DEC-489: the slow-down band row, for an editor already open when the
+        # capabilities land (or change on a reconnect to another daemon).
+        hysteresis = self._hysteresis_supported(caps)
+        self._curve_editor.set_hysteresis_supported(hysteresis, demo=self._is_demo())
+        for curve_card in self._curve_cards.values():
+            curve_card.set_hysteresis_supported(hysteresis)
         if not hasattr(caps, "features") or caps.features is None:
             return
         # Idempotent both ways: capabilities re-fire on every refresh and every

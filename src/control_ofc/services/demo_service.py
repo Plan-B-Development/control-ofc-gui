@@ -474,6 +474,10 @@ class DemoService:
                 manual_override=True,
                 fan_identify=True,
                 min_supported_gui="2.0.0",
+                # DEC-489: the band is editable in demo so a profile authored
+                # there keeps it; the demo evaluator does not simulate it, and
+                # the editor says so.
+                curve_hysteresis=True,
             ),
         )
 

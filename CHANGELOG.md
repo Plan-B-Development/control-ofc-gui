@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A Slow-down band setting on Graph, Stepped and Linear curves** (DEC-489). It sets how far the
+  temperature must fall before the fans slow down (0–10 °C, **Off** at 0, 2 °C by default), under the
+  sensor selector in the point editor and in the curve dialog. **Apply to all curves** copies it to every
+  curve that has a band. A curve card shows a band you set. The setting appears only with a daemon that
+  applies it (control-ofc-daemon 4.2.0 or newer, `control.curve_hysteresis`); a profile you never touch
+  saves exactly as before. Demo mode does not simulate the band and says so.
+
 ## [4.1.1] — 2026-10-08
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.1 is

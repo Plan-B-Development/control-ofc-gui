@@ -204,6 +204,11 @@ CONTROLS_OBJECTNAMES = frozenset(
         "CurveEditor_Btn_removePoint",
         "CurveEditor_Combo_preset",
         "CurveEditor_Combo_sensor",
+        # DEC-489: the slow-down band row under the sensor selector.
+        "CurveEditor_Hysteresis",
+        "CurveEditor_Hysteresis_Btn_applyAll",
+        "CurveEditor_Hysteresis_Label_caption",
+        "CurveEditor_Hysteresis_Spin",
         "CurveEditor_Label_sensorValue",
         "CurveEditor_Spin_end_output",
         "CurveEditor_Spin_end_temp",

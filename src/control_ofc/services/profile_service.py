@@ -117,6 +117,16 @@ def _require_finite(value: object, name: str) -> float:
     return value
 
 
+def _clamp_hysteresis(value: float) -> float:
+    """A loaded ``hysteresis_c`` into the daemon's range (DEC-489)."""
+    from control_ofc.services.curve_hysteresis import clamp_hysteresis_c
+
+    clamped = clamp_hysteresis_c(value)
+    if clamped != value:
+        log.warning("hysteresis_c %s is outside the daemon's range; using %s", value, clamped)
+    return clamped
+
+
 def _opt(data: dict, key: str, default: float) -> object:
     """Optional-field read that treats an explicit JSON ``null`` as absent.
 
@@ -194,6 +204,13 @@ class CurveConfig:
     # ``sync_offset_pct`` is added to that control's current-tick output.
     sync_control_id: str = ""
     sync_offset_pct: float = 0.0
+
+    # Falling-temperature deadband width in °C (DEC-489), graph/stepped/linear
+    # only. ``None`` means the daemon default and is never written, so a
+    # profile the user did not touch saves exactly as before; 0 turns the
+    # deadband off. The daemon evaluates it — the GUI only edits and shows it
+    # (``services/curve_hysteresis.py``).
+    hysteresis_c: float | None = None
 
     def interpolate(self, temp_c: float) -> float:
         """Return output percentage for the given temperature.
@@ -294,6 +311,12 @@ class CurveConfig:
         elif self.type == CurveType.SYNC:
             d["sync_control_id"] = self.sync_control_id
             d["sync_offset_pct"] = self.sync_offset_pct
+        if self.hysteresis_c is not None and self.type in (
+            CurveType.GRAPH,
+            CurveType.STEPPED,
+            CurveType.LINEAR,
+        ):
+            d["hysteresis_c"] = self.hysteresis_c
         return d
 
     @staticmethod
@@ -344,6 +367,17 @@ class CurveConfig:
             mix_curve_ids=list(data.get("mix_curve_ids", [])),
             sync_control_id=data.get("sync_control_id", ""),
             sync_offset_pct=_require_finite(_opt(data, "sync_offset_pct", 0.0), "sync_offset_pct"),
+            # Optional, and absent stays absent (``None`` = the daemon default):
+            # defaulting it to a number here would write that number into every
+            # curve on the next save. A value outside the daemon's range is
+            # clamped into it — what the daemon's engine applies anyway — so the
+            # editor, the card and the next save all agree instead of the spin box
+            # silently showing one number while the model keeps another.
+            hysteresis_c=(
+                None
+                if data.get("hysteresis_c") is None
+                else _clamp_hysteresis(_require_finite(data["hysteresis_c"], "hysteresis_c"))
+            ),
         )
 
 

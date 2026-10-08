@@ -385,6 +385,11 @@ class ControlCapability:
     #: ``"board": "silent"`` on the start and ``board`` on the run. Describes
     #: the build; whether such a board is there is the status field.
     openfan_firmware_silent_update: bool = False
+    #: DEC-489: a curve's ``hysteresis_c`` sets its own falling-temperature
+    #: deadband width. Gate the setting on this, never on the field: an older
+    #: daemon stores the field (profiles are saved losslessly) and silently runs
+    #: its fixed default, so an ungated editor would show a band nothing applies.
+    curve_hysteresis: bool = False
     #: DEC-442: every hwmon chip name and id is canonical — the it87 v2.0 board
     #: suffix is stripped where the daemon reads it and in the state it saved
     #: before — so a driver rebuild no longer changes any fan header's id. Gates

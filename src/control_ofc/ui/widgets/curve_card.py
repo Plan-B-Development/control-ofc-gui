@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from control_ofc.services.curve_hysteresis import curve_meta_text
 from control_ofc.services.profile_service import CurveConfig, CurveType
 from control_ofc.ui.components.labels import ElidedLabel
 from control_ofc.ui.qt_util import repolish
@@ -174,10 +175,13 @@ class CurveCard(ResizableGridCard):
         curve: CurveConfig,
         card_size: str = DEFAULT_CARD_SIZE,
         user_size: tuple[int, int] | None = None,
+        hysteresis_supported: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)  # Card base sets class="Card"
         self._curve = curve
+        # DEC-489: the band shows on the type line only where the daemon applies it.
+        self._hysteresis_supported = hysteresis_supported
         self._theme = default_dark_theme()
         # DEC-233: highlight state while this curve is open in the editor pane.
         # A 2px accent border + faint tint (QSS ``editing`` property) plus a soft
@@ -201,10 +205,12 @@ class CurveCard(ResizableGridCard):
         self._name_label.setToolTip(curve.name or "Unnamed")
         header.addWidget(self._name_label, 1)
 
-        type_label = QLabel(curve.type.value)
-        type_label.setProperty("class", "CardMeta")
-        type_label.setStyleSheet("background: transparent;")
-        header.addWidget(type_label)
+        # Type, plus the slow-down band where the user set one (DEC-489).
+        self._type_label = QLabel(curve_meta_text(curve, hysteresis_supported))
+        self._type_label.setProperty("class", "CardMeta")
+        self._type_label.setStyleSheet("background: transparent;")
+        self._type_label.setObjectName(f"CurveCard_Label_type_{curve.id}")
+        header.addWidget(self._type_label)
 
         actions_btn = QPushButton("Actions")
         actions_btn.setObjectName(f"CurveCard_Btn_actions_{curve.id}")
@@ -342,11 +348,17 @@ class CurveCard(ResizableGridCard):
         repolish(self._status_label)
         repolish(self)
 
+    def set_hysteresis_supported(self, supported: bool) -> None:
+        """Re-render the type line for a daemon that does or does not apply the band."""
+        self._hysteresis_supported = supported
+        self._type_label.setText(curve_meta_text(self._curve, supported))
+
     def update_curve(self, curve: CurveConfig) -> None:
         self._curve = curve
         self._item_id = curve.id  # keep the base's item id live (DEC-235 parity)
         self._name_label.setText(curve.name or "Unnamed")
         self._name_label.setToolTip(curve.name or "Unnamed")
+        self._type_label.setText(curve_meta_text(curve, self._hysteresis_supported))
         if curve.sensor_id:
             self._sensor_label.setToolTip(f"Raw ID: {curve.sensor_id}")
         else:

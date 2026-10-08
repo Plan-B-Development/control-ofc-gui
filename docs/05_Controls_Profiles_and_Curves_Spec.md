@@ -123,9 +123,24 @@ or controls instead of reading a sensor directly.
 **Composite curves are explicit and acyclic.** Mix references other curves by id;
 Sync references a control by id. A dependency cycle is prohibited — the editor
 offers only cycle-free choices, and both evaluators guard a cycle at eval time
-(falling back to a safe value so the fan holds). Mix and Sync bypass the 2°C
+(falling back to a safe value so the fan holds). Mix and Sync bypass the
 falling-temperature deadband (Mix is multi-sensor; Sync mirrors an
 already-resolved value); smoothing comes from the control's step-rate limit.
+
+**Slow-down band (DEC-489).** Graph, stepped and linear curves carry an optional
+`hysteresis_c`: how far (°C) the temperature must fall below where the output last
+changed before the daemon lets the fans slow down. 0–10 °C in 0.5 steps, **Off** at 0;
+absent means the daemon's 2 °C default and is never written, so an untouched profile
+saves unchanged. A rise always re-evaluates at once, a steady reading is released
+after the daemon's hold window (DEC-188), and a hold never sits below what the curve
+asks for now. The **Slow-down band** row sits under the sensor selector in the point
+editor and in the curve dialog, shown only when the daemon advertises
+`control.curve_hysteresis`; for flat, trigger, mix and sync curves the dialog shows it
+disabled with the reason. **Apply to all curves** copies the value to every graph,
+stepped and linear curve in the profile (in the dialog it is a toggle applied on
+Save). A curve card's type line shows a band the user set, against a daemon that
+applies it. Demo mode does not
+simulate the band and says so.
 
 A profile that uses a curve type an older build doesn't recognise degrades
 safely (the GUI falls back to flat; the daemon to 50%).
@@ -612,7 +627,6 @@ The daemon owns the hwmon lease internally (the GUI holds no lease as of 2.0.0 �
 ## Nice-to-have later
 - multi-sensor logic
 - curve smoothing helpers
-- advanced hysteresis tuning (per-curve deadband configuration)
 - profile schedules
 - workload-aware automation
 - import/export of individual profiles

@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.services.profile_service import CurveConfig, CurvePoint, CurveType
 from control_ofc.ui.components.a11y import name_value_control
+from control_ofc.ui.components.hysteresis_row import HysteresisRow
 from control_ofc.ui.qt_util import block_signals
 from control_ofc.ui.theme import ThemeTokens, default_dark_theme
 
@@ -73,6 +74,9 @@ class CurveEditor(QWidget):
     """
 
     curve_changed = Signal()
+    #: "Apply to all curves" on the slow-down band row (DEC-489), with the band
+    #: in °C. The page owns the profile, so it applies it.
+    hysteresis_apply_all = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -129,6 +133,14 @@ class CurveEditor(QWidget):
         top_row.addWidget(self._preset_combo)
 
         graph_layout.addLayout(top_row)
+
+        # Slow-down band (DEC-489). Hidden until the owner says the daemon
+        # applies it (`set_hysteresis_supported`).
+        self._hysteresis_row = HysteresisRow(object_name="CurveEditor_Hysteresis")
+        self._hysteresis_row.value_changed.connect(self._on_hysteresis_changed)
+        self._hysteresis_row.apply_all_clicked.connect(self.hysteresis_apply_all)
+        self._hysteresis_row.hide()
+        graph_layout.addWidget(self._hysteresis_row)
 
         # Plot
         pg.setConfigOptions(antialias=True)
@@ -461,6 +473,8 @@ class CurveEditor(QWidget):
             self._param_type_label.setText("Trigger Curve Parameters")
             self._load_trigger_params(curve)
 
+        self._hysteresis_row.set_curve(curve)
+
         # Restore sensor combo from this curve's own saved state
         self._last_sensor_ids = []  # force set_available_sensors to repopulate
         with block_signals(self._sensor_combo):
@@ -468,6 +482,22 @@ class CurveEditor(QWidget):
                 idx = self._sensor_combo.findData(curve.sensor_id)
                 if idx >= 0:
                     self._sensor_combo.setCurrentIndex(idx)
+
+    def set_hysteresis_supported(self, supported: bool, *, demo: bool = False) -> None:
+        """Show the slow-down band row only when the daemon applies it (DEC-489)."""
+        self._hysteresis_row.set_demo(demo)
+        self._hysteresis_row.setVisible(supported)
+
+    def refresh_hysteresis(self) -> None:
+        """Reload the band row from the curve, after something else changed it."""
+        if self._curve is not None:
+            self._hysteresis_row.set_curve(self._curve)
+
+    def _on_hysteresis_changed(self, value_c: float) -> None:
+        if self._curve is None:
+            return
+        self._curve.hysteresis_c = value_c
+        self.curve_changed.emit()
 
     def get_curve(self) -> CurveConfig | None:
         if self._curve is None:

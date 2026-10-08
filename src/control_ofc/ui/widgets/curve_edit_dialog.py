@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.services.profile_service import MIX_FUNCTIONS, CurveConfig, CurveType
 from control_ofc.ui.components.a11y import name_value_control
+from control_ofc.ui.components.hysteresis_row import HysteresisRow
 
 # Curve types whose evaluation reads a single sensor (and so show the sensor
 # selector). Mix combines other curves at their own sensors and Sync mirrors a
@@ -37,6 +38,8 @@ class CurveEditDialog(QDialog):
         mix_candidates: list[tuple[str, str]] | None = None,
         sync_candidates: list[tuple[str, str]] | None = None,
         min_output: float = 0.0,
+        hysteresis_supported: bool = False,
+        demo: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -45,6 +48,7 @@ class CurveEditDialog(QDialog):
         self._curve = curve
         self._min_output = max(0.0, min(100.0, min_output))
         self._sensor_combo: QComboBox | None = None
+        self._hysteresis_row: HysteresisRow | None = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -88,6 +92,16 @@ class CurveEditDialog(QDialog):
             self._build_mix_params(layout, curve, mix_candidates or [])
         elif curve.type == CurveType.SYNC:
             self._build_sync_params(layout, curve, sync_candidates or [])
+
+        # Slow-down band (DEC-489): only against a daemon that applies it. Shown
+        # disabled, with the reason, for the types that have no band.
+        if hysteresis_supported:
+            self._hysteresis_row = HysteresisRow(
+                object_name="CurveEditDialog_Hysteresis", apply_all_checkable=True
+            )
+            self._hysteresis_row.set_demo(demo)
+            self._hysteresis_row.set_curve(curve)
+            layout.addWidget(self._hysteresis_row)
 
         layout.addStretch()
 
@@ -283,6 +297,23 @@ class CurveEditDialog(QDialog):
         elif self._curve.type == CurveType.SYNC and hasattr(self, "_sync_control_combo"):
             self._curve.sync_control_id = self._sync_control_combo.currentData() or ""
             self._curve.sync_offset_pct = self._sync_offset_spin.value()
+
+        # Written only when the user changed it (or asked to apply it to every
+        # curve), so an untouched curve keeps its absent band — the daemon default.
+        row = self._hysteresis_row
+        if (
+            row is not None
+            and row.is_applicable()
+            and (row.is_touched() or row.apply_all_requested())
+        ):
+            self._curve.hysteresis_c = row.value()
+
+    def hysteresis_apply_all(self) -> float | None:
+        """The band to apply to every curve on save, or ``None`` (DEC-489)."""
+        row = self._hysteresis_row
+        if row is None or not row.apply_all_requested():
+            return None
+        return row.value()
 
     def accept(self) -> None:
         """Validate trigger thresholds before closing (idle must be below load,

@@ -92,6 +92,9 @@ DAEMON_FEATURE_MINIMUMS: MappingProxyType[str, str] = MappingProxyType(
         # USB that does not answer can be updated, Phase 2b. Shipped in daemon
         # 4.0.0.
         "openfan_firmware_silent_update": "4.0.0",
+        # DEC-489, control.curve_hysteresis. A curve's own falling-temperature
+        # deadband width. `/ofc:release` confirms the version.
+        "curve_hysteresis": "4.2.0",
         # DEC-442, control.canonical_chip_names. Chip names and ids survive the
         # it87 v2.0 board-suffix rename. Shipped in daemon 3.0.0.
         "canonical_chip_names": "3.0.0",
@@ -166,6 +169,7 @@ DAEMON_FEATURE_CAPABILITY_FLAGS: MappingProxyType[str, str] = MappingProxyType(
         "openfan_firmware_maintenance": "openfan_firmware_maintenance",
         "openfan_firmware_write": "openfan_firmware_write",
         "openfan_firmware_silent_update": "openfan_firmware_silent_update",
+        "curve_hysteresis": "curve_hysteresis",
         "canonical_chip_names": "canonical_chip_names",
         "cooling_failure_detection": "cooling_failure_detection",
         "pwm_verification_records": "pwm_verification_records",
@@ -200,6 +204,7 @@ DAEMON_FEATURE_LABELS: MappingProxyType[str, str] = MappingProxyType(
         "openfan_firmware_maintenance": "updating the OpenFAN firmware",
         "openfan_firmware_write": "writing the OpenFAN firmware itself",
         "openfan_firmware_silent_update": "updating an OpenFAN board that does not answer",
+        "curve_hysteresis": "a per-curve slow-down band",
         "canonical_chip_names": "keeping fan ids across an it87 v2.0 driver rebuild",
         "settled_diagnostic_evidence": "settling-aware sweep and tach-pairing results",
         "cooling_failure_detection": "the coolant limit and pump stall protection",
