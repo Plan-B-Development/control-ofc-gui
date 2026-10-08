@@ -105,13 +105,14 @@ class TestControlGrouping:
         assert card.curve is curve
         assert card.temp_c == 61.4
 
-    def test_composite_curve_does_not_borrow_a_stale_sensor(self):
-        """A Mix/Sync curve keeps whatever sensor_id it last had — the curve editor
-        writes the field unconditionally — so trusting sensor_id alone would show an
-        unrelated sensor's reading as if it drove this control."""
+    def test_curve_that_reads_no_sensor_does_not_borrow_a_stale_one(self):
+        """A Flat, Mix or Sync curve keeps whatever sensor_id it last had — the
+        curve editor writes the field unconditionally, and older GUIs offered a
+        sensor for Flat — so trusting sensor_id alone would show an unrelated
+        sensor's reading as if it drove this control."""
         from control_ofc.services.profile_service import CurveType
 
-        for curve_type in (CurveType.MIX, CurveType.SYNC):
+        for curve_type in (CurveType.FLAT, CurveType.MIX, CurveType.SYNC):
             curve = CurveConfig(id="cv", name="Composite", type=curve_type, sensor_id="cpu0")
             control = _control(member_ids=("f1",), curve_id="cv")
             card = _cards(

@@ -3109,7 +3109,9 @@ class ControlsPage(QWidget):
         # Update curve card sensor value labels (cheap — dict lookup per card)
         sensor_map = {s.id: (s.label, s.value_c) for s in sensors}
         for _curve_id, ccard in self._curve_cards.items():
-            sid = ccard.curve.sensor_id
+            # A sensor_id kept by a curve that reads none is not shown as if it
+            # drove the curve (``CurveConfig.reads_sensor``).
+            sid = ccard.curve.sensor_id if ccard.curve.reads_sensor else ""
             if sid and sid in sensor_map:
                 label, val = sensor_map[sid]
                 ccard.update_sensor_display(label, val)

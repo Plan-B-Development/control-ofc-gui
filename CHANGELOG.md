@@ -11,6 +11,15 @@
   applies it (control-ofc-daemon 4.2.0 or newer, `control.curve_hysteresis`); a profile you never touch
   saves exactly as before. Demo mode does not simulate the band and says so.
 
+### Fixed
+
+- **A Flat curve no longer offers or shows a sensor.** A Flat curve is a constant, and control-ofc-daemon
+  4.2.0 commands it without reading any sensor. Earlier daemons skipped a Flat curve with no sensor set, so
+  an AIO pump set to **Fixed** in Configure AIO, or a curve made with **Add Flat Curve**, was never driven.
+  The Flat curve dialog has no sensor selector now. A curve that reads no sensor (Flat, Mix, Sync) never
+  shows a sensor reading on its curve card or its Dashboard fan card, even when it carries a sensor from
+  before.
+
 ## [4.1.1] — 2026-10-08
 
 **Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.1.1 is

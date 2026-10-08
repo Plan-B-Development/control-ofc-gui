@@ -104,7 +104,9 @@ The curve library supports seven shapes, each serialised with a `type` field:
   temperature is reached (lower-point-wins, half-open segments), no
   interpolation (DEC-148, schema v5)
 - **linear** — a single 2-point ramp (start/end temperature → output)
-- **flat** — a constant output, temperature-independent
+- **flat** — a constant output, temperature-independent: it reads no sensor, and
+  the daemon commands it without one (daemon 4.2.0; earlier daemons skipped a
+  flat control with no sensor set)
 - **trigger** — a two-state latch: below the idle temperature it runs the idle
   speed, at/above the load temperature it runs the load speed, and within the
   band it holds its current state (its own hysteresis, DEC-149, schema v6)
@@ -116,9 +118,11 @@ The curve library supports seven shapes, each serialised with a `type` field:
 
 Graph and Stepped share the point-table editor (same points model, different
 fill rule — straight vs staircase); Linear, Flat, and Trigger use a small
-parameter panel; Mix and Sync use a modal dialog (a function + a checkable curve
-list / a control + offset) with no sensor selector — they compose other curves
-or controls instead of reading a sensor directly.
+parameter panel, Flat's without a sensor selector; Mix and Sync use a modal
+dialog (a function + a checkable curve list / a control + offset) with no sensor
+selector — they compose other curves or controls instead of reading a sensor
+directly. A curve that reads no sensor (`CurveConfig.reads_sensor`) keeps any
+`sensor_id` it carries but never shows that sensor's reading as its own.
 
 **Composite curves are explicit and acyclic.** Mix references other curves by id;
 Sync references a control by id. A dependency cycle is prohibited — the editor

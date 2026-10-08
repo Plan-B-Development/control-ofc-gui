@@ -212,6 +212,21 @@ class CurveConfig:
     # (``services/curve_hysteresis.py``).
     hysteresis_c: float | None = None
 
+    @property
+    def reads_sensor(self) -> bool:
+        """Whether the daemon evaluates this curve at its own ``sensor_id``.
+
+        Flat is a constant and Mix/Sync combine or mirror other curves, so none
+        of them reads one. They keep whatever ``sensor_id`` they last had (a type
+        change, an older GUI that offered a sensor for Flat), which must be
+        neither offered for editing nor shown as if it drove the curve."""
+        return self.type in (
+            CurveType.GRAPH,
+            CurveType.STEPPED,
+            CurveType.LINEAR,
+            CurveType.TRIGGER,
+        )
+
     def interpolate(self, temp_c: float) -> float:
         """Return output percentage for the given temperature.
 

@@ -21,11 +21,6 @@ from control_ofc.services.profile_service import MIX_FUNCTIONS, CurveConfig, Cur
 from control_ofc.ui.components.a11y import name_value_control
 from control_ofc.ui.components.hysteresis_row import HysteresisRow
 
-# Curve types whose evaluation reads a single sensor (and so show the sensor
-# selector). Mix combines other curves at their own sensors and Sync mirrors a
-# control's output — neither uses a sensor of its own (DEC-150/151).
-_SENSOR_TYPES = (CurveType.LINEAR, CurveType.FLAT, CurveType.TRIGGER)
-
 
 class CurveEditDialog(QDialog):
     """Modal dialog for editing Linear, Flat, Trigger, Mix, or Sync curves."""
@@ -63,8 +58,9 @@ class CurveEditDialog(QDialog):
         name_row.addWidget(self._name_edit, 1)
         layout.addLayout(name_row)
 
-        # Sensor selector — only for single-sensor types. Mix/Sync omit it.
-        if curve.type in _SENSOR_TYPES:
+        # Sensor selector — only for a type the daemon evaluates at a sensor
+        # (``CurveConfig.reads_sensor``). Flat, Mix and Sync omit it.
+        if curve.reads_sensor:
             sensor_row = QHBoxLayout()
             sensor_label = QLabel("Sensor:")
             sensor_row.addWidget(sensor_label)

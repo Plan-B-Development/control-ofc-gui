@@ -247,6 +247,17 @@
       },
       "temps": [50.0, 50.0],
       "expected": [{"member_id": "hwmon:z53:n:pwm1:pwm1", "pwm": [30, 30]}]
+    },
+    {
+      "name": "flat_reads_no_sensor",
+      "sensor_id": "cpu",
+      "profile": {
+        "id": "p_flatnosensor", "name": "FlatNoSensor", "version": 7, "description": "",
+        "controls": [{"id": "cf", "name": "CF", "mode": "curve", "curve_id": "fl", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch00", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}, {"id": "cm", "name": "CM", "mode": "curve", "curve_id": "mx", "manual_output_pct": 0.0, "members": [{"source": "openfan", "member_id": "openfan:ch01", "member_label": "", "fan_zero_rpm": false}], "step_up_pct": 100.0, "step_down_pct": 100.0, "offset_pct": 0.0, "minimum_pct": 0.0, "start_pct": 0.0, "stop_pct": 0.0}],
+        "curves": [{"id": "fl", "name": "FL", "type": "flat", "sensor_id": "", "flat_output_pct": 80.0}, {"id": "lin", "name": "LIN", "type": "linear", "sensor_id": "cpu", "start_temp_c": 30.0, "start_output_pct": 20.0, "end_temp_c": 80.0, "end_output_pct": 100.0}, {"id": "fm", "name": "FM", "type": "flat", "sensor_id": "", "flat_output_pct": 60.0}, {"id": "mx", "name": "MX", "type": "mix", "sensor_id": "", "mix_function": "max", "mix_curve_ids": ["lin", "fm"]}]
+      },
+      "temps": [40.0, 80.0],
+      "expected": [{"member_id": "openfan:ch00", "pwm": [80, 80]}, {"member_id": "openfan:ch01", "pwm": [60, 100]}]
     }
   ]
 }

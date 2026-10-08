@@ -58,7 +58,6 @@ from control_ofc.api.models import (
 from control_ofc.services.overview_view import fan_control_method
 from control_ofc.services.profile_service import (
     CurveConfig,
-    CurveType,
     Profile,
     floor_role_header_roles,
     member_minimum_pct,
@@ -76,10 +75,6 @@ READ_ONLY_PREFIX = "readonly:"
 # Edit deep-link needs.
 
 _GPU_SOURCES = ("amd_gpu", "intel_gpu", "nvidia_gpu")
-
-# Curve types that combine or mirror other curves/controls rather than reading one
-# sensor. They keep whatever sensor_id they last had, so it must not be trusted.
-_COMPOSITE_CURVE_TYPES = (CurveType.MIX, CurveType.SYNC)
 
 # Control methods that mean "no profile can drive this fan". Mirrors the strings
 # returned by :func:`overview_view.fan_control_method` (DEC-102 / DEC-204). A
@@ -372,14 +367,15 @@ def build_fan_card_vms(
             if fan.duty_pct is not None:
                 duties.append(fan.duty_pct)
 
-        # A composite Mix/Sync curve has no single sensor, so it has no single
-        # temperature to show — "—" is the honest render, not a borrowed value.
-        # The type check is load-bearing: the curve editor writes sensor_id
-        # unconditionally, so a Mix/Sync curve routinely carries a stale one left
-        # over from whatever it was before. Trusting sensor_id alone would show
-        # that stale sensor's reading as if it drove the control.
+        # A Flat curve reads no sensor and a composite Mix/Sync curve has no
+        # single one, so neither has a temperature to show — "—" is the honest
+        # render, not a borrowed value. The type check is load-bearing: the
+        # curve editor writes sensor_id unconditionally, so such a curve
+        # routinely carries a stale one left over from whatever it was before.
+        # Trusting sensor_id alone would show that stale sensor's reading as if
+        # it drove the control.
         temp = None
-        if curve is not None and curve.sensor_id and curve.type not in _COMPOSITE_CURVE_TYPES:
+        if curve is not None and curve.sensor_id and curve.reads_sensor:
             temp = sv.get(curve.sensor_id)
 
         state = _worst(states)
