@@ -69,10 +69,15 @@ from control_ofc.services.curve_hysteresis import apply_hysteresis_to_all
 from control_ofc.services.daemon_features import daemon_supports
 from control_ofc.services.header_role_writes import apply_role_writes
 from control_ofc.services.profile_service import (
+    DELETE_REFUSED_DAEMON_ERROR,
+    DELETE_REFUSED_IN_USE,
+    DELETE_REFUSED_OFFLINE,
+    DELETE_REFUSED_READ_ONLY,
     ControlMode,
     CurveConfig,
     CurvePoint,
     CurveType,
+    DeleteRefusal,
     LogicalControl,
     Profile,
     ProfileService,
@@ -243,13 +248,56 @@ class _OverrideWorker(QObject):
 _COOLING_DEVICE_ID = DEFAULT_COOLING_DEVICE_ID
 
 
-def delete_refused_message(name: str, stop_error: str | None) -> str:
-    """What the banner says when the daemon refuses a delete (`WUI-c`).
+def manual_unavailable_reason(viewed_id: str, active_id: str) -> str | None:
+    """Why a card of the viewed profile offers no Manual, or ``None`` if it may.
 
-    The daemon refuses only a profile it is still running, which after the
-    delete flow's own deactivate means that stop failed — its reason, when
-    there is one, is the useful half.
+    An override pins a control of the profile the daemon is RUNNING, looked up
+    by control id (``POST /control/{id}/override``), so Manual belongs on that
+    profile's cards only. Demo mode follows the same rule: the demo controller
+    also evaluates the active profile.
     """
+    if viewed_id and viewed_id == active_id:
+        return None
+    # One wording for both cases: an empty ``active_id`` is not proof that the
+    # daemon runs nothing — it is also a profile this GUI does not hold (WUI-d),
+    # an offline start, or the moment before the first poll.
+    return (
+        "Manual sets the fans of the profile the daemon is running, and that is "
+        "not this one. Activate this profile to use Manual here."
+    )
+
+
+def delete_refused_message(
+    name: str,
+    stop_error: str | None,
+    refusal: DeleteRefusal | None = None,
+    *,
+    stopped: bool = False,
+) -> str:
+    """What the banner says when a delete is refused (`WUI-c`).
+
+    The daemon refuses a profile it is still running, which after the delete
+    flow's own deactivate means that stop failed — its reason, when there is
+    one, is the useful half. The service also keeps a profile whose daemon copy
+    it could not remove (``refusal``): deleting only the local copy would have
+    brought it back on the next launch. ``stopped`` says the delete flow had
+    already deactivated it, so the kept profile no longer runs.
+    """
+    kind = refusal.kind if refusal is not None else DELETE_REFUSED_IN_USE
+    was_stopped = " It was stopped first, so it is no longer running." if stopped else ""
+    if kind == DELETE_REFUSED_OFFLINE:
+        return (
+            f"Could not delete '{name}': the daemon is not reachable, and it keeps "
+            f"its own copy. Delete it again once the daemon is running.{was_stopped}"
+        )
+    if kind == DELETE_REFUSED_DAEMON_ERROR:
+        detail = f" ({refusal.detail})" if refusal is not None and refusal.detail else ""
+        return f"Could not delete '{name}': the daemon could not remove it{detail}.{was_stopped}"
+    if kind == DELETE_REFUSED_READ_ONLY:
+        return (
+            f"Could not delete '{name}': it was installed with the daemon and is "
+            f"read-only. It can be left unused, but not deleted here.{was_stopped}"
+        )
     reason = f" ({stop_error})" if stop_error else ""
     return (
         f"Could not delete '{name}': the daemon is still running it{reason}. "
@@ -1055,10 +1103,20 @@ class ControlsPage(QWidget):
                     # canonical source for the next activation, and the
                     # daemon will surface the error itself.
             if not self._profile_service.delete_profile(profile_id):
-                # `WUI-c`: the daemon refused (`409 profile_in_use`) — it is still
-                # running this profile and the GUI kept it. AppState must go on
-                # naming it, and the view stays where it is.
-                self.delete_refused.emit(delete_refused_message(current.name, stop_error))
+                # `WUI-c`: the daemon refused (`409 profile_in_use`: it is still
+                # running this profile), or could not be reached or failed, and
+                # the GUI kept it. AppState must go on naming it, and the view
+                # stays where it is.
+                self.delete_refused.emit(
+                    delete_refused_message(
+                        current.name,
+                        stop_error,
+                        self._profile_service.last_delete_refusal,
+                        stopped=was_active_locally
+                        and self._client is not None
+                        and stop_error is None,
+                    )
+                )
                 return
             if was_active_locally and self._state is not None:
                 self._state.set_active_profile("")
@@ -1330,6 +1388,7 @@ class ControlsPage(QWidget):
             self._selected_control_id = control_ids[0] if control_ids else None
 
         tier = self._card_size_tier()
+        manual_withheld = manual_unavailable_reason(profile.id, self._profile_service.active_id)
         for control in profile.controls:
             card = ControlCard(
                 control,
@@ -1351,6 +1410,7 @@ class ControlsPage(QWidget):
             # capability so a profile switch can't silently re-enable a card
             # the daemon reported as non-writable.
             card.setEnabled(self._cards_writable)
+            card.set_manual_allowed(manual_withheld is None, manual_withheld or "")
             card.set_selected(control.id == self._selected_control_id)
             self._control_cards[control.id] = card
             self._controls_flow.add_card(card, control.id)

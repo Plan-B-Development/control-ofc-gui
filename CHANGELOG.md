@@ -24,6 +24,19 @@
   discovery, the stall probe and Identify with "not found": the request was cut short at the `#`. A
   profile id containing `?` could fetch or delete a different profile, and one containing `#` could not
   be saved to the daemon. Every id in a request path is now encoded.
+- **Starting while the daemon is down no longer marks a profile active.** The first profile was shown as
+  "(active)" until restart even when the daemon ran none, and saving it activated it — so a profile you
+  had stopped could start running. Which profile is active now comes from the daemon alone, as it already
+  did when it was reachable at startup.
+- **Manual is offered only on the running profile's fan roles.** The daemon applies a Manual override
+  to the role of that name in the profile it is running. On a profile you were only viewing — a
+  duplicate, say — Manual moved the running profile's fans instead of the ones on the card, or snapped
+  back with no explanation. On any other profile the button is now greyed out, and its tooltip says why.
+- **Deleting a profile while the daemon is unreachable keeps it.** The profile used to disappear and then
+  come back the next time the app started, because the daemon still had its copy. The delete is now
+  refused, and a banner explains why. The same applies when the daemon fails to delete its copy, and to a
+  profile installed with the daemon, such as **Quiet**: it is read-only, so it is kept and the banner says
+  so, rather than disappearing until the next start.
 
 ## [4.1.1] — 2026-10-08
 

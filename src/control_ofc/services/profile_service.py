@@ -1996,6 +1996,24 @@ class ProfileDeactivateOutcome:
     local_only: bool = False
 
 
+# Why :meth:`ProfileService.delete_profile` kept a profile it was asked to delete.
+DELETE_REFUSED_IN_USE = "in_use"  # the daemon is still running it (409 profile_in_use)
+DELETE_REFUSED_OFFLINE = "offline"  # the daemon could not be reached
+DELETE_REFUSED_DAEMON_ERROR = "daemon_error"  # reached, but the delete failed
+DELETE_REFUSED_READ_ONLY = "read_only"  # served from a search dir DELETE never touches
+
+
+@dataclass(frozen=True)
+class DeleteRefusal:
+    """Why the last :meth:`ProfileService.delete_profile` returned ``False``.
+
+    ``kind`` is one of the ``DELETE_REFUSED_*`` tokens; ``detail`` is the
+    daemon's message where there is one."""
+
+    kind: str
+    detail: str = ""
+
+
 class ProfileService(QObject):
     """Manages profile loading, saving, and selection.
 
@@ -2051,6 +2069,9 @@ class ProfileService(QObject):
         # which used to call a refusal "daemon offline".
         self._rejections: dict[str, list[str]] = {}
         self._save_warnings: dict[str, list[str]] = {}
+        # Why the last delete_profile() kept the profile; None after one that
+        # deleted it.
+        self._last_delete_refusal: DeleteRefusal | None = None
         # True once a load()/save fell back to the local cache because the
         # daemon was unreachable — the GUI is working against the offline
         # mirror. Cleared on the next successful daemon load.
@@ -2315,7 +2336,16 @@ class ProfileService(QObject):
                     log.warning("Failed to write default profile %s: %s", p.id, e)
                     errors.append((p.id, str(e)))
 
-        if not self._active_id and self._profiles:
+        # The seed is for pure-local/demo mode only, where there is no daemon to
+        # ask and the first profile really is the one the demo runs. With a
+        # client this path is the OFFLINE fallback, and `CTRL-d`'s reasoning
+        # applies unchanged: which profile is active is the daemon's to say, on
+        # the first poll after it comes up. Seeding here marked the first
+        # profile "(active)" while the daemon ran none — AppState also holds
+        # "", so the poll's "" was no change and never corrected it — and a
+        # Save of that profile took the DEC-188 re-apply branch and activated
+        # a profile the user had stopped.
+        if self._client is None and not self._active_id and self._profiles:
             self._active_id = next(iter(self._profiles))
 
         return errors
@@ -2550,28 +2580,63 @@ class ProfileService(QObject):
         self.save_profile(new_profile)
         return new_profile
 
+    @property
+    def last_delete_refusal(self) -> DeleteRefusal | None:
+        """Why the last :meth:`delete_profile` kept the profile, else ``None``."""
+        return self._last_delete_refusal
+
     def delete_profile(self, profile_id: str) -> bool:
+        """Delete a profile from the daemon store and the local cache.
+
+        With a client, the local copy goes only once the daemon no longer serves
+        the profile: a confirmed delete, or a ``404`` after which the daemon no
+        longer resolves the id. Anything else keeps the profile and records why
+        in :attr:`last_delete_refusal`. Deleting locally while the daemon kept a
+        copy only hid the profile until the next launch, when ``load()`` listed
+        it again and wrote it back to the cache — there is no reconcile.
+
+        A ``404`` means the daemon's store has no copy, which is not the same as
+        "gone": ``GET /profiles`` also serves the search dirs, and ``DELETE``
+        touches only the store. Those are this GUI's own profiles dir (which the
+        GUI registers, so an unpublished draft is served from its cache file)
+        and the read-only package presets (``/etc/control-ofc/profiles``). So on
+        a ``404`` the cache file is removed first and the id asked for again: a
+        draft is now gone, while a preset still resolves and is kept.
+        """
+        self._last_delete_refusal = None
         if profile_id not in self._profiles:
             return False
         if self._client is not None:
             try:
                 self._client.delete_profile(profile_id)
-            except (DaemonUnavailable, DaemonTimeout):
-                # Offline: drop it locally; the daemon copy reconciles on the
-                # next online load (activation needs the daemon anyway).
+            except (DaemonUnavailable, DaemonTimeout) as e:
                 self._offline = True
+                self._last_delete_refusal = DeleteRefusal(DELETE_REFUSED_OFFLINE, e.message)
+                log.warning("Not deleting profile %s — the daemon is unreachable", profile_id)
+                return False
             except DaemonError as e:
                 if e.code == "profile_in_use":
                     # The daemon is actively running this profile — refuse the
                     # delete rather than desync the GUI from a live profile.
+                    self._last_delete_refusal = DeleteRefusal(DELETE_REFUSED_IN_USE, e.message)
                     log.warning("Cannot delete profile %s — it is active on the daemon", profile_id)
                     return False
-                log.warning(
-                    "Daemon delete of profile %s failed (%s): %s",
-                    profile_id,
-                    e.code,
-                    e.message,
-                )
+                if e.status != 404:
+                    self._last_delete_refusal = DeleteRefusal(
+                        DELETE_REFUSED_DAEMON_ERROR, e.message or e.code
+                    )
+                    log.warning(
+                        "Daemon delete of profile %s failed (%s): %s",
+                        profile_id,
+                        e.code,
+                        e.message,
+                    )
+                    return False
+                # 404: not in the store — a draft, or a read-only preset.
+                refusal = self._refuse_if_still_served(profile_id)
+                if refusal is not None:
+                    self._last_delete_refusal = refusal
+                    return False
         profile = self._profiles.pop(profile_id)
         path = profile_file_path(profile.id)
         # Demo mode removes the profile from memory only (DEC-431).
@@ -2595,6 +2660,34 @@ class ProfileService(QObject):
         # delete does not go through save_profile, so emit here for observers.
         self.profiles_changed.emit()
         return True
+
+    def _refuse_if_still_served(self, profile_id: str) -> DeleteRefusal | None:
+        """After a ``404`` delete: remove the cache file and ask for the id again.
+
+        ``None`` when the daemon no longer resolves it (the caller finishes the
+        delete). Otherwise the cache file is written back and the refusal says
+        why: a profile served from a search dir ``DELETE`` cannot reach, or a
+        daemon that could not be asked.
+        """
+        assert self._client is not None
+        profile = self._profiles[profile_id]
+        path = profile_file_path(profile_id)
+        if self._persist and path.exists():
+            path.unlink()
+        try:
+            self._client.get_profile(profile_id)
+        except (DaemonUnavailable, DaemonTimeout) as e:
+            self._offline = True
+            refusal = DeleteRefusal(DELETE_REFUSED_OFFLINE, e.message)
+        except DaemonError as e:
+            if e.status == 404:
+                return None
+            refusal = DeleteRefusal(DELETE_REFUSED_DAEMON_ERROR, e.message or e.code)
+        else:
+            refusal = DeleteRefusal(DELETE_REFUSED_READ_ONLY)
+        self._write_local(profile)
+        log.warning("Not deleting profile %s (%s)", profile_id, refusal.kind)
+        return refusal
 
     def get_profile(self, profile_id: str) -> Profile | None:
         return self._profiles.get(profile_id)

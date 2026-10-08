@@ -334,6 +334,42 @@ class TestRefusedDelete:
         assert profile_service.get_profile(b.id) is None
         assert app_state.active_profile_name == ""
 
+    def test_an_offline_delete_is_kept_and_the_banner_says_why(
+        self, window, profile_service, app_state, monkeypatch
+    ):
+        """The call site must hand the refusal to the message: without it the
+        banner falls back to the in-use wording and tells the user to press Stop."""
+        a, _b = _two_profiles(window, profile_service)
+        window._populate_sidebar_profiles(select_id=a.id)
+        window.controls_page._client = _client()
+        profile_service._client = Mock()
+        profile_service._client.delete_profile.side_effect = _GONE
+        _yes(monkeypatch)
+
+        window.findChild(QPushButton, "Sidebar_Btn_deleteProfile").click()
+
+        assert profile_service.get_profile(a.id) is not None
+        text = window.error_banner._message_label.text()
+        assert text == delete_refused_message(a.name, None, profile_service.last_delete_refusal)
+        assert "not reachable" in text
+        assert "still running" not in text
+
+    def test_deleting_the_running_profile_offline_says_it_was_stopped(
+        self, window, profile_service, app_state, monkeypatch
+    ):
+        _a, b = _two_profiles(window, profile_service)
+        profile_service.set_active(b.id)
+        app_state.set_active_profile(b.name)
+        window.controls_page._client = _client()  # the stop succeeds
+        profile_service._client = Mock()
+        profile_service._client.delete_profile.side_effect = _GONE  # the delete does not
+        _yes(monkeypatch)
+
+        window.findChild(QPushButton, "Sidebar_Btn_deleteProfile").click()
+
+        assert profile_service.get_profile(b.id) is not None
+        assert "no longer running" in window.error_banner._message_label.text()
+
     def test_the_message_carries_the_stop_reason_when_there_is_one(self):
         with_reason = delete_refused_message("Bravo", "connection refused")
         assert with_reason == (

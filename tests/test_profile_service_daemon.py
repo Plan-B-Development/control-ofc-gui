@@ -17,11 +17,16 @@ import pytest
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.paths import profiles_dir
 from control_ofc.services.profile_service import (
+    DELETE_REFUSED_DAEMON_ERROR,
+    DELETE_REFUSED_IN_USE,
+    DELETE_REFUSED_OFFLINE,
+    DELETE_REFUSED_READ_ONLY,
     ControlMember,
     ControlMode,
     CurveConfig,
     CurvePoint,
     CurveType,
+    DeleteRefusal,
     LogicalControl,
     Profile,
     ProfileService,
@@ -547,7 +552,10 @@ def test_delete_refused_when_profile_in_use(cfg):
     assert (profiles_dir() / f"{p.id}.json").exists()
 
 
-def test_delete_offline_removes_locally(cfg):
+def test_delete_offline_is_refused_and_keeps_the_profile(cfg):
+    """Deleting only the local copy while the daemon kept its own hid the
+    profile until the next launch: load() lists the store and writes it back to
+    the cache. There is no reconcile, so the delete is refused instead."""
     fake = FakeDaemonClient()
     p = Profile(name="Gone")
     _seed(fake, p)
@@ -555,9 +563,122 @@ def test_delete_offline_removes_locally(cfg):
     svc.load()
     fake.raise_on["delete_profile"] = DaemonUnavailable()
 
-    assert svc.delete_profile(p.id) is True
-    assert p.id not in _ids(svc)
+    assert svc.delete_profile(p.id) is False
+    assert svc.last_delete_refusal.kind == DELETE_REFUSED_OFFLINE
+    assert p.id in _ids(svc)
+    assert (profiles_dir() / f"{p.id}.json").exists()
     assert svc._offline is True
+
+    # And the next launch agrees with what the user was told.
+    fake.raise_on.clear()
+    relaunched = ProfileService(client=fake)
+    relaunched.load()
+    assert p.id in _ids(relaunched)
+
+
+def test_delete_of_a_profile_the_daemon_never_had_is_local(cfg):
+    """404: not in the store (a draft never published) — delete the local copy."""
+    fake = FakeDaemonClient()
+    p = Profile(name="Draft")
+    svc = ProfileService(client=fake)
+    svc.load()
+    svc._profiles[p.id] = p
+    fake.raise_on["delete_profile"] = DaemonError(
+        code="validation_error", message="not found in store", status=404
+    )
+
+    assert svc.delete_profile(p.id) is True
+    assert svc.last_delete_refusal is None
+    assert p.id not in _ids(svc)
+    assert ("get", p.id) in fake.calls  # it asked whether the daemon still serves it
+
+
+def test_delete_of_a_read_only_preset_is_refused_and_keeps_it(cfg):
+    """DELETE touches only the daemon's store, so a package preset (served from
+    /etc/control-ofc/profiles) answers 404 and is still listed afterwards.
+    Deleting the local copy on that 404 brought it back on the next launch."""
+    fake = FakeDaemonClient()
+    preset = Profile(id="quiet", name="Quiet")
+    _seed(fake, preset)  # listed and served, as a search-dir preset is
+    svc = ProfileService(client=fake)
+    svc.load()
+    fake.raise_on["delete_profile"] = DaemonError(
+        code="validation_error", message="profile 'quiet' not found in store", status=404
+    )
+
+    assert svc.delete_profile("quiet") is False
+    assert svc.last_delete_refusal == DeleteRefusal(DELETE_REFUSED_READ_ONLY)
+    assert "quiet" in _ids(svc)
+    assert (profiles_dir() / "quiet.json").exists()  # the cache copy is written back
+
+
+def test_delete_the_daemon_failed_is_refused_with_its_message(cfg):
+    fake = FakeDaemonClient()
+    p = Profile(name="Stuck")
+    _seed(fake, p)
+    svc = ProfileService(client=fake)
+    svc.load()
+    fake.raise_on["delete_profile"] = DaemonError(
+        code="internal_error", message="failed to delete profile", status=500
+    )
+
+    assert svc.delete_profile(p.id) is False
+    assert svc.last_delete_refusal == DeleteRefusal(
+        DELETE_REFUSED_DAEMON_ERROR, "failed to delete profile"
+    )
+    assert p.id in _ids(svc)
+    assert (profiles_dir() / f"{p.id}.json").exists()
+
+
+def test_delete_refusal_in_use_is_recorded(cfg):
+    fake = FakeDaemonClient()
+    p = Profile(name="Running")
+    _seed(fake, p)
+    svc = ProfileService(client=fake)
+    svc.load()
+    fake.raise_on["delete_profile"] = DaemonError(
+        code="profile_in_use", message="active", status=409
+    )
+    assert svc.delete_profile(p.id) is False
+    assert svc.last_delete_refusal.kind == DELETE_REFUSED_IN_USE
+
+
+# ---------------------------------------------------------------------------
+# offline load invents no active profile (the CTRL-d rule, offline too)
+# ---------------------------------------------------------------------------
+
+
+def _two_cached_profiles(cfg) -> list[Profile]:
+    """Write two profiles into the local cache, as a previous online run did."""
+    profiles = [Profile(id="alpha", name="Alpha"), Profile(id="beta", name="Beta")]
+    local = ProfileService()  # pure local: writes the cache
+    for prof in profiles:
+        local.save_profile(prof)
+    return profiles
+
+
+def test_offline_load_with_a_client_marks_no_profile_active(cfg):
+    """The daemon could not be asked, so no profile is "(active)". Seeding the
+    first one was never corrected (AppState also held ""), and a Save of it
+    then re-activated a profile the user had stopped (DEC-188)."""
+    _two_cached_profiles(cfg)
+    fake = FakeDaemonClient()
+    fake.raise_on["list_profiles"] = DaemonUnavailable()
+    svc = ProfileService(client=fake)
+    svc.load()
+
+    assert svc._offline is True
+    assert _ids(svc) == {"alpha", "beta"}  # precondition: the cache loaded
+    assert svc.active_id == ""
+    assert svc.active_profile is None
+
+
+def test_pure_local_load_still_seeds_the_first_profile_active(cfg):
+    """No daemon to ask: the demo/local evaluator runs the first profile."""
+    _two_cached_profiles(cfg)
+    svc = ProfileService()
+    svc.load()
+    assert svc.active_id == "alpha"
 
 
 # ---------------------------------------------------------------------------

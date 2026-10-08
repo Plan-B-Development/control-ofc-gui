@@ -220,7 +220,11 @@ Manual override is temporary and high-visibility.
 - **Enter / exit**: a single checkable **Manual** toggle per role card
   (`ControlCard_Btn_manual_*`). Checking it swaps the card's output line for an inline
   slider and takes a daemon override (`POST /control/{id}/override`); unchecking it
-  releases the override (`DELETE`) and the role returns to its curve.
+  releases the override (`DELETE`) and the role returns to its curve. The toggle is
+  enabled only on the cards of the profile the daemon is running
+  (`manual_unavailable_reason`): the daemon resolves the control id against its active
+  profile, so on a viewed-only profile it pinned the running profile's same-id control
+  (a duplicate keeps its ids) or answered `404`. A held override keeps its exit.
 - **Renewal**: the page renews every few seconds (the interval the daemon returns in
   `renew_secs`). A renew the daemon refuses means the override has expired, and the card
   reverts to its curve. A renew that never reached the daemon (a timeout, the socket gone)

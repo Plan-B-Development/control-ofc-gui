@@ -43,6 +43,11 @@ from control_ofc.ui.theme import active_theme
 from control_ofc.ui.widgets.card_metrics import DEFAULT_CARD_SIZE
 from control_ofc.ui.widgets.resizable_grid_card import ResizableGridCard
 
+_MANUAL_TOOLTIP = (
+    "Temporarily set this role's fans to a fixed speed.\n"
+    "Not saved to the profile; clears on profile change."
+)
+
 
 class ControlCard(ResizableGridCard):
     """Compact fan role card — dense rows, no dead space."""
@@ -258,13 +263,13 @@ class ControlCard(ResizableGridCard):
 
         actions.addStretch()
 
+        # Whether this card's profile is the one the daemon runs; an override
+        # names a control of the RUNNING profile (`set_manual_allowed`).
+        self._manual_allowed = True
         self._manual_btn = QPushButton("Manual")
         self._manual_btn.setObjectName(f"ControlCard_Btn_manual_{control.id}")
         self._manual_btn.setCheckable(True)
-        self._manual_btn.setToolTip(
-            "Temporarily set this role's fans to a fixed speed.\n"
-            "Not saved to the profile; clears on profile change."
-        )
+        self._manual_btn.setToolTip(_MANUAL_TOOLTIP)
         self._manual_btn.toggled.connect(self._on_manual_toggled)
         actions.addWidget(self._manual_btn)
 
@@ -852,6 +857,22 @@ class ControlCard(ResizableGridCard):
                 return f"{c.name} ({c.type.value})"
         return "None"
 
+    def set_manual_allowed(self, allowed: bool, reason: str = "") -> None:
+        """Offer Manual only on a card of the profile the daemon is running.
+
+        The daemon resolves ``POST /control/{id}/override`` against its ACTIVE
+        profile by control id alone. From a profile the user is only browsing
+        it pinned the running profile's control of the same id — a duplicated
+        profile keeps its ids, so different fans moved than the card showed,
+        with a slider floor computed from the wrong members — or answered
+        ``404`` and the card silently snapped back. ``reason`` is the tooltip
+        that says why while it is withheld. A held override keeps its exit
+        (the enable rule below), as for a member-less control (277-o).
+        """
+        self._manual_allowed = allowed
+        self._manual_btn.setToolTip(_MANUAL_TOOLTIP if allowed else reason)
+        self._update_no_members_state(self._control)
+
     def _update_no_members_state(self, control: LogicalControl) -> None:
         # No fans assigned -> nothing to drive manually.
         #
@@ -860,7 +881,9 @@ class ControlCard(ResizableGridCard):
         # its members mid-override could not be released until the ~15 s deadman
         # expired — on a card whose renew timer was still renewing. Keep the exit
         # reachable; taking a *new* override still needs members.
-        self._manual_btn.setEnabled(bool(control.members) or self._manual_btn.isChecked())
+        self._manual_btn.setEnabled(
+            (bool(control.members) and self._manual_allowed) or self._manual_btn.isChecked()
+        )
         if self._manual_btn.isChecked():
             # The user is commanding these fans right now. "No members" would be
             # both wrong and, via `_apply_chip`, announced as the card's
