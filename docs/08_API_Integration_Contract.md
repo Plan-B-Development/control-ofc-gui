@@ -53,6 +53,16 @@ Two consequences worth stating here rather than only in the ADR:
    `500 internal_error`, as on every other route (DEC-468); daemons before it
    answered `200 {}` there, with no `api_version`. The GUI tolerates its absence
    everywhere and gates on `GET /capabilities`, never on a per-response version.
+7. **An id in a URL path is percent-encoded, one segment.** Header ids carry their sysfs
+   label (`System Fan #1` on nct6687 boards) and profile ids may hold `#`, `?`, `%` and
+   spaces, which both sides accept. The client encodes every `{id}` segment (`_seg`,
+   `quote(id, safe=":")`, so `/` is encoded too; a whole-segment `.` or `..` as `%2E`,
+   because the HTTP client removes dot segments and `GET /profiles/.` became the list), and
+   the daemon decodes it after routing (axum's `Path` extractor), so the id round-trips
+   exactly. Sent raw, `#` began a fragment
+   the HTTP client dropped and `?` a query: `DELETE /profiles/a?x` deleted profile `a`, and
+   a diagnostic on `System Fan #1` answered `404` after its preflight passed. Sensor ids go
+   in the query (`params=`) for the same reason. Every GUI before this fix sent ids raw.
 
 ## Quick reference — curl examples
 

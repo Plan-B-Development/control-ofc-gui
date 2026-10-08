@@ -103,6 +103,29 @@ BASE_URL = "http://localhost"
 ResponseObserver = Callable[[str, str, int, Any], None]
 
 
+def _seg(value: object) -> str:
+    """One path segment, percent-encoded so the daemon sees the exact id.
+
+    Ids reach paths from sysfs labels (``System Fan #1`` on nct6687 boards) and
+    from imported profile files, and the daemon accepts ``#``, ``?``, ``%`` and
+    spaces in both. Sent raw, httpx reads ``#`` as a fragment and drops the rest,
+    ``?`` as a query, and passes ``%xx`` through, so the request named a
+    different header or profile — ``DELETE /profiles/a?x`` deleted ``a``. axum
+    decodes the segment after routing, so this round-trips every id; ``/`` is
+    encoded too. ``:`` is left as is: it is legal in a path segment (RFC 3986
+    ``pchar``) and keeps hwmon ids readable in logs and error messages.
+
+    A whole segment of ``.`` or ``..`` is a dot segment, which httpx removes
+    (RFC 3986 § 5.2.4): ``GET /profiles/.`` became ``GET /profiles``, the list.
+    ``quote`` never encodes ``.``, so those two are spelled ``%2E``, which httpx
+    leaves alone and axum decodes back. Both sides accept such an id.
+    """
+    encoded = quote(str(value), safe=":")
+    if encoded in (".", ".."):
+        encoded = encoded.replace(".", "%2E")
+    return encoded
+
+
 class DaemonClient:
     """Synchronous client that talks to control-ofc-daemon over a Unix socket.
 
@@ -649,7 +672,7 @@ class DaemonClient:
 
         Raises on 404 (no such device) and 503 (persistence_failed).
         """
-        return self._delete(f"/config/cooling-device/{device_id}")
+        return self._delete(f"/config/cooling-device/{_seg(device_id)}")
 
     # ------------------------------------------------------------------
     # Validation sessions (AIO-MB Phase 5, daemon >= 2.32.0)
@@ -799,7 +822,7 @@ class DaemonClient:
         ``None`` when there is no such session; every other failure raises.
         """
         try:
-            return parse_validation_session(self._get(f"/validation/sessions/{session_id}"))
+            return parse_validation_session(self._get(f"/validation/sessions/{_seg(session_id)}"))
         except DaemonError as exc:
             if exc.status == 404:
                 return None
@@ -816,7 +839,7 @@ class DaemonClient:
         under load is ~7.5 s, so we send a 12 s per-call timeout regardless of
         the global default. See DEC-098 / DEC-101 / DEC-165.
         """
-        data = self._post(f"/hwmon/{header_id}/verify", timeout=VERIFY_TIMEOUT_S)
+        data = self._post(f"/hwmon/{_seg(header_id)}/verify", timeout=VERIFY_TIMEOUT_S)
         return parse_hwmon_verify_result(data)
 
     def start_characterization(
@@ -865,7 +888,9 @@ class DaemonClient:
             body["bidirectional"] = bidirectional
         if stability_seconds is not None:
             body["stability_seconds"] = stability_seconds
-        return parse_characterization_run(self._post(f"/hwmon/{header_id}/characterize", json=body))
+        return parse_characterization_run(
+            self._post(f"/hwmon/{_seg(header_id)}/characterize", json=body)
+        )
 
     def characterization_status(self) -> CharacterizationRun | None:
         """GET /diagnostics/characterization — the current or most recent run.
@@ -965,7 +990,7 @@ class DaemonClient:
         if window_seconds is not None:
             body["window_seconds"] = window_seconds
         return parse_control_path_run(
-            self._post(f"/hwmon/{header_id}/discover-control-path", json=body)
+            self._post(f"/hwmon/{_seg(header_id)}/discover-control-path", json=body)
         )
 
     def control_path_status(self) -> ControlPathStatus | None:
@@ -1017,7 +1042,7 @@ class DaemonClient:
         """
         return parse_stall_probe_run(
             self._post(
-                f"/hwmon/{header_id}/stall-probe",
+                f"/hwmon/{_seg(header_id)}/stall-probe",
                 json={"acknowledge_below_floor": bool(acknowledge_below_floor)},
             )
         )
@@ -1222,15 +1247,15 @@ class DaemonClient:
         ``DaemonError`` with status 404 ``validation_error`` if no profile has
         that id.
         """
-        return self._get(f"/profiles/{profile_id}")
+        return self._get(f"/profiles/{_seg(profile_id)}")
 
     def update_profile(self, profile_id: str, document: dict[str, Any]) -> dict[str, Any]:
         """PUT /profiles/{id} — replace a stored profile with a full document."""
-        return self._put(f"/profiles/{profile_id}", json=document)
+        return self._put(f"/profiles/{_seg(profile_id)}", json=document)
 
     def delete_profile(self, profile_id: str) -> dict[str, Any]:
         """DELETE /profiles/{id} — remove a stored profile."""
-        return self._delete(f"/profiles/{profile_id}")
+        return self._delete(f"/profiles/{_seg(profile_id)}")
 
     def override_take(
         self,
@@ -1249,7 +1274,7 @@ class DaemonClient:
         if ttl_secs is not None:
             payload["ttl_secs"] = ttl_secs
         return parse_override_grant(
-            self._post(f"/control/{control_id}/override", json=payload, timeout=timeout)
+            self._post(f"/control/{_seg(control_id)}/override", json=payload, timeout=timeout)
         )
 
     def override_renew(
@@ -1258,7 +1283,7 @@ class DaemonClient:
         """POST /control/{id}/override/renew — extend an override before its TTL (DEC-163)."""
         return parse_override_renew(
             self._post(
-                f"/control/{control_id}/override/renew",
+                f"/control/{_seg(control_id)}/override/renew",
                 json={"override_token": override_token},
                 timeout=timeout,
             )
@@ -1270,7 +1295,7 @@ class DaemonClient:
         """DELETE /control/{id}/override — release an override, reverting to curve (DEC-163)."""
         return parse_override_release(
             self._delete(
-                f"/control/{control_id}/override",
+                f"/control/{_seg(control_id)}/override",
                 json={"override_token": override_token},
                 timeout=timeout,
             )
@@ -1301,12 +1326,12 @@ class DaemonClient:
         if ttl_secs is not None:
             payload["ttl_secs"] = ttl_secs
         return parse_identify_result(
-            self._post(f"/fans/{fan_id}/identify", json=payload, timeout=timeout)
+            self._post(f"/fans/{_seg(fan_id)}/identify", json=payload, timeout=timeout)
         )
 
     def reset_gpu_fan(self, gpu_id: str, *, timeout: float | None = None) -> GpuFanResetResult:
         """POST /gpu/{gpu_id}/fan/reset — reset GPU fan to automatic mode."""
-        data = self._post(f"/gpu/{gpu_id}/fan/reset", json={}, timeout=timeout)
+        data = self._post(f"/gpu/{_seg(gpu_id)}/fan/reset", json={}, timeout=timeout)
         return parse_gpu_fan_reset(data)
 
     def verify_gpu_fan(self, gpu_id: str) -> GpuVerifyResult:
@@ -1319,7 +1344,7 @@ class DaemonClient:
         round-trip overhead, matching ``verify_hwmon_pwm``. See DEC-120.
         """
         data = self._post(
-            f"/gpu/{gpu_id}/fan/verify",
+            f"/gpu/{_seg(gpu_id)}/fan/verify",
             json={},
             timeout=VERIFY_TIMEOUT_S,
         )

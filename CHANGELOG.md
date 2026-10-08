@@ -19,6 +19,11 @@
   The Flat curve dialog has no sensor selector now. A curve that reads no sensor (Flat, Mix, Sync) never
   shows a sensor reading on its curve card or its Dashboard fan card, even when it carries a sensor from
   before.
+- **Fans and profiles whose names contain `#`, `?` or `%` reach the right target.** On nct6687 boards a
+  header such as "System Fan #1" passed its preflight, then failed verify, characterisation, control-path
+  discovery, the stall probe and Identify with "not found": the request was cut short at the `#`. A
+  profile id containing `?` could fetch or delete a different profile, and one containing `#` could not
+  be saved to the daemon. Every id in a request path is now encoded.
 
 ## [4.1.1] — 2026-10-08
 
