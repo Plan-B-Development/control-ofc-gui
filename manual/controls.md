@@ -122,10 +122,10 @@ The **Manual** button on each card is a toggle: switch it on and a slider replac
 
 - it overrides **that role only** — every other role keeps following its curve
 - it is offered only on the cards of the profile the daemon is **running** — the daemon finds the role in the running profile, so on a profile you are only viewing the button is greyed out and its tooltip says why; activate that profile to use it
-- it is **floor-clamped** — the requested speed is raised to the role's stall-protection minimum if you ask for less (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection))
+- it is **floor-clamped** — the requested speed is raised to the role's stall-protection minimum if you ask for less (see [role-aware minimums](profiles-and-curves.md#role-aware-minimum-stall-protection)). When the daemon holds a fan above what you asked for — a DC pump at its 70 % minimum, say — the figure beside the slider says so: "40% · fans at 70%"
 - it is **expiring** — the GUI keeps the override alive while the slider is up; if the GUI closes or stops renewing it, the daemon lets the override lapse and the curve resumes on its own
 - it is **not saved** to the profile, and it clears the moment you toggle it off or switch profiles — the daemon snaps that role straight back to its curve
-- if the daemon **refuses** the override — thermal safety is holding the fans, or another client superseded your control — the card reverts and the page status shows why ("Override blocked — thermal emergency…" or "Override superseded by another client"); a normally-lapsing override just reverts quietly
+- if the daemon **refuses** the override, the card reverts and the page status says why: another client superseded your control ("Override superseded by another client"), an OpenFAN firmware update is running ("Manual unavailable — an OpenFAN firmware update is running"; try again once it has finished), or the role is no longer in the profile the daemon is running ("Manual refused — this fan role is not in the running profile"). A normally-lapsing override just reverts quietly. A thermal emergency does not refuse an override: the daemon runs every OpenFAN and motherboard fan at full speed over it until the emergency clears
 
 Use it for quick experiments ("what does 80% sound like?") without touching the saved profile. To make a role *permanently* fixed-speed, set its mode to Manual in the Edit dialog instead.
 

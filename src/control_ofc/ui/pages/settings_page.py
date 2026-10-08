@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_SETTINGS
 from control_ofc.paths import (
     app_settings_path,
@@ -1297,6 +1297,10 @@ class SettingsPage(QWidget):
             return
         try:
             cfg = self._client.get_daemon_config()
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._daemon_cfg_note.setText("Daemon unavailable — configuration not loaded.")
+            self._set_daemon_config_available(False)
+            return
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
                 # Older daemon: the card cannot be truthful, so it stands down
@@ -1310,10 +1314,6 @@ class SettingsPage(QWidget):
                 self._set_daemon_cfg_result(
                     f"Could not read daemon configuration: {e.message}", "CriticalChip"
                 )
-            self._set_daemon_config_available(False)
-            return
-        except (ConnectionError, OSError):
-            self._daemon_cfg_note.setText("Daemon unavailable — configuration not loaded.")
             self._set_daemon_config_available(False)
             return
 
@@ -1704,14 +1704,14 @@ class SettingsPage(QWidget):
             return
         try:
             self._client.update_profile_search_dirs(add=add, remove=remove)
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
+            self._refresh_daemon_config()
+            return
         except DaemonError as e:
             self._set_daemon_cfg_result(
                 f"Could not update profile search directories: {e.message}", "CriticalChip"
             )
-            self._refresh_daemon_config()
-            return
-        except (ConnectionError, OSError):
-            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
             self._refresh_daemon_config()
             return
         self._set_daemon_cfg_result(f"{done}.", "SuccessChip")
@@ -1771,10 +1771,10 @@ class SettingsPage(QWidget):
         """One `POST /config/profile-search-dirs`. Returns a message, or None."""
         try:
             self._client.update_profile_search_dirs(add=add, remove=remove)
+        except (DaemonUnavailable, ConnectionError, OSError) as exc:
+            return str(exc)
         except DaemonError as exc:
             return exc.message
-        except (ConnectionError, OSError) as exc:
-            return str(exc)
         return None
 
     def _refresh_port_probe_availability(self) -> None:
@@ -1822,13 +1822,13 @@ class SettingsPage(QWidget):
             return
         try:
             result = call(self._client)
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
+            self._refresh_daemon_config()
+            return
         except DaemonError as e:
             self._set_daemon_cfg_result(f"Could not save {key}: {e.message}", "CriticalChip")
             self._refresh_daemon_config()  # revert the control to daemon truth
-            return
-        except (ConnectionError, OSError):
-            self._set_daemon_cfg_result("Daemon unavailable — not saved.", "CautionChip")
-            self._refresh_daemon_config()
             return
 
         msg = f"Saved {key}."
@@ -2599,10 +2599,13 @@ class SettingsPage(QWidget):
                 "Daemon not connected — preferred sensors unavailable.", "CautionChip"
             )
             return
-        from control_ofc.api.errors import DaemonError
+        from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
         try:
             inv = self._client.inventory_hwmon()
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — could not load sensors.", "CautionChip")
+            return
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
                 self._set_pref_result(
@@ -2610,9 +2613,6 @@ class SettingsPage(QWidget):
                 )
             else:
                 self._set_pref_result(f"Could not load sensors: {e.message}", "CriticalChip")
-            return
-        except (ConnectionError, OSError):
-            self._set_pref_result("Daemon unavailable — could not load sensors.", "CautionChip")
             return
 
         self._prefs_loaded = True
@@ -2677,20 +2677,20 @@ class SettingsPage(QWidget):
     def _post_preferred(self, role: str, sensor_id: str | None) -> None:
         if self._client is None:
             return
-        from control_ofc.api.errors import DaemonError
+        from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
         try:
             if role == "cpu":
                 self._client.set_preferred_cpu_sensor(sensor_id)
             else:
                 self._client.set_preferred_mb_sensor(sensor_id)
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
+            return
         except DaemonError as e:
             self._set_pref_result(
                 f"Could not save preferred {role} sensor: {e.message}", "CriticalChip"
             )
-            return
-        except (ConnectionError, OSError):
-            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
             return
         where = "cleared" if sensor_id is None else "saved"
         label = "CPU" if role == "cpu" else "motherboard"

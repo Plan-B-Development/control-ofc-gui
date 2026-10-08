@@ -76,26 +76,24 @@ def test_gpu_verify_other_error_is_hard(qapp):
     assert seen == [("error", "nope")]
 
 
-def test_gpu_verify_404_is_unsupported(qapp):
-    # An old daemon predating the GPU-verify route answers 404 — the worker must
-    # map that to 'unsupported' (the page then hides the control for the session),
-    # NOT a hard 'error'. Complements the page-side test in test_gpu_verify.py,
-    # which covers what the page does once it receives 'unsupported'.
+def test_gpu_verify_404_is_a_gpu_not_found_error(qapp):
+    # The button is offered only on a daemon that serves the route, so a 404 is
+    # the daemon's "GPU not found" (a stale id, e.g. after a daemon restart) —
+    # an error the user is told about, never "this daemon is too old", which hid
+    # the button for the session with no message.
     worker = _GpuVerifyWorker("/tmp/x.sock")
     client = MagicMock()
     client.verify_gpu_fan.side_effect = DaemonError(
-        code="not_found", message="no route", status=404
+        code="validation_error", message="GPU not found: 0000:03:00.0", status=404
     )
     worker._ensure_client = MagicMock(return_value=client)
     seen = _capture(worker)
     worker.do_verify("0000:03:00.0")
-    # `UDOC-l`: the message now comes from the shared registry so it names the
-    # daemon version that provides the route. Asserted as a relationship against
-    # the registry rather than as a literal — a literal here would have to be
-    # re-edited every time the wording moves, and would not check the thing that
-    # matters, which is that the worker emits the registry's message at all.
-    assert seen == [("unsupported", unsupported_feature_message("gpu_fan_verify"))]
-    assert "1.11.0" in seen[0][1], "the message must name the version that provides the route"
+    assert len(seen) == 1
+    category, message = seen[0]
+    assert category == "error"
+    assert "GPU not found: 0000:03:00.0" in message
+    assert message != unsupported_feature_message("gpu_fan_verify")
 
 
 def test_hwmon_verify_thermal_forcing_refusal_is_soft(qapp):

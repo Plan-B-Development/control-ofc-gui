@@ -110,6 +110,19 @@ class _SocketWorker(QObject):
         if self._shut_down:
             raise RuntimeError(f"{type(self).__name__} was shut down")
 
+    def _drop_client(self) -> None:
+        """Forget this worker's client after the daemon could not be reached.
+
+        The client turns every connection fault into ``DaemonUnavailable``, so
+        the ``(ConnectionError, OSError)`` arms that used to do this alone were
+        unreachable on that path and a client from before a daemon restart was
+        kept. The next call builds a fresh one.
+        """
+        if self._client is not None:
+            with contextlib.suppress(Exception):
+                self._client.close()
+        self._client = None
+
     def _ensure_client(self) -> DaemonClient:
         from control_ofc.api.client import DaemonClient as _DaemonClient
 
@@ -160,6 +173,7 @@ class _VerifyWorker(_SocketWorker):
                 header_id,
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.verify_error.emit("unavailable", "Daemon unavailable during verify", header_id)
         except DaemonError as e:
             # A refusal is not a failure — show the daemon's message verbatim
@@ -191,7 +205,7 @@ class _GpuVerifyWorker(_SocketWorker):
     :class:`_VerifyWorker`."""
 
     verify_ok = Signal(object)  # GpuVerifyResult
-    # category ('unavailable' | 'error' | 'unsupported'), message
+    # category ('unavailable' | 'error'), message
     verify_error = Signal(str, str)
     reset_ok = Signal(object)  # GpuFanResetResult
     reset_error = Signal(str, str)  # category ('unavailable' | 'error'), message
@@ -210,14 +224,19 @@ class _GpuVerifyWorker(_SocketWorker):
                 "test — re-check the fan and re-run if needed.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.verify_error.emit("unavailable", "Daemon unavailable during GPU verify")
         except DaemonError as e:
-            # An old daemon predating the route answers 404 not_found — signal
-            # 'unsupported' so the page hides the control for the session.
-            if getattr(e, "status", None) == 404 or getattr(e, "code", "") == "not_found":
+            # A 404 is "GPU not found", never "no such route": the page offers
+            # the button only on a daemon that serves it (`gpu_fan_verify`, or
+            # its version fallback). Reading it as an old daemon hid the button
+            # for the session, with no message, when all that had happened was a
+            # GPU id going stale — after a daemon restart, say.
+            if getattr(e, "status", None) == 404:
                 self.verify_error.emit(
-                    "unsupported",
-                    unsupported_feature_message("gpu_fan_verify"),
+                    "error",
+                    f"{e.message}. The daemon no longer reports this GPU — "
+                    "refresh System State and try again.",
                 )
             elif _is_soft_refusal(e):
                 # A refusal — show the daemon's message verbatim, not as an
@@ -257,6 +276,7 @@ class _GpuVerifyWorker(_SocketWorker):
                 "the reset — check the fan behaviour and re-run if needed.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.reset_error.emit("unavailable", "Daemon unavailable during GPU restore")
         except DaemonError as e:
             self.reset_error.emit("error", e.message)
@@ -299,6 +319,7 @@ class _HwDiagWorker(_SocketWorker):
         except DaemonTimeout:
             self.fetch_error.emit("unavailable", "Diagnostics fetch timed out")
         except DaemonUnavailable:
+            self._drop_client()
             self.fetch_error.emit("unavailable", "Daemon unavailable — cannot fetch diagnostics")
         except DaemonError as e:
             self.fetch_error.emit("error", e.message)
@@ -340,6 +361,7 @@ class _HwDiagWorker(_SocketWorker):
         except DaemonTimeout:
             self.rescan_error.emit("unavailable", "Hardware rescan timed out")
         except DaemonUnavailable:
+            self._drop_client()
             self.rescan_error.emit("unavailable", "Daemon unavailable — cannot rescan hardware")
         except DaemonError as e:
             self.rescan_error.emit("error", e.message)
@@ -444,6 +466,7 @@ class _HardwareReadinessWorker(_SocketWorker):
         except DaemonTimeout:
             self.fetch_error.emit("unavailable", "Hardware readiness fetch timed out")
         except DaemonUnavailable:
+            self._drop_client()
             self.fetch_error.emit(
                 "unavailable", "Daemon unavailable — cannot fetch hardware readiness"
             )
@@ -494,6 +517,7 @@ class _HardwareReadinessWorker(_SocketWorker):
         except DaemonTimeout:
             self.probe_error.emit("unavailable", "Super-I/O port probe timed out")
         except DaemonUnavailable:
+            self._drop_client()
             self.probe_error.emit("unavailable", "Daemon unavailable — cannot run the port probe")
         except DaemonError as e:
             # A 404 on the PROBE endpoint must NOT flip the panel's unsupported flag
@@ -544,6 +568,7 @@ def _fetch_preflight(worker, header_id: str, diagnostic: str) -> None:
             "unavailable", "The daemon did not answer the safety preflight in time."
         )
     except DaemonUnavailable:
+        worker._drop_client()
         worker.preflight_error.emit("unavailable", "Daemon unavailable — safety checks unknown.")
     except DaemonError as e:
         # 404 is an older daemon that has no preflight route. Not an error to the
@@ -603,6 +628,7 @@ class _CharacterizationWorker(_SocketWorker):
                 "it ends.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
             # Reuses the shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort`
@@ -690,6 +716,7 @@ class _ControlPathWorker(_SocketWorker):
                 "be going — the daemon restores the header itself when it ends.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
             # The shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort` and a
@@ -776,6 +803,7 @@ class _OpenFanCalibrationWorker(_SocketWorker):
                 "still be running — the daemon restores the channel itself when it ends.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             self.run_error.emit("unavailable", f"Daemon unavailable during {what}")
         except DaemonError as e:
             # The shared refusal taxonomy (`_is_soft_refusal`): `thermal_abort` and a
@@ -868,6 +896,7 @@ class _OpenFanFirmwareWorker(_SocketWorker):
                 "started carries on daemon-side.",
             )
         except DaemonUnavailable:
+            self._drop_client()
             emit_error("unavailable", f"Daemon unavailable during the {what}.")
         except DaemonError as e:
             # A refused start is a 409 `validation_error` with `retryable` and a
@@ -957,6 +986,7 @@ class _OpenFanFirmwareWorker(_SocketWorker):
                 if isinstance(e, DaemonTimeout):
                     why = "The daemon did not answer the start in time."
                 elif isinstance(e, DaemonUnavailable):
+                    self._drop_client()
                     why = "The daemon could not be reached during the start."
                 else:
                     why = "The daemon's answer to the start could not be read."
@@ -1040,6 +1070,7 @@ class _ValidationWorker(_SocketWorker):
         except DaemonTimeout:
             self.session_error.emit("unavailable", f"{label} timed out.")
         except DaemonUnavailable:
+            self._drop_client()
             self.session_error.emit("unavailable", f"Daemon unavailable during {label.lower()}.")
         except DaemonError as e:
             if _is_soft_refusal(e):
@@ -1242,6 +1273,7 @@ class _PwmReportWorker(_SocketWorker):
         except DaemonTimeout as e:
             return CallOutcome(ok=False, category="unavailable", error_message=e.message)
         except DaemonUnavailable as e:
+            self._drop_client()
             return CallOutcome(ok=False, category="unavailable", error_message=e.message)
         except DaemonError as e:
             status, body = self._last_body or (e.status, None)

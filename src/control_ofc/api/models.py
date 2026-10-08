@@ -499,6 +499,28 @@ class Capabilities:
             )
         return self.amd_gpu if self.amd_gpu.describes_fan(fan_id) else None
 
+    @property
+    def any_gpu_profile_writable(self) -> bool:
+        """True when a daemon profile can drive at least one AMD GPU fan.
+
+        The GPU half of "does this daemon have a backend it can write": the two
+        ``features.*_write_supported`` flags cover OpenFan and hwmon only, so a
+        machine whose one drivable fan is a GPU's would otherwise read as having
+        none. Each card is judged by :attr:`AmdGpuCapability.profile_writable`;
+        an older daemon without ``devices.amd_gpus`` describes the primary only.
+        """
+        cards = self.amd_gpus if self.amd_gpus is not None else [self.amd_gpu]
+        return any(gpu.profile_writable for gpu in cards)
+
+    @property
+    def any_write_backend(self) -> bool:
+        """True when the daemon can drive some fan: OpenFan, hwmon or an AMD GPU."""
+        return bool(
+            self.features.openfan_write_supported
+            or self.features.hwmon_write_supported
+            or self.any_gpu_profile_writable
+        )
+
 
 # ---------------------------------------------------------------------------
 # Status

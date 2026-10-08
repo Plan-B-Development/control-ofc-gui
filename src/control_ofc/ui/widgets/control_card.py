@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from control_ofc.services.controls_view import (
     MISSING_HEADER_BADGE,
     MISSING_HEADER_TOOLTIP,
+    manual_applied_text,
     min_pwm_badge,
     missing_header_member_ids,
     skipped_control_feedback,
@@ -92,6 +93,9 @@ class ControlCard(ResizableGridCard):
         self._detected_hwmon_ids = detected_hwmon_ids or (lambda: None)
         self._control = control
         self._last_output_pct: float | None = None
+        # The highest per-fan duty the poll reports for this role while Manual is
+        # held — how the card learns that a member floor lifts the request.
+        self._manual_peak_pct: float | None = None
         # DEC-169: a daemon-held override this GUI session does NOT own (no
         # fencing token — only displayable, never renewable/releasable). Set by
         # the Controls page's /status reconcile; shows a read-only "External"
@@ -331,12 +335,16 @@ class ControlCard(ResizableGridCard):
         sensor_name: str = "",
         sensor_value: float | None = None,
         gpu_output_pct: float | None = None,
+        member_peak_pct: float | None = None,
     ) -> None:
         if not self._control.members:
             return
         self._last_output_pct = output_pct
         if self._manual_btn.isChecked():
-            # Transient manual mode owns the row (slider) and the status chip.
+            # Transient manual mode owns the row (slider) and the status chip;
+            # the figure beside the slider says what the fans really run at.
+            self._manual_peak_pct = member_peak_pct
+            self._paint_manual_pct()
             return
         # DEC-119: in a mixed control the GPU member can sit below the
         # control-wide value, so surface its real output rather than letting the
@@ -413,6 +421,9 @@ class ControlCard(ResizableGridCard):
             # with nothing, and nothing would ever put it back for the session.
             return
         if self._manual_btn.isChecked():
+            # No live figure, so nothing to say the fans run at beyond the request.
+            self._manual_peak_pct = None
+            self._paint_manual_pct()
             return
         self._last_output_pct = None
         self._output_label.setText("\u2014")
@@ -619,13 +630,14 @@ class ControlCard(ResizableGridCard):
             # neither request nor see a value the daemon would floor-clamp away
             # (a 10% request on a 30%-floor pump ran at 30% but displayed "10%").
             self._manual_slider.setMinimum(round(self._effective_floor()))
+            self._manual_peak_pct = None
         if checked and self._last_output_pct is not None:
             # Start manual at the current speed so the fan doesn't jump (clamped
             # up to the floor by the setMinimum above).
             self._manual_slider.blockSignals(True)
             self._manual_slider.setValue(round(self._last_output_pct))
             self._manual_slider.blockSignals(False)
-            self._manual_pct_label.setText(f"{self._manual_slider.value()}%")
+            self._paint_manual_pct()
         self._manual_slider.setVisible(checked)
         self._manual_pct_label.setVisible(checked)
         self._output_label.setVisible(not checked)
@@ -650,7 +662,7 @@ class ControlCard(ResizableGridCard):
         self.manual_toggled.emit(self._control.id, checked, self._manual_slider.value())
 
     def _on_manual_slider_changed(self, value: int) -> None:
-        self._manual_pct_label.setText(f"{value}%")
+        self._paint_manual_pct()
         if self._manual_btn.isChecked():
             self.manual_value_changed.emit(self._control.id, value)
 
@@ -667,7 +679,16 @@ class ControlCard(ResizableGridCard):
         self._manual_slider.blockSignals(True)
         self._manual_slider.setValue(int(pct))  # coerce: a non-conforming daemon
         self._manual_slider.blockSignals(False)  # could send a non-int (security P3)
-        self._manual_pct_label.setText(f"{self._manual_slider.value()}%")
+        self._paint_manual_pct()
+
+    def _paint_manual_pct(self) -> None:
+        """The Manual figure: the request, plus the duty a member floor holds the
+        fans at (``controls_view.manual_applied_text``)."""
+        text, tooltip = manual_applied_text(
+            self._manual_slider.value(), self._last_output_pct, self._manual_peak_pct
+        )
+        self._manual_pct_label.setText(text)
+        self._manual_pct_label.setToolTip(tooltip)
 
     def clear_manual(self) -> None:
         """Programmatically exit Manual without emitting ``manual_toggled``.

@@ -11,10 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from control_ofc.api.errors import OPENFAN_MAINTENANCE_REASON, DaemonError
 from control_ofc.api.models import SensorReading
 from control_ofc.services.controls_view import (
     curve_min_output_floor,
     divergent_gpu_output,
+    manual_applied_text,
     member_rpm_map,
     override_rejection_feedback,
     parse_stored_card_size,
@@ -145,20 +147,63 @@ class TestRenewIntervalMs:
 # ─── override_rejection_feedback (DEC-163) ───────────────────────────────
 
 
+def _err(code: str, status: int = 409, retryable: bool = False, details=None) -> DaemonError:
+    return DaemonError(code=code, message="m", status=status, retryable=retryable, details=details)
+
+
 class TestOverrideRejectionFeedback:
     def test_thermal_abort_is_critical(self):
-        msg, cls = override_rejection_feedback("thermal_abort")
+        msg, cls = override_rejection_feedback(_err("thermal_abort"))
         assert "thermal emergency" in msg
         assert cls == "CriticalChip"
 
     def test_stale_fencing_token_is_warning(self):
-        msg, cls = override_rejection_feedback("stale_fencing_token")
+        msg, cls = override_rejection_feedback(_err("stale_fencing_token"))
         assert "superseded" in msg
         assert cls == "WarningChip"
 
     def test_benign_codes_stay_silent(self):
-        assert override_rejection_feedback("override_expired") is None
-        assert override_rejection_feedback("not_found") is None
+        # A renew's 404 is a lapse: silent, as a superseded override is not.
+        assert override_rejection_feedback(_err("override_expired", status=404)) is None
+        assert override_rejection_feedback(_err("internal_error", status=500)) is None
+
+    def test_an_openfan_firmware_update_refusal_is_said(self):
+        # The daemon's exact shape: a retryable 409 validation_error, told apart
+        # only by `details.reason` (DEC-481).
+        refusal = _err(
+            "validation_error",
+            retryable=True,
+            details={"reason": OPENFAN_MAINTENANCE_REASON},
+        )
+        msg, cls = override_rejection_feedback(refusal)
+        assert "firmware update" in msg
+        assert cls == "WarningChip"
+        # The same 409 without the reason is not that refusal.
+        assert override_rejection_feedback(_err("validation_error", retryable=True)) is None
+
+    def test_a_take_refused_with_404_names_the_running_profile(self):
+        # The daemon answers a take for a control outside its running profile
+        # with 404 validation_error.
+        msg, cls = override_rejection_feedback(_err("validation_error", status=404))
+        assert "running profile" in msg
+        assert cls == "WarningChip"
+
+
+class TestManualAppliedText:
+    def test_a_member_held_above_the_request_is_named(self):
+        # DC pump asked for 40 %, held at 70 % by the daemon's floor.
+        text, tip = manual_applied_text(40, 40.0, 70.0)
+        assert text == "40% · fans at 70%"
+        assert tip
+
+    def test_no_lift_is_the_bare_request(self):
+        assert manual_applied_text(40, 40.0, 40.0) == ("40%", "")
+        assert manual_applied_text(40, 40.0, None) == ("40%", "")
+        assert manual_applied_text(40, None, 70.0) == ("40%", "")
+
+    def test_a_poll_still_carrying_the_previous_request_says_nothing(self):
+        # Dragged from 80 to 40: the poll still shows 80 applied, fans at 80.
+        assert manual_applied_text(40, 80.0, 80.0) == ("40%", "")
 
 
 # ─── sensor_combo_label (DEC-157) ────────────────────────────────────────

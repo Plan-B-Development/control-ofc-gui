@@ -337,16 +337,99 @@ class TestManualOverrideLiveWiring:
         from control_ofc.api.errors import DaemonError
 
         client = MagicMock()
-        client.override_take.side_effect = DaemonError(code="not_found", message="x", status=404)
+        client.override_take.side_effect = DaemonError(
+            code="internal_error", message="x", status=500
+        )
         page = self._live_page(qtbot, app_state, profile_service, client)
 
         page._control_cards["lc1"]._manual_btn.setChecked(True)
 
         assert "lc1" not in page._overrides
         assert not page._control_cards["lc1"]._manual_btn.isChecked()
-        # A non-actionable code (not_found) stays SILENT on the take path — only
-        # thermal_abort / stale_fencing_token surface a message.
+        # A non-actionable code stays SILENT on the take path.
         assert page._unsaved_label.text() == ""
+
+    def test_take_refused_outside_the_running_profile_says_so(
+        self, qtbot, app_state, profile_service
+    ):
+        """The daemon answers a take for a control its running profile lacks with
+        404 `validation_error` — the profile changed under the page (the tray, say).
+        The card reverting with no word was the silent refusal."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import DaemonError
+
+        client = MagicMock()
+        client.override_take.side_effect = DaemonError(
+            code="validation_error", message="no control 'lc1' in the active profile", status=404
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        assert page._unsaved_label.text() == ""
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        assert "running profile" in page._unsaved_label.text()
+
+    def test_take_refused_by_an_openfan_firmware_update_says_so(
+        self, qtbot, app_state, profile_service
+    ):
+        """DEC-481's refusal, the one a user can act on (wait for the update),
+        reverted the card with no explanation."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.errors import OPENFAN_MAINTENANCE_REASON, DaemonError
+
+        client = MagicMock()
+        client.override_take.side_effect = DaemonError(
+            code="validation_error",
+            message="an OpenFan firmware update is running",
+            status=409,
+            retryable=True,
+            details={"reason": OPENFAN_MAINTENANCE_REASON},
+        )
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        assert page._unsaved_label.text() == ""
+
+        page._control_cards["lc1"]._manual_btn.setChecked(True)
+
+        assert not page._control_cards["lc1"]._manual_btn.isChecked()
+        assert "firmware update" in page._unsaved_label.text()
+
+    def test_manual_figure_names_the_duty_a_member_floor_holds(
+        self, qtbot, app_state, profile_service
+    ):
+        """The grant echoes the request, so a DC pump asked for 40 % read "40%"
+        while it ran at 70 %. The poll's per-fan `last_commanded_pwm` says what
+        the fans run at; the card now shows it beside the request."""
+        from unittest.mock import MagicMock
+
+        from control_ofc.api.models import ControlOutput, DaemonStatus, FanReading
+
+        client = MagicMock()
+        client.override_take.return_value = self._grant(token=7)
+        page = self._live_page(qtbot, app_state, profile_service, client)
+        card = page._control_cards["lc1"]
+        card._manual_btn.setChecked(True)
+        card._manual_slider.setValue(40)
+        page._flush_override_values()
+        requested = card._manual_slider.value()
+        assert card._manual_pct_label.text() == f"{requested}%"  # precondition
+
+        app_state.set_fans([FanReading(id="openfan:ch00", source="openfan", last_commanded_pwm=70)])
+        page._apply_live_outputs(
+            DaemonStatus(control_outputs=[ControlOutput(control_id="lc1", output_pct=requested)])
+        )
+        assert card._manual_pct_label.text() == f"{requested}% · fans at 70%"
+
+        # Opposite branch: the fan runs at the request, so the figure is bare.
+        app_state.set_fans(
+            [FanReading(id="openfan:ch00", source="openfan", last_commanded_pwm=requested)]
+        )
+        page._apply_live_outputs(
+            DaemonStatus(control_outputs=[ControlOutput(control_id="lc1", output_pct=requested)])
+        )
+        assert card._manual_pct_label.text() == f"{requested}%"
 
     def test_renew_failure_reverts_card(self, qtbot, app_state, profile_service):
         from unittest.mock import MagicMock

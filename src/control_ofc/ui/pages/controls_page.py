@@ -2471,10 +2471,15 @@ class ControlsPage(QWidget):
                                 sensor_name = s.label
                                 sensor_value = s.value_c
                                 break
-            gpu_output = divergent_gpu_output(
-                card.control, output, member_outputs.get(control_id, {})
+            members = member_outputs.get(control_id, {})
+            gpu_output = divergent_gpu_output(card.control, output, members)
+            card.set_output(
+                output,
+                sensor_name,
+                sensor_value,
+                gpu_output_pct=gpu_output,
+                member_peak_pct=max(members.values(), default=None),
             )
-            card.set_output(output, sensor_name, sensor_value, gpu_output_pct=gpu_output)
 
     def _base_font_pt(self) -> int:
         """Theme base font size, which the card metric scales with (DEC-260)."""
@@ -2615,10 +2620,13 @@ class ControlsPage(QWidget):
         # 2.0.0+ daemon happened to advertise both — so a daemon that dropped the
         # override surface would have offered a toggle that could only 404. The
         # flag has been parsed since DEC-159/160 and simply never read.
+        #
+        # "A writable backend" includes an AMD GPU a profile can drive: the two
+        # `features` flags name OpenFan and hwmon only, so a machine whose one
+        # drivable fan is a GPU's had every card greyed out while the daemon was
+        # driving that fan and would have accepted an override for it.
         self._cards_writable = (
-            autonomous
-            and bool(control and control.manual_override)
-            and bool(caps.features.openfan_write_supported or caps.features.hwmon_write_supported)
+            autonomous and bool(control and control.manual_override) and caps.any_write_backend
         )
         for card in self._control_cards.values():
             card.setEnabled(self._cards_writable)
@@ -2686,7 +2694,7 @@ class ControlsPage(QWidget):
         benign races stay a quiet card revert (the decision is
         :func:`controls_view.override_rejection_feedback`, DEC-163). The card
         revert stays owned by the caller — this method never touches card state."""
-        feedback = override_rejection_feedback(exc.code)
+        feedback = override_rejection_feedback(exc)
         if feedback is None:
             return
         message, css_class = feedback

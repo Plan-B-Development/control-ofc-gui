@@ -215,6 +215,8 @@ def features_line_text(caps: Capabilities, writable_headers: int | None) -> str:
             features.append("hwmon writes (daemon-supported; 0 writable headers on this system)")
         else:
             features.append("hwmon writes")
+    if caps.any_gpu_profile_writable:
+        features.append("GPU fan writes")
     return f"Features: {', '.join(features) or 'none'}"
 
 

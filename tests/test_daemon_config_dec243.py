@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from control_ofc.api.errors import DaemonError
+from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.api.models import (
     Capabilities,
     ControlCapability,
@@ -527,6 +527,22 @@ class TestWrites:
         p._serial_timeout_spin.setValue(750)
         p._serial_timeout_spin.editingFinished.emit()
         assert "unavailable" in p._daemon_cfg_result.text().lower()
+
+    def test_unreachable_daemon_as_the_client_reports_it(self, qapp, app_state, settings_service):
+        """The real client never raises a bare `ConnectionError`: it raises
+        `DaemonUnavailable`, a `DaemonError`, so the generic arm caught it first
+        and "Daemon unavailable — not saved." was never shown."""
+
+        class _Dead(_ConfigClient):
+            def set_serial_timeout(self, ms):
+                raise DaemonUnavailable(message="[Errno 111] Connection refused")
+
+        client = _Dead()
+        p = SettingsPage(state=app_state, settings_service=settings_service, client=client)
+        p._refresh_daemon_config()
+        p._serial_timeout_spin.setValue(750)
+        p._serial_timeout_spin.editingFinished.emit()
+        assert p._daemon_cfg_result.text() == "Daemon unavailable — not saved."
 
 
 class TestVersionGate:

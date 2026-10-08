@@ -384,3 +384,52 @@ class TestOverrideAndIdentifyCapabilityGates:
         caps = DemoService().capabilities()
         assert caps.control.manual_override
         assert caps.control.fan_identify
+
+
+class TestGpuOnlyWriteBackend:
+    """A machine whose one drivable fan is an AMD GPU's: no OpenFan, no writable
+    hwmon. The card gate read only the OpenFan and hwmon flags, so every card was
+    greyed out while the daemon drove that GPU fan."""
+
+    @staticmethod
+    def _caps(method: str):
+        from control_ofc.api.models import AmdGpuCapability
+
+        return Capabilities(
+            daemon_version="4.0.0",
+            features=FeatureFlags(openfan_write_supported=False, hwmon_write_supported=False),
+            control=ControlCapability(
+                autonomous_control=True, manual_override=True, fan_identify=True
+            ),
+            amd_gpu=AmdGpuCapability(
+                present=True,
+                fan_write_supported=True,
+                fan_control_method=method,
+                pci_id="0000:03:00.0",
+            ),
+        )
+
+    def test_a_profile_writable_gpu_keeps_the_cards_live(self, qtbot, window, app_state):
+        assert window.controls_page._control_cards  # non-vacuous (active profile)
+        app_state.set_capabilities(self._caps("pmfw_curve"))
+        assert window.controls_page._cards_writable
+        for card in window.controls_page._control_cards.values():
+            assert card.isEnabled()
+
+    def test_a_gpu_no_profile_can_drive_does_not(self, qtbot, window, app_state):
+        # A pre-RDNA3 card: verify can write its legacy pwm1, no engine ever does
+        # (DEC-445), so it is not a writable backend.
+        app_state.set_capabilities(self._caps("hwmon_pwm"))
+        assert not window.controls_page._cards_writable
+
+    def test_the_per_card_list_is_judged_card_by_card(self):
+        from control_ofc.api.models import AmdGpuCapability
+
+        caps = self._caps("hwmon_pwm")
+        assert not caps.any_gpu_profile_writable
+        caps.amd_gpus = [
+            AmdGpuCapability(present=True, fan_write_supported=True, fan_control_method=method)
+            for method in ("hwmon_pwm", "pmfw_curve")
+        ]
+        assert caps.any_gpu_profile_writable
+        assert caps.any_write_backend

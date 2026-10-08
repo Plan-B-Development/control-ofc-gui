@@ -368,12 +368,16 @@ class TestGpuVerifyWorkerLifecycle:
         finally:
             page.cleanup()
 
-    def test_unsupported_error_hides_button(self, qtbot):
+    def test_an_error_keeps_the_button_and_says_why(self, qtbot):
+        # A GPU-not-found 404 arrives as an 'error': the button stays (the next
+        # diagnostics refresh decides whether there is a GPU to test) and the
+        # message is shown, rather than the button vanishing for the session.
         page = _make_page(qtbot)
         page._gpu_verify_btn.setVisible(True)
-        page._on_gpu_verify_error("unsupported", "old daemon")
-        assert page._gpu_verify_btn.isHidden()
-        assert page._gpu_verify_unsupported is True
+        page._on_gpu_verify_error("error", "GPU not found: 0000:03:00.0")
+        assert not page._gpu_verify_btn.isHidden()
+        assert page._gpu_verify_btn.isEnabled()
+        assert "GPU not found" in page._gpu_verify_result_label.text()
 
     def test_worker_is_qobject_with_signals(self):
         # Constructable off-thread; signals exist for the queued wiring.

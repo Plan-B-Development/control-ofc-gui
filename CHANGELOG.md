@@ -37,6 +37,20 @@
   refused, and a banner explains why. The same applies when the daemon fails to delete its copy, and to a
   profile installed with the daemon, such as **Quiet**: it is read-only, so it is kept and the banner says
   so, rather than disappearing until the next start.
+- **Controls stay usable when an AMD GPU is the only fan the daemon can drive.** With no OpenFan and no
+  writable motherboard header, every fan role card was greyed out, although the daemon was driving the
+  GPU fan and would have accepted Manual for it. The Overview Features line now lists GPU fan writes too.
+- **Manual says when a refusal can be acted on, and what the fans really run at.** A Manual override
+  refused because an OpenFAN firmware update is running, or because the role is no longer in the running
+  profile, used to snap back with no explanation; the page now says why. When the daemon holds a fan
+  above the requested value (a DC pump's 70 % minimum, say), the figure beside the slider shows it:
+  "40% · fans at 70%".
+- **Testing a GPU fan that the daemon no longer reports now shows an error.** That "not found" answer was
+  read as "this daemon is too old", so the **Test GPU Fan Control** button disappeared for the rest of the
+  session with no message.
+- **"Daemon unavailable — not saved." is shown when it applies.** Saving a daemon setting, a profile
+  search directory or a preferred sensor while the daemon was unreachable reported a generic failure
+  instead. The diagnostic tools also start a fresh connection after the daemon has been unreachable.
 
 ## [4.1.1] — 2026-10-08
 

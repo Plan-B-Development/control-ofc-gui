@@ -3532,8 +3532,14 @@ daemon's clock); a stale token cannot re-pin (fencing).
 - `POST /control/{control_id}/override` — body `{"pwm_percent": 0..100, "ttl_secs"?: N}` →
   `200 {"control_id","override_token","pwm_percent","ttl_secs","renew_secs","expires_in_secs"}`.
   `404` (wire code `validation_error`, not `not_found`) if the control is not in the active profile;
-  `400` if `pwm_percent` out of range.
+  `400` if `pwm_percent` out of range; `409 validation_error`, retryable, with
+  `details.reason: "openfan_maintenance"` while an OpenFAN firmware update holds the controller and the
+  control drives an OpenFan channel (DEC-481).
   The override PWM is still clamped by the daemon's hard pump/CPU floor (≥30 %) and GPU 0 % floor.
+  The grant's `pwm_percent` echoes the request, not the clamped duty; the applied duty is each member
+  fan's `last_commanded_pwm` on `/poll`, which the GUI shows beside the Manual slider when a floor
+  lifts it. The GUI says why for a take's `404` and the OpenFAN-update `409`; a renew's
+  `404 override_expired` stays a quiet revert.
 - `POST /control/{control_id}/override/renew` — body `{"override_token": N}` →
   `200 {"control_id","override_token","ttl_secs","expires_in_secs"}`. Renew at ~`renew_secs`
   (≈5 s, ⅓ of the 15 s TTL). `409 stale_fencing_token` if superseded; `404 override_expired` if it
@@ -3683,8 +3689,9 @@ Response (daemon `GpuVerifyResponse` ↔ GUI `GpuVerifyResult`) — **no
 Errors: `400 feature_unavailable` (read-only GPU — no PMFW `fan_curve` and no
 legacy `pwm1`+`pwm1_enable`, and never the legacy path on RDNA3/RDNA4 — DEC-430), `404 validation_error` (unknown `gpu_id` — wire `code` is `validation_error`, not `not_found`). OD_RANGE
 clamping and zero-RPM idle are reported as informational verdicts, not errors.
-Old daemons predating the route answer `404`, which the GUI treats as
-"unsupported" and hides the control.
+The GUI offers the button only on a daemon that serves the route (`gpu_fan_verify`, or the version
+fallback before that flag), so it reads a `404` as the GPU not being found — a stale id after a daemon
+restart, say — and shows the daemon's message, keeping the button.
 
 ### Hwmon rescan
 - `POST /hwmon/rescan` — re-enumerate hwmon devices

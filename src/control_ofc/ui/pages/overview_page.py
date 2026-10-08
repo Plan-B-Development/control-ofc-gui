@@ -720,7 +720,7 @@ class OverviewPage(QWidget):
     def _set_preferred_sensor(self, sensor_id: str, role: str) -> None:
         if self._client is None:
             return
-        from control_ofc.api.errors import DaemonError
+        from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
         label = "CPU" if role == "cpu" else "motherboard"
         try:
@@ -728,6 +728,9 @@ class OverviewPage(QWidget):
                 self._client.set_preferred_cpu_sensor(sensor_id)
             else:
                 self._client.set_preferred_mb_sensor(sensor_id)
+        except (DaemonUnavailable, ConnectionError, OSError):
+            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
+            return
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
                 # Pre-DEC-200 daemon: the menu entries disappear from here on,
@@ -740,9 +743,6 @@ class OverviewPage(QWidget):
                 self._set_pref_result(
                     f"Could not save preferred {label} sensor: {e.message}", "CriticalChip"
                 )
-            return
-        except (ConnectionError, OSError):
-            self._set_pref_result("Daemon unavailable — preferred sensor not saved.", "CautionChip")
             return
         self._set_pref_result(f"Preferred {label} sensor saved.", "SuccessChip")
 
@@ -772,18 +772,18 @@ class OverviewPage(QWidget):
             or self._client is None
         ):
             return
-        from control_ofc.api.errors import DaemonError
+        from control_ofc.api.errors import DaemonError, DaemonUnavailable
 
         try:
             inv = self._client.inventory_hwmon()
+        except (DaemonUnavailable, ConnectionError, OSError):
+            # Transient. Deliberately does NOT latch — the next open retries.
+            return
         except DaemonError as e:
             if getattr(e, "status", None) == 404:
                 # Older daemon without the endpoint. Latch permanently, or every
                 # sensor-detail open re-asks a question whose answer cannot change.
                 self._daemon_classifications_unsupported = True
-            return
-        except (ConnectionError, OSError):
-            # Transient. Deliberately does NOT latch — the next open retries.
             return
         self._daemon_classifications = {s.id: s for s in inv.temp_sensors}
         self._daemon_classifications_loaded = True

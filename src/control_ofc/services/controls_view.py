@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from control_ofc.api.errors import is_openfan_maintenance_refusal
 from control_ofc.api.models import Capabilities
 from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.sensor_knowledge import (
@@ -247,19 +248,69 @@ def renew_interval_ms(
     return max(floor_ms, interval_ms)
 
 
-def override_rejection_feedback(code: str) -> tuple[str, str] | None:
+def manual_applied_text(
+    requested: int, control_output: float | None, member_peak: float | None
+) -> tuple[str, str]:
+    """``(label, tooltip)`` for a card's Manual figure: the request, and what the
+    fans actually run at when the daemon holds some of them higher.
+
+    The override grant echoes the request, so the card cannot learn a member
+    floor from it — a DC pump asked for 40 % runs at 70 %, a CPU fan asked for
+    10 % at 30 %. The poll can: ``control_output`` is the control-wide figure the
+    engine applied (the override's own value while it is held) and
+    ``member_peak`` the highest ``last_commanded_pwm`` among the role's fans.
+
+    Said only once the poll shows the daemon applying *this* request
+    (``control_output`` within a point of it). Right after a slider move the poll
+    still carries the previous request, and comparing against that would name a
+    duty the fans are leaving, not one they are held at.
+    """
+    plain = (f"{requested}%", "")
+    if control_output is None or member_peak is None:
+        return plain
+    if abs(control_output - requested) > 1.0 or member_peak <= requested + 1.0:
+        return plain
+    return (
+        f"{requested}% · fans at {member_peak:.0f}%",
+        "The daemon is holding at least one of this role's fans above the "
+        "requested value, for example at a pump or CPU-fan minimum.",
+    )
+
+
+def override_rejection_feedback(error: object) -> tuple[str, str] | None:
     """``(message, css_class)`` for a *user-actionable* override rejection, else
     ``None`` (benign races stay a quiet card revert).
 
-    Only two codes tell the user something the card flipping back to auto cannot:
-    ``thermal_abort`` (safety is holding the fans) and ``stale_fencing_token``
-    (another client superseded this override). Keeping every other code silent is
-    exactly what makes a superseded override distinct from a lapsed one (DEC-163).
+    Takes the whole error, not its code: two of the refusals below are told
+    apart only by ``status`` or ``details``, and a caller passing a bare code
+    would silently drop them.
+
+    What tells the user something the card flipping back to auto cannot:
+
+    - ``stale_fencing_token`` — another client superseded this override.
+    - An OpenFAN firmware update holding the controller (a retryable ``409``,
+      ``details.reason``, DEC-481) — the daemon accepts the same take once the
+      update has finished.
+    - A ``404`` on a take — the control is not in the daemon's running profile
+      (the profile changed under the page, e.g. from the tray). A renew's ``404``
+      is ``override_expired``, a lapse, and stays silent.
+    - ``thermal_abort`` — defensive: no override route sends it today (a thermal
+      emergency floors an override rather than refusing it), but a refusal for
+      that reason must never be silent.
+
+    Keeping every other code silent is exactly what makes a superseded override
+    distinct from a lapsed one (DEC-163).
     """
+    code = getattr(error, "code", "")
+    status = getattr(error, "status", 0)
     if code == "thermal_abort":
         return ("Override blocked — thermal emergency (fans held by safety)", "CriticalChip")
     if code == "stale_fencing_token":
         return ("Override superseded by another client", "WarningChip")
+    if is_openfan_maintenance_refusal(getattr(error, "details", None)):
+        return ("Manual unavailable — an OpenFAN firmware update is running", "WarningChip")
+    if status == 404 and code != "override_expired":
+        return ("Manual refused — this fan role is not in the running profile", "WarningChip")
     return None
 
 

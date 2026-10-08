@@ -210,7 +210,6 @@ class SystemStatePage(QWidget):
         #: `ACK-n`); see `_on_verify_ok`.
         self._verify_all_pending: str | None = None
         self._gpu_verify_bdf: str | None = None
-        self._gpu_verify_unsupported = False
         self._report_dialog: ReadinessReportDialog | None = None
         self._char_worker: _CharacterizationWorker | None = None
         self._char_thread: QThread | None = None
@@ -1444,7 +1443,7 @@ class SystemStatePage(QWidget):
         if supported is None:
             supported = daemon_version_at_least(caps.daemon_version if caps else "", (1, 11, 0))
         self._gpu_verify_bdf = gpu.pci_bdf if (gpu and writable) else None
-        show = bool(self._gpu_verify_bdf) and supported and not self._gpu_verify_unsupported
+        show = bool(self._gpu_verify_bdf) and supported
         self._gpu_verify_btn.setVisible(show)
         if not show:
             self._gpu_verify_result_label.setVisible(False)
@@ -1490,11 +1489,7 @@ class SystemStatePage(QWidget):
     @Slot(str, str)
     def _on_gpu_verify_error(self, category: str, message: str) -> None:
         self._gpu_verify_evidence.set_evidence(None)
-        if category == "unsupported":
-            self._gpu_verify_unsupported = True
-            self._gpu_verify_btn.setVisible(False)
-            self._gpu_verify_result_label.setVisible(False)
-        elif category == "unavailable":
+        if category == "unavailable":
             self._show_verify_message(
                 self._gpu_verify_result_label, message or "Daemon unavailable during GPU verify"
             )

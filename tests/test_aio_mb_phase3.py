@@ -843,3 +843,14 @@ class TestCharacterizationWorkerRefusalMapping:
         worker.do_poll()
         assert seen[0][0] == "unavailable"
         assert worker._client is None, "a stale client must be dropped, not reused"
+
+    def test_an_unreachable_daemon_drops_the_client_too(self):
+        # What the real client raises for a refused or dropped connection. The
+        # `ConnectionError` arm above never saw it, so the stale client survived.
+        from control_ofc.api.errors import DaemonUnavailable
+
+        worker, seen = self._worker(DaemonUnavailable())
+        assert worker._client is not None  # precondition
+        worker.do_poll()
+        assert seen[0][0] == "unavailable"
+        assert worker._client is None, "a stale client must be dropped, not reused"
