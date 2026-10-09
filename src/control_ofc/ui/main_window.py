@@ -27,6 +27,13 @@ from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.fan_alias_seed import seed_fan_aliases_from_profiles
 from control_ofc.services.history_store import HistoryStore
 from control_ofc.services.id_migration import apply_realias_moves, find_realias_moves
+from control_ofc.services.memory_id_migration import (
+    find_memory_id_moves,
+    rekey_list,
+    rekey_mapping,
+    rekey_profile_curves,
+    series_sensor_ids,
+)
 from control_ofc.services.profile_import_service import should_offer_import
 from control_ofc.services.profile_service import ProfileService
 from control_ofc.services.series_selection import SeriesSelectionModel
@@ -158,6 +165,9 @@ class MainWindow(QWidget):
         # first-poll trigger and the same demo exclusion, for the same reasons.
         if not self._demo_mode:
             self._state.fans_updated.connect(self._maybe_remigrate_fan_ids)
+            # DEC-492: carry saved memory-sensor ids across the bus-independent
+            # re-key, against the live set, on the same terms.
+            self._state.sensors_updated.connect(self._maybe_rekey_memory_sensor_ids)
 
         # Persist alias and series changes back to settings
         self._state.fan_alias_changed.connect(self._persist_fan_alias)
@@ -1157,6 +1167,84 @@ class MainWindow(QWidget):
                 self._state.fan_alias_changed.emit(new_id, self._state.fan_display_name(new_id))
         finally:
             self._state.fan_alias_changed.connect(self._persist_fan_alias)
+
+    def _maybe_rekey_memory_sensor_ids(self, sensors: list) -> None:
+        """Follow saved memory-sensor ids onto their module's live id (DEC-492).
+
+        A DEC-492 daemon names a memory module by its SMBus controller, port and
+        SPD address instead of the kernel's dynamic bus number, so every colour,
+        hidden series, class override, hidden Overview row and curve saved against
+        the old form would point at nothing. Each moves only when exactly one other
+        sensor shares its chip, address and label — counting quarantined ones
+        (``unavailable_sensors[]``) — and that one is live and of the other form
+        (``memory_id_migration``); the daemon resolves curves by the same rule, so
+        rewriting them here changes no duty. Runs on every poll and is a no-op once
+        everything saved is live; announced, like the DEC-247 fan re-key.
+        """
+        live = [s.id for s in sensors]
+        if not live:
+            return
+        settings = self._settings_service.settings
+        hidden = list(self._series_selection.to_dict()["hidden_keys"])
+        profiles = self._profile_service.profiles
+        saved = [
+            *series_sensor_ids(settings.series_colors),
+            *series_sensor_ids(hidden),
+            *self._state.sensor_class_overrides,
+            *settings.diagnostics_hidden_sensor_ids,
+            *(c.sensor_id for p in profiles for c in p.curves if c.sensor_id),
+        ]
+        status = self._state.daemon_status
+        unavailable = [u.id for u in (status.unavailable_sensors if status else [])]
+        moves = find_memory_id_moves(saved, live, unavailable)
+        if not moves:
+            return
+        self._state.sensor_class_overrides = rekey_mapping(
+            self._state.sensor_class_overrides, moves, series=False
+        )
+        self._settings_service.update(
+            series_colors=rekey_mapping(settings.series_colors, moves, series=True),
+            sensor_class_overrides=dict(self._state.sensor_class_overrides),
+            diagnostics_hidden_sensor_ids=rekey_list(
+                settings.diagnostics_hidden_sensor_ids, moves, series=False
+            ),
+        )
+        new_hidden = rekey_list(hidden, moves, series=True)
+        if new_hidden != hidden:
+            # Emits selection_changed, which persists hidden_chart_series.
+            self._series_selection.replace_hidden(new_hidden)
+        # The Controls page edits profiles in place; saving the one it holds
+        # unsaved edits to would publish those edits too, and saving an
+        # unpublished draft would upload it behind the user's back (no background
+        # sync, ProfileService). Those are re-keyed in memory only — the user's own
+        # Save persists them, and the daemon resolves the old id meanwhile.
+        page = self.controls_page
+        held = page.viewed_profile_id if page.has_unsaved_changes() else None
+        curves = 0
+        for profile in profiles:
+            changed = rekey_profile_curves(profile, moves)
+            if not changed:
+                continue
+            curves += changed
+            svc = self._profile_service
+            draft = svc.daemon_backed and not svc.is_published(profile.id)
+            if profile.id == held or draft:
+                continue
+            try:
+                self._profile_service.save_profile(profile)
+            except SharedSwitchRuleError as e:
+                # Saving was already refused for this profile; the re-key stays
+                # in memory and the daemon resolves the old id meanwhile.
+                log.warning("Profile %s not re-saved after a memory id re-key: %s", profile.id, e)
+        log.info("Re-keyed %d memory sensor id(s) after a bus-independent id change", len(moves))
+        self._diag.log_event(
+            "info",
+            "gui",
+            f"{len(moves)} saved memory sensor id(s) now follow the module by its controller and "
+            f"address instead of the i2c bus number ({curves} curve(s) updated): "
+            + ", ".join(f"{old} → {new}" for old, new in sorted(moves.items())),
+            fields={"remapped": str(len(moves)), **dict(sorted(moves.items()))},
+        )
 
     def _maybe_seed_fan_aliases(self, fans: list) -> None:
         """Adopt profile member labels as fan aliases, once (DEC-228).

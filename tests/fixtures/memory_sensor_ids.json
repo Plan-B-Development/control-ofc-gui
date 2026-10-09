@@ -1,0 +1,314 @@
+{
+  "_comment": "DEC-492 cross-stack oracle: memory-module sensor ids (spd5118, jc42). Byte-identical copies live in control-ofc-gui/tests/fixtures/ and control-ofc-daemon/daemon/tests/fixtures/; parity.yml in both repos fails on drift. `parse` pins the two id forms: the legacy `<bus>-<addr4>` device segment, whose bus number the kernel assigns dynamically, and the stable `<controller>[-p<N>|-ch<K>]...-<addr4>`. `resolve` pins the re-key rule: a saved id that is live stays; otherwise every other id with the same chip, SPD address and label is a candidate, live or `unavailable` (quarantined, absent from the live set), in either form; it moves only when there is exactly one, it is live and it is of the OTHER form. `unavailable` defaults to [].",
+  "parse": [
+    {
+      "id": "hwmon:spd5118:21-0051:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": true,
+        "controller": "",
+        "segments": [],
+        "address": 81,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "0000:00:14.0",
+        "segments": [
+          "p0"
+        ],
+        "address": 81,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:14.0-p2-0053:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "0000:00:14.0",
+        "segments": [
+          "p2"
+        ],
+        "address": 83,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:1f.4-ch1-0050:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "0000:00:1f.4",
+        "segments": [
+          "ch1"
+        ],
+        "address": 80,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:1f.4-0050:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "0000:00:1f.4",
+        "segments": [],
+        "address": 80,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:jc42:0000:00:1f.4-0018:temp1",
+      "expect": {
+        "chip": "jc42",
+        "legacy": false,
+        "controller": "0000:00:1f.4",
+        "segments": [],
+        "address": 24,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:jc42:0-0018:temp1",
+      "expect": {
+        "chip": "jc42",
+        "legacy": true,
+        "controller": "",
+        "segments": [],
+        "address": 24,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:i2c_designware.0-p1-0051:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "i2c_designware.0",
+        "segments": [
+          "p1"
+        ],
+        "address": 81,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:k10temp:0000:00:18.3:Tctl",
+      "expect": null
+    },
+    {
+      "id": "hwmon:nct6798:nct6775.656:SYSTIN",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:nodev:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:21-zz51:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:21-051:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:-0051:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:14.0-p0-0051:",
+      "expect": null
+    },
+    {
+      "id": "spd5118:21-0051:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:21-0051",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:21-0051\n:temp1",
+      "expect": null
+    },
+    {
+      "id": "hwmon:spd5118:21\n-0051:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "21\n",
+        "segments": [],
+        "address": 81,
+        "label": "temp1"
+      }
+    },
+    {
+      "id": "hwmon:spd5118:0000:00:14.0-p0\n-0051:temp1",
+      "expect": {
+        "chip": "spd5118",
+        "legacy": false,
+        "controller": "0000:00:14.0-p0\n",
+        "segments": [],
+        "address": 81,
+        "label": "temp1"
+      }
+    }
+  ],
+  "resolve": [
+    {
+      "why": "legacy id follows its module to the stable form",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+        "hwmon:spd5118:0000:00:14.0-p0-0053:temp1",
+        "hwmon:k10temp:0000:00:18.3:Tctl"
+      ],
+      "expect": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+    },
+    {
+      "why": "a bus renumbered before the upgrade is still recovered",
+      "saved": "hwmon:spd5118:23-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+    },
+    {
+      "why": "a daemon downgrade: stable id follows back to the legacy form",
+      "saved": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+      "live": [
+        "hwmon:spd5118:21-0051:temp1"
+      ],
+      "expect": "hwmon:spd5118:21-0051:temp1"
+    },
+    {
+      "why": "a live id stays as it is",
+      "saved": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+        "hwmon:spd5118:21-0051:temp1"
+      ],
+      "expect": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+    },
+    {
+      "why": "two candidates at the same address: refuse",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
+        "hwmon:spd5118:0000:00:14.0-p2-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "stable to stable never moves: a missing module is not rebound to its twin",
+      "saved": "hwmon:spd5118:0000:00:14.0-p2-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "legacy to legacy never moves",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:22-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "a same-form twin is a candidate too: after a renumber it is as likely the original, so refuse",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:22-0051:temp1",
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "a different address is a different module",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0053:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "a different chip is a different sensor",
+      "saved": "hwmon:spd5118:0-0018:temp1",
+      "live": [
+        "hwmon:jc42:0000:00:1f.4-0018:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "a different label is a different channel",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp2"
+      ],
+      "expect": null
+    },
+    {
+      "why": "a non-memory id is never re-keyed",
+      "saved": "hwmon:nvme:nvme1:Composite",
+      "live": [
+        "hwmon:nvme:nvme0:Composite"
+      ],
+      "expect": null
+    },
+    {
+      "why": "nothing live, nothing to move to",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [],
+      "expect": null
+    },
+    {
+      "why": "a quarantined twin still counts: the live one may not be the saved module",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p2-0051:temp1"
+      ],
+      "unavailable": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "the only match is quarantined: nothing live to move to",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [],
+      "unavailable": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": null
+    },
+    {
+      "why": "an unavailable sensor at another address does not block the move",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "unavailable": [
+        "hwmon:spd5118:0000:00:14.0-p0-0053:temp1"
+      ],
+      "expect": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+    },
+    {
+      "why": "an id listed both live and unavailable counts once, as live",
+      "saved": "hwmon:spd5118:21-0051:temp1",
+      "live": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "unavailable": [
+        "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+      ],
+      "expect": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1"
+    }
+  ]
+}

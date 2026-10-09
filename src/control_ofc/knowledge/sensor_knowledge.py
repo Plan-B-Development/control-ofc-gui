@@ -23,9 +23,14 @@ Classification is based on verified Linux kernel documentation:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from html import escape
+
+from control_ofc.knowledge.memory_sensor_id import (
+    MEMORY_MODULE_CHIPS,
+    parse_memory_sensor_id,
+)
 
 
 @dataclass(frozen=True)
@@ -87,12 +92,8 @@ _LIQUID_COOLER_CHIPS = _KRAKEN_COOLANT_CHIPS | frozenset({"d5next", "highflownex
 _COOLANT_LABEL_HINTS = ("coolant", "water", "liquid")
 
 
-# DEC-491: memory-module temperature sensors, mirrored from the daemon's
-# `classify::MEMORY_MODULE_CHIPS`. `spd5118` is the DDR5 SPD hub (kernel 6.11+),
-# `jc42` the JEDEC JC-42.4 sensor on a DDR4/DDR3 module. Both sit on the board's
-# SMBus, one device per module, and both publish a bare `temp1`. `jc42` is graded
-# medium: the same driver also binds standalone JC-42.4 thermometers.
-MEMORY_MODULE_CHIPS = frozenset({"spd5118", "jc42"})
+# `MEMORY_MODULE_CHIPS` (DEC-491) lives in `memory_sensor_id`; `jc42` is graded
+# medium below: the same driver also binds standalone JC-42.4 thermometers.
 
 #: Every ``source_class`` that is a memory (DIMM) reading.
 MEMORY_SOURCE_CLASSES = frozenset({"memory_dimm"})
@@ -136,33 +137,41 @@ def _classify_memory_label(label: str) -> SensorClassification:
     )
 
 
-def sensor_display_name(sensor_id: str, label: str) -> str:
-    """The name a surface shows for a sensor (DEC-491).
+def sensor_display_name(sensor_id: str, label: str, *, peers: Iterable[str]) -> str:
+    """The name a surface shows for a sensor (DEC-491, DEC-492).
 
     Every sensor keeps ``label or id``, except a memory-module sensor
     (:data:`MEMORY_MODULE_CHIPS`): those all publish ``temp1``, so two DIMMs
-    would look identical. Their id is the daemon's documented
-    ``hwmon:<chip>:<device_id>:<label>`` with an i2c ``<bus>-<addr>`` device
-    id, and the SPD address tells the modules apart: ``DIMM 0x51``. The bus
-    number is left out on purpose — the kernel assigns it dynamically, and the
-    address is what stays put. No slot is claimed: the kernel does not know it.
-    Known limit: modules at the same address on two SMBus segments (boards with
-    more than 8 slots) share a name; the id in the tooltip still tells them
-    apart (`MEM-a`).
-    Anything that does not parse that way keeps the plain name.
+    would look identical. The SPD address in the id tells modules apart:
+    ``DIMM 0x51``. No slot is claimed: the kernel does not know it.
+
+    ``peers`` is the set of sensor ids the name is shown among — required, so no
+    surface can silently drop it. Where another memory sensor there sits at the
+    same address on a different SMBus segment (boards with more than 8 slots, or
+    a mux), the segment is added: ``DIMM 0x51 (p2)``, ``(ch1)``, or ``(bus 21)``
+    for the legacy form. Both id forms parse (``memory_sensor_id``).
     """
-    plain = label or sensor_id
-    parts = sensor_id.split(":")
-    if len(parts) != 4 or parts[0] != "hwmon" or parts[1] not in MEMORY_MODULE_CHIPS:
-        return plain
-    _bus, sep, addr = parts[2].partition("-")
-    if not sep:
-        return plain
-    try:
-        value = int(addr, 16)
-    except ValueError:
-        return plain
-    return f"DIMM 0x{value:02x}"
+    me = parse_memory_sensor_id(sensor_id)
+    if me is None:
+        return label or sensor_id
+    name = f"DIMM 0x{me.address:02x}"
+    twins = (
+        p
+        for p in (parse_memory_sensor_id(sid) for sid in peers if sid != sensor_id)
+        if p is not None
+    )
+    if any(p.chip == me.chip and p.address == me.address for p in twins):
+        return f"{name} ({_memory_segment_text(sensor_id, me)})"
+    return name
+
+
+def _memory_segment_text(sensor_id: str, me) -> str:
+    if me.segments:
+        return "-".join(me.segments)
+    if me.legacy:
+        device = sensor_id.split(":")[2]
+        return f"bus {device.partition('-')[0]}"
+    return me.controller
 
 
 def trusted_crit_c(sensor) -> float | None:

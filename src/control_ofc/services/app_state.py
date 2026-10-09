@@ -657,10 +657,11 @@ class AppState(QObject):
         """
         conditions: list[AlertCondition] = []
 
+        peers = [p.id for p in self.sensors]
         for s in self.sensors:
             freshness = self.reading_freshness(s)
             if freshness != Freshness.FRESH:
-                label = sensor_display_name(s.id, s.label)
+                label = sensor_display_name(s.id, s.label, peers=peers)
                 conditions.append(
                     AlertCondition(
                         key=f"sensor_stale:{s.id}",

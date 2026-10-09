@@ -780,10 +780,9 @@ class HardwarePage(QWidget):
         return bool(caps and getattr(caps.control, "cooling_devices", False))
 
     def _sensor_labels(self) -> dict[str, str]:
-        return {
-            s.id: sensor_display_name(s.id, s.label)
-            for s in (self._state.sensors if self._state else [])
-        }
+        sensors = self._state.sensors if self._state else []
+        peers = [s.id for s in sensors]
+        return {s.id: sensor_display_name(s.id, s.label, peers=peers) for s in sensors}
 
     def _sensor_values(self) -> dict[str, float]:
         return {

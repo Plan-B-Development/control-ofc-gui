@@ -658,6 +658,7 @@ def build_sensor_rows(
     moves out of the table into hover (Session min/max is already in the tooltip).
     """
     rows: list[SensorRowVM] = []
+    peers = [s.id for s in sensors]
     for s in sensors:
         classification = classify(s)
         is_quirky = classification.source_class == "bogus"
@@ -678,7 +679,7 @@ def build_sensor_rows(
         tooltip += f"\nSource: {escape(s.source, quote=False) if s.source else '—'}"
         rows.append(
             SensorRowVM(
-                label=prefix + sensor_display_name(s.id, s.label),
+                label=prefix + sensor_display_name(s.id, s.label, peers=peers),
                 sensor_id=s.id or "—",
                 source_class_text=SOURCE_CLASS_DISPLAY.get(
                     classification.source_class, classification.source_class

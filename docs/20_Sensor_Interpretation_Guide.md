@@ -410,14 +410,34 @@ The daemon reports the same split as `classification: memory_temp`. Every one of
 these stays `kind: mb_temp` on the wire, so it still counts as board evidence in the
 daemon's CPU plausibility check and never reaches the thermal ladder.
 
+**Ids (DEC-492).** A module is an i2c client, and the kernel numbers i2c buses in
+registration order, so a GPU swap or a driver-load reorder renumbers them. A DEC-492
+daemon therefore names a module by what does not move: its SMBus controller (normally
+a PCI address), the adapter's port (`p<N>`, piix4) or mux channel (`ch<K>`), and the
+SPD address — `hwmon:spd5118:0000:00:14.0-p0-0051:temp1`. Where it cannot name the
+topology unambiguously (two adapters that look alike, an ACPI-named client) it keeps the
+older bus-numbered form, `hwmon:spd5118:21-0051:temp1`. Saved ids cross between the
+two forms by one rule, applied by the daemon's engine and by the GUI on the first
+sensor poll. Every other sensor with the same chip, address and label counts as a
+candidate, whether live or quarantined (listed under unavailable sensors), and in either
+form. The saved id moves only when there is exactly one candidate, it is live, and it is
+of the other form. So a second module at that address, even one that is unreadable right
+now or still bus-numbered, blocks the move; and a stable id never moves to another stable
+id. The GUI re-keys chart colours, hidden chart series, the coolant override,
+Overview-hidden sensors and profile curves. A profile with unsaved edits open in Controls,
+or an unpublished draft, is re-keyed in memory only, never saved behind your back. The
+preferred CPU/motherboard sensor and cooling-device sensors are daemon-side advisory
+settings and are re-picked by hand. **After downgrading** to a daemon older than DEC-492
+(which matches ids exactly), re-activate the active profile once: the GUI re-keys it back
+to the old form and saves it, but the daemon does not reload an active profile on save.
+
 **Naming.** Module sensors have no label: each publishes `temp1`, so two modules would
-look identical. The GUI names them from the SPD address in their id
-(`hwmon:spd5118:21-0051:temp1` → **DIMM 0x51**), on every surface that names a
-sensor (`sensor_display_name`). The bus number is left out because the kernel assigns
-it dynamically. No slot is claimed: the kernel registers modules without knowing
-which slot an address belongs to. Board channels keep their own label. Known limit:
-on a board with more than 8 slots, modules at the same address on two SMBus segments
-share a name; the id in the tooltip tells them apart.
+look identical. The GUI names them from the SPD address in their id (**DIMM 0x51**),
+on every surface that names a sensor (`sensor_display_name`), in both id forms. No slot
+is claimed: the kernel registers modules without knowing which slot an address belongs
+to. Where two modules share an address on different SMBus segments, the segment is
+added — **DIMM 0x51 (p2)**, **(ch1)**, or **(bus 21)** in the older form. Board
+channels keep their own label.
 
 **Grouping.** The Dashboard's sensor list files memory under its own **Memory** group,
 after Motherboard. The default chart never uses a memory module as its motherboard

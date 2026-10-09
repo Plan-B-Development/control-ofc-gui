@@ -52,7 +52,8 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
 - an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
 - CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, the Kraken's coolant
   sensor (classified as Liquid), and two DDR5 memory modules (`spd5118`, shown as **DIMM 0x51** and
-  **DIMM 0x53** under Memory — DEC-491)
+  **DIMM 0x53** under Memory — DEC-491; their ids use the bus-independent form,
+  `hwmon:spd5118:0000:00:14.0-p0-0051:temp1`, DEC-492). Demo mode never re-keys saved ids.
 - built-in profiles
 - realistic RPM and temperature motion over time
 

@@ -15,6 +15,7 @@ actually represents.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from html import escape
 from typing import TYPE_CHECKING
 
@@ -147,9 +148,13 @@ def build_sensor_detail_html(
     daemon_classification: InventoryTempSensor | None = None,
     *,
     classification: SensorClassification,
+    peers: Iterable[str],
     freshness: Freshness | None = None,
 ) -> str:
     """Build the full self-contained HTML document for the detail dialog.
+
+    ``peers`` are the sensor ids the dialog's sensor is shown among, for its name
+    (``sensor_display_name``, DEC-492).
 
     ``freshness`` is the caller's judgement (``AppState.display_freshness``,
     which follows the daemon's cadence and the connection); without one the
@@ -174,7 +179,7 @@ def build_sensor_detail_html(
 
     # ── Header line ────────────────────────────────────────────────
     conf = _CONFIDENCE_DISPLAY.get(classification.confidence, classification.confidence)
-    header_label = escape(sensor_display_name(sensor.id, sensor.label) or "Sensor")
+    header_label = escape(sensor_display_name(sensor.id, sensor.label, peers=peers) or "Sensor")
     parts.append(
         f'<div style="color:{t.text_primary};font-size:large;font-weight:bold">'
         f"{header_label}</div>"
@@ -373,11 +378,13 @@ class SensorDetailDialog(QDialog):
         parent: QWidget | None = None,
         *,
         classification: SensorClassification,
+        peers: Iterable[str],
         freshness: Freshness | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Diagnostics_SensorDetail_Dialog")
-        title = sensor_display_name(sensor.id, sensor.label) or "Sensor"
+        peers = list(peers)
+        title = sensor_display_name(sensor.id, sensor.label, peers=peers) or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
         self.resize(640, 600)
 
@@ -392,6 +399,7 @@ class SensorDetailDialog(QDialog):
                 board,
                 daemon_classification,
                 classification=classification,
+                peers=peers,
                 freshness=freshness,
             )
         )
@@ -412,11 +420,13 @@ class SensorDetailDialog(QDialog):
         daemon_classification: InventoryTempSensor | None = None,
         *,
         classification: SensorClassification,
+        peers: Iterable[str],
         freshness: Freshness | None = None,
     ) -> None:
         """Replace contents in place — used when the dialog is reopened on a
         different row of the table without rebuilding the widget."""
-        title = sensor_display_name(sensor.id, sensor.label) or "Sensor"
+        peers = list(peers)
+        title = sensor_display_name(sensor.id, sensor.label, peers=peers) or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
         self._browser.setHtml(
             build_sensor_detail_html(
@@ -424,6 +434,7 @@ class SensorDetailDialog(QDialog):
                 board,
                 daemon_classification,
                 classification=classification,
+                peers=peers,
                 freshness=freshness,
             )
         )

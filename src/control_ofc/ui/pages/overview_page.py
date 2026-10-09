@@ -435,9 +435,10 @@ class OverviewPage(QWidget):
                 f"⚠ Unavailable sensors ({len(rows)}) — discovered but not readable, "
                 "excluded from fan control:"
             ]
+            peers = [s.id for s in self._state.sensors] + [u.id for u in rows]
             for u in rows:
                 secs = max(0, u.unavailable_for_ms // 1000)
-                name = sensor_display_name(u.id, u.label)
+                name = sensor_display_name(u.id, u.label, peers=peers)
                 lines.append(f"   • {name} — {u.reason} (unavailable {secs}s)")
             self._unavailable_label.setText("\n".join(lines))
             self._unavailable_label.setVisible(True)
@@ -815,6 +816,7 @@ class OverviewPage(QWidget):
         daemon_cls = self._daemon_classifications.get(sensor_id)
         classification = self._classify(sensor)
         freshness = self._state.display_freshness(sensor) if self._state else None
+        peers = [s.id for s in self._all_sensors]
         if self._sensor_detail_dialog is None:
             self._sensor_detail_dialog = SensorDetailDialog(
                 sensor,
@@ -822,12 +824,18 @@ class OverviewPage(QWidget):
                 daemon_cls,
                 parent=self,
                 classification=classification,
+                peers=peers,
                 freshness=freshness,
             )
             self._sensor_detail_dialog.finished.connect(self._on_sensor_detail_closed)
         else:
             self._sensor_detail_dialog.set_sensor(
-                sensor, board, daemon_cls, classification=classification, freshness=freshness
+                sensor,
+                board,
+                daemon_cls,
+                classification=classification,
+                peers=peers,
+                freshness=freshness,
             )
         self._sensor_detail_dialog.show()
         self._sensor_detail_dialog.raise_()

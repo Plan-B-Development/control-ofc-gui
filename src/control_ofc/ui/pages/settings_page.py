@@ -2662,10 +2662,12 @@ class SettingsPage(QWidget):
     def _fill_pref_combo(self, combo, sensors, recommended, current) -> None:
         combo.clear()
         combo.addItem("Automatic (recommended)", None)
+        peers = [s.id for s in sensors]
         for s in sensors:
             star = "★ " if recommended and s.id == recommended else ""
             cls = f" — {s.classification}" if s.classification else ""
-            combo.addItem(f"{star}{sensor_display_name(s.id, s.label)}{cls}", s.id)
+            name = sensor_display_name(s.id, s.label, peers=peers)
+            combo.addItem(f"{star}{name}{cls}", s.id)
         idx = combo.findData(current) if current else 0
         combo.setCurrentIndex(idx if idx >= 0 else 0)
 

@@ -171,18 +171,19 @@ _DEMO_SENSORS: list[dict] = [
         "source": "hwmon",
         "chip_name": "it8696",
     },
-    # DDR5 memory modules (DEC-491): SPD hubs on the board's SMBus. Listed after
+    # DDR5 memory modules (DEC-491): SPD hubs on the board's SMBus, in the
+    # bus-independent id form (controller, piix4 port, SPD address — DEC-492). Listed after
     # the board sensor, as the daemon's discovery order usually puts them; the
     # default chart's mobo slot skips them either way.
     {
-        "id": "hwmon:spd5118:1-0051:temp1",
+        "id": "hwmon:spd5118:0000:00:14.0-p0-0051:temp1",
         "kind": "mb_temp",
         "label": "temp1",
         "source": "hwmon",
         "chip_name": "spd5118",
     },
     {
-        "id": "hwmon:spd5118:1-0053:temp1",
+        "id": "hwmon:spd5118:0000:00:14.0-p0-0053:temp1",
         "kind": "mb_temp",
         "label": "temp1",
         "source": "hwmon",

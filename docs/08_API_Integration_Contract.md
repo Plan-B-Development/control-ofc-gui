@@ -1327,7 +1327,19 @@ support bundle — and pointing at the update window, and it stands in for the
 ### GET /sensors
 Use as the primary sensor snapshot source.
 Expected fields:
-- id
+- id — `hwmon:<chip>:<device_id>:<label>` for hwmon sources. A memory-module sensor
+  (`spd5118`, `jc42`; DEC-492, unreleased daemon) has a bus-independent device id,
+  `<controller>[-p<N>|-ch<K>]…-<addr4>` (`hwmon:spd5118:0000:00:14.0-p0-0051:temp1`),
+  where an older daemon, or this one when it cannot name the SMBus topology, sends the
+  bus-numbered `<bus>-<addr4>`. Both sides carry a saved id across the two forms by one
+  rule: every other id with the same chip, address and label is a candidate (live or in
+  `unavailable_sensors[]`, either form), and the id moves only when there is exactly one,
+  live and of the other form. It is pinned by the shared oracle
+  `tests/fixtures/memory_sensor_ids.json`. The engine applies it to curve `sensor_id`
+  lookups (counting its quarantined ids) and to `validate`'s `UNKNOWN_SENSOR` check
+  (live set only); no other route resolves it. Not a capability: the GUI parses both
+  forms. A pre-DEC-492 daemon matches exactly, and `PUT /profiles/{id}` does not reload the
+  active profile, so after a downgrade the active profile needs re-activating.
 - kind — one of `cpu_temp`, `mb_temp`, `disk_temp`, `gpu_temp`, or `coolant_temp`
   (DEC-156, daemon ≥ 1.18.0 — liquid-cooler coolant temperature, surfaced by the GUI
   as a first-class **Liquid** sensor). The GUI treats `kind` as an opaque string and

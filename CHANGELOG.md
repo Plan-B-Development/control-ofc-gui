@@ -12,6 +12,14 @@
   Each module is named by its bus address, **DIMM 0x51**, **DIMM 0x53**, on every page, picker and alert;
   before, every module showed as `? temp1`. The name does not claim a slot, because the kernel does not
   know which slot an address is in. Demo mode includes a DDR5 pair. Works with any daemon.
+- **Memory modules keep their settings when the kernel renumbers the SMBus** (DEC-492). With a daemon
+  that names modules by controller, port and address, chart colours, hidden chart lines, the coolant
+  override, hidden Overview rows and profile curves saved against the old bus-numbered id follow the
+  module on first connect, and the move is noted in the event log. A setting another module could match
+  is left alone, including when that module is currently unreadable. Two modules at the same address on
+  different SMBus segments are told apart: **DIMM 0x51 (p2)**. A profile with unsaved edits open in
+  Controls, or an unpublished draft, is re-keyed but not re-saved, so nothing is published behind your
+  back. After downgrading to an older daemon, re-activate the active profile once.
 
 ### Changed
 

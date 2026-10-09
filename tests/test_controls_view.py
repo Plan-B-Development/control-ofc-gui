@@ -214,7 +214,7 @@ class TestSensorComboLabel:
         s = SensorReading(
             id="cpu0", kind="cpu_temp", label="Tctl", value_c=42.5, chip_name="k10temp"
         )
-        label = sensor_combo_label(s, {})
+        label = sensor_combo_label(s, {}, peers=[s.id])
         assert label.startswith("★ ")
         assert "42.5" in label
 
@@ -222,11 +222,11 @@ class TestSensorComboLabel:
         s = SensorReading(
             id="mb0", kind="mb_temp", label="SYSTIN", value_c=30.0, chip_name="nct6799"
         )
-        assert not sensor_combo_label(s, {}).startswith("★")
+        assert not sensor_combo_label(s, {}, peers=[s.id]).startswith("★")
 
     def test_missing_value_hides_temperature(self):
         s = SensorReading(id="x", kind="mb_temp", label="x", value_c=None, chip_name="nct6799")
-        assert "°C" not in sensor_combo_label(s, {})
+        assert "°C" not in sensor_combo_label(s, {}, peers=[s.id])
 
 
 # ─── card-size persistence ───────────────────────────────────────────────

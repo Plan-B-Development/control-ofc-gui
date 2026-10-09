@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import ConnectionState, DaemonStatus, OperationMode
+from control_ofc.knowledge.memory_sensor_id import resolve_memory_sensor_id
 from control_ofc.knowledge.sensor_knowledge import sensor_display_name
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
@@ -1766,9 +1767,8 @@ class ControlsPage(QWidget):
             if not s.control_eligible:
                 continue
             is_gpu_temp = s.kind == "gpu_temp" or s.source == "amd_gpu"
-            sensor_choices.append(
-                {"id": s.id, "label": sensor_display_name(s.id, s.label), "preferred": is_gpu_temp}
-            )
+            name = sensor_display_name(s.id, s.label, peers=[p.id for p in self._state.sensors])
+            sensor_choices.append({"id": s.id, "label": name, "preferred": is_gpu_temp})
             if is_gpu_temp and default_sensor_id is None:
                 default_sensor_id = s.id
             if is_gpu_temp and "edge" in (s.label or "").lower():
@@ -2343,7 +2343,12 @@ class ControlsPage(QWidget):
                     if s.id == editing.sensor_id:
                         output = editing.interpolate(s.value_c)
                         card.update_output_preview(
-                            editing.name, sensor_display_name(s.id, s.label), s.value_c, output
+                            editing.name,
+                            sensor_display_name(
+                                s.id, s.label, peers=[p.id for p in self._state.sensors]
+                            ),
+                            s.value_c,
+                            output,
                         )
                         break
 
@@ -2497,7 +2502,9 @@ class ControlsPage(QWidget):
                     if curve and curve.sensor_id:
                         for s in self._state.sensors:
                             if s.id == curve.sensor_id:
-                                sensor_name = sensor_display_name(s.id, s.label)
+                                sensor_name = sensor_display_name(
+                                    s.id, s.label, peers=[p.id for p in self._state.sensors]
+                                )
                                 sensor_value = s.value_c
                                 break
             members = member_outputs.get(control_id, {})
@@ -3166,7 +3173,8 @@ class ControlsPage(QWidget):
         """Curve-editor sensor-combo label — see
         :func:`controls_view.sensor_combo_label` (DEC-157)."""
         overrides = self._state.sensor_class_overrides if self._state else {}
-        return sensor_combo_label(s, overrides)
+        peers = [p.id for p in self._state.sensors] if self._state else [s.id]
+        return sensor_combo_label(s, overrides, peers=peers)
 
     def _on_sensor_values_updated(self, sensors) -> None:
         """Called ~1Hz. Rebuild sensor dropdown only when the sensor list changes."""
@@ -3204,16 +3212,26 @@ class ControlsPage(QWidget):
                 self._curve_editor.set_current_sensor_value(sensors[0].value_c)
 
         # Update curve card sensor value labels (cheap — dict lookup per card)
-        sensor_map = {s.id: (sensor_display_name(s.id, s.label), s.value_c) for s in sensors}
+        peers = [s.id for s in sensors]
+        sensor_map = {
+            s.id: (sensor_display_name(s.id, s.label, peers=peers), s.value_c) for s in sensors
+        }
         for _curve_id, ccard in self._curve_cards.items():
             # A sensor_id kept by a curve that reads none is not shown as if it
             # drove the curve (``CurveConfig.reads_sensor``).
             sid = ccard.curve.sensor_id if ccard.curve.reads_sensor else ""
-            if sid and sid in sensor_map:
-                label, val = sensor_map[sid]
+            # DEC-492: a memory-module id saved in the other form shows its live
+            # module until the first-poll re-key rewrites the curve.
+            status = self._state.daemon_status if self._state else None
+            unavailable = [u.id for u in (status.unavailable_sensors if status else [])]
+            live = resolve_memory_sensor_id(sid, sensor_map, unavailable) if sid else None
+            if live is not None:
+                label, val = sensor_map[live]
                 ccard.update_sensor_display(label, val)
             elif sid:
-                pretty = sensor_display_name(sid, sid.split(":")[-1] if ":" in sid else sid)
+                pretty = sensor_display_name(
+                    sid, sid.split(":")[-1] if ":" in sid else sid, peers=peers
+                )
                 ccard.update_sensor_display(pretty)
 
     def _on_fan_rpm_updated(self, fans) -> None:

@@ -418,10 +418,11 @@ _SENSOR_KIND_WORDS: dict[str, str] = {
 }
 
 
-def sensor_combo_label(s, overrides: dict) -> str:
+def sensor_combo_label(s, overrides: dict, *, peers: Iterable[str]) -> str:
     """Curve-editor sensor-combo label, starring coolant + CPU sensors (★) — the
     recommended bindings for AIO/radiator curves (DEC-157). Selection stays free;
-    this only highlights. A memory module reads "memory", not "board" (DEC-491)."""
+    this only highlights. A memory module reads "memory", not "board" (DEC-491);
+    ``peers`` are the ids it is listed among (``sensor_display_name``)."""
     val_text = f" — {s.value_c:.1f}°C" if s.value_c is not None else ""
     cls = classify_sensor_with_overrides(
         s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
@@ -435,7 +436,7 @@ def sensor_combo_label(s, overrides: dict) -> str:
         if cls.source_class in MEMORY_SOURCE_CLASSES
         else _SENSOR_KIND_WORDS.get(s.kind, s.kind)
     )
-    return f"{star}{sensor_display_name(s.id, s.label)} ({word}){val_text}"
+    return f"{star}{sensor_display_name(s.id, s.label, peers=peers)} ({word}){val_text}"
 
 
 def role_preserving_label(display_name: str, fallback_label: str, source: str) -> str:
@@ -886,13 +887,14 @@ def build_sensor_choices(sensors, overrides: dict) -> list[dict]:
     the curves' calibration from the same predicate.
     """
     choices: list[dict] = []
+    peers = [s.id for s in sensors]
     for s in sensors:
         coolant = sensor_is_coolant(s, overrides)
         preferred = coolant or s.kind == "cpu_temp"
         choices.append(
             {
                 "id": s.id,
-                "label": sensor_display_name(s.id, s.label),
+                "label": sensor_display_name(s.id, s.label, peers=peers),
                 "preferred": preferred,
                 "coolant": coolant,
             }
