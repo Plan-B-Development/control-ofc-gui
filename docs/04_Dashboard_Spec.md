@@ -61,7 +61,8 @@ A wide temperature / fan-speed-over-time chart with:
 - selectable time range
 - a curated default series subset on first run (CPU · GPU · one motherboard temp · and,
   on a liquid-cooled machine, one coolant temp — DEC-329/`WIRE-ai`; a slot with no matching
-  sensor is simply dropped, so an air-cooled machine gets the same three as before)
+  sensor is simply dropped, so an air-cooled machine gets the same three as before; a memory
+  module never fills the motherboard slot, DEC-491)
   instead of every series at once, resolved by
   `series_selection.default_series_keys`
 - **chart modes** (Combined [default] / Thermals / Fans / Diagnostics) + Reset — the
@@ -187,6 +188,9 @@ These controls may be:
 
 The series panel groups coolant temperatures (`coolant_temp`) under an **"AIO / Liquid"** group,
 and liquid-cooler pump/radiator fans are tagged "(AIO)" so an AIO reads as a cluster (DEC-157).
+Memory-module temperatures are `mb_temp` on the wire but file under their own **"Memory"** group,
+after Motherboard, by classification, and each module is named by its SPD address (**DIMM 0x51**)
+because they all publish the label `temp1` (DEC-491).
 
 ## Fan naming
 The daemon's fan response includes `id` and `source` but not a display label. The dashboard uses the best available display name in this order:

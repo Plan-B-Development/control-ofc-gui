@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from control_ofc.api.models import default_reading_freshness
-from control_ofc.knowledge.sensor_knowledge import classify_reading
+from control_ofc.knowledge.sensor_knowledge import classify_reading, sensor_display_name
 from control_ofc.services.diagnostics_service import DiagnosticsService
 from control_ofc.services.overview_view import (
     build_daemon_health_vm,
@@ -437,7 +437,8 @@ class OverviewPage(QWidget):
             ]
             for u in rows:
                 secs = max(0, u.unavailable_for_ms // 1000)
-                lines.append(f"   • {u.label or u.id} — {u.reason} (unavailable {secs}s)")
+                name = sensor_display_name(u.id, u.label)
+                lines.append(f"   • {name} — {u.reason} (unavailable {secs}s)")
             self._unavailable_label.setText("\n".join(lines))
             self._unavailable_label.setVisible(True)
         self._refresh_summary()

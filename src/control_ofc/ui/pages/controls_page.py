@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 from control_ofc.api.client import DaemonClient
 from control_ofc.api.errors import DaemonError, DaemonTimeout, DaemonUnavailable
 from control_ofc.api.models import ConnectionState, DaemonStatus, OperationMode
+from control_ofc.knowledge.sensor_knowledge import sensor_display_name
 from control_ofc.services.app_state import AppState
 from control_ofc.services.controls_view import (
     aio_tag_for,
@@ -1765,7 +1766,9 @@ class ControlsPage(QWidget):
             if not s.control_eligible:
                 continue
             is_gpu_temp = s.kind == "gpu_temp" or s.source == "amd_gpu"
-            sensor_choices.append({"id": s.id, "label": s.label, "preferred": is_gpu_temp})
+            sensor_choices.append(
+                {"id": s.id, "label": sensor_display_name(s.id, s.label), "preferred": is_gpu_temp}
+            )
             if is_gpu_temp and default_sensor_id is None:
                 default_sensor_id = s.id
             if is_gpu_temp and "edge" in (s.label or "").lower():
@@ -2339,7 +2342,9 @@ class ControlsPage(QWidget):
                 for s in self._state.sensors:
                     if s.id == editing.sensor_id:
                         output = editing.interpolate(s.value_c)
-                        card.update_output_preview(editing.name, s.label, s.value_c, output)
+                        card.update_output_preview(
+                            editing.name, sensor_display_name(s.id, s.label), s.value_c, output
+                        )
                         break
 
     def _get_current_profile(self):
@@ -2492,7 +2497,7 @@ class ControlsPage(QWidget):
                     if curve and curve.sensor_id:
                         for s in self._state.sensors:
                             if s.id == curve.sensor_id:
-                                sensor_name = s.label
+                                sensor_name = sensor_display_name(s.id, s.label)
                                 sensor_value = s.value_c
                                 break
             members = member_outputs.get(control_id, {})
@@ -3199,7 +3204,7 @@ class ControlsPage(QWidget):
                 self._curve_editor.set_current_sensor_value(sensors[0].value_c)
 
         # Update curve card sensor value labels (cheap — dict lookup per card)
-        sensor_map = {s.id: (s.label, s.value_c) for s in sensors}
+        sensor_map = {s.id: (sensor_display_name(s.id, s.label), s.value_c) for s in sensors}
         for _curve_id, ccard in self._curve_cards.items():
             # A sensor_id kept by a curve that reads none is not shown as if it
             # drove the curve (``CurveConfig.reads_sensor``).
@@ -3208,7 +3213,7 @@ class ControlsPage(QWidget):
                 label, val = sensor_map[sid]
                 ccard.update_sensor_display(label, val)
             elif sid:
-                pretty = sid.split(":")[-1] if ":" in sid else sid
+                pretty = sensor_display_name(sid, sid.split(":")[-1] if ":" in sid else sid)
                 ccard.update_sensor_display(pretty)
 
     def _on_fan_rpm_updated(self, fans) -> None:

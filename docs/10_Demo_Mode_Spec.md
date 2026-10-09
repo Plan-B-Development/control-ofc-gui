@@ -50,8 +50,9 @@ Provide a believable synthetic environment. As shipped, demo mode includes:
   `it87.2656`, the Kraken's HID device `0003:1E71:3008.0001`, `nvme0` — and every header has a
   fan reading, the Kraken pump's included (`VOLT-f`)
 - an AMD discrete GPU (RX 7900 XTX) with a controllable fan, plus an Intel Arc B580 and an NVIDIA RTX 4080, each with a read-only fan (the NVIDIA fan reports a `duty_pct` measurement — DEC-204)
-- CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, and the Kraken's coolant
-  sensor (classified as Liquid)
+- CPU / GPU (AMD + Intel + NVIDIA) / motherboard / NVMe disk sensors, the Kraken's coolant
+  sensor (classified as Liquid), and two DDR5 memory modules (`spd5118`, shown as **DIMM 0x51** and
+  **DIMM 0x53** under Memory — DEC-491)
 - built-in profiles
 - realistic RPM and temperature motion over time
 

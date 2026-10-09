@@ -983,6 +983,10 @@ and — since **DEC-288**, daemon ≥ 2.23.5 — a reading rejected as implausib
 `read error: /sys/.../temp2_input: implausible temperature 2147483.6°C outside [-50, 250]°C`.
 The second class is why a **CPU** sensor can now appear here: before DEC-288 an out-of-range value
 was clamped to 250 °C and served as a live reading, which latched a permanent thermal emergency.
+A third cause (DEC-491, unreleased daemon): an `spd5118` DDR5 memory sensor whose `temp1_enable`
+is 0. The driver keeps returning the last value with no error, so the daemon reports the sensor as
+unreadable, with a `reason` naming `temp1_enable` and the word "disabled", instead of serving a
+frozen number.
 Treat `reason` as free text — render it, never parse it. `unavailable_for_ms` is the
 time since the sensor was quarantined. These are evicted from `/sensors` (so a stale value is never
 served) and the daemon suppresses its own per-tick read-failure logging for them (DEC-193). The GUI
@@ -2443,10 +2447,17 @@ as unavailable. The daemon never writes hardware to build this report.
 - `temp_sensors: list` — the live temperature sensors (same identity/fields as
   `/sensors`) enriched with an advisory `classification` (`cpu_package |
   cpu_core | cpu_tctl | cpu_tdie | motherboard_temp | vrm_temp | chipset_temp |
-  gpu_temp | disk_temp | coolant_temp | unknown_temp`), a `confidence` (`high |
-  medium | low | unknown`), a plain-English `rationale`, and `control_eligible:
-  bool` (DEC-193 — a wireless-PHY temp is dropped from the curve sensor picker).
-  The classification **refines** the coarse `kind` and never contradicts it.
+  memory_temp | gpu_temp | disk_temp | coolant_temp | unknown_temp`), a
+  `confidence` (`high | medium | low | unknown`), a plain-English `rationale`,
+  and `control_eligible: bool` (DEC-193 — a wireless-PHY temp is dropped from
+  the curve sensor picker). The classification **refines** the coarse `kind` and
+  never contradicts it. `memory_temp` (DEC-491, unreleased daemon) is a memory
+  module or a board's memory channel and is always `kind: mb_temp`: high
+  confidence for the `spd5118` chip, medium for `jc42` (its driver also binds
+  standalone thermometers) and for a DIMM label. An older
+  daemon reports those sensors as `unknown_temp`, `motherboard_temp` or (for
+  `PCH_DIM0_TEMP`…) `chipset_temp`; the GUI classifies memory itself from the
+  chip and label, so it needs no capability for this.
 - `pwm_controls: list` — controllable PWM headers (same shape as
   `/hwmon/headers`).
 - `monitor_only_fans: list[{id, source:"hwmon", chip_name, label, fan_index}]` —

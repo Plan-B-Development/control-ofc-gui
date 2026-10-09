@@ -31,8 +31,11 @@ from control_ofc.api.models import (
 )
 from control_ofc.knowledge.hwmon_label_resolver import is_placeholder_hwmon_label
 from control_ofc.knowledge.sensor_knowledge import (
+    MEMORY_SOURCE_CLASSES,
     SensorClassification,
     format_sensor_tooltip,
+    sensor_display_name,
+    trusted_crit_c,
 )
 from control_ofc.services.diagnostics_service import format_uptime
 from control_ofc.ui.fan_display import filter_displayable_fans
@@ -228,11 +231,12 @@ def is_alarm_active(s: SensorReading) -> bool:
     bits once, at discovery, so a bit latched at startup would keep a sensor that
     has long since cooled flagged "⚠ ALARM" every second. The sensor detail
     dialog shows the bits, labelled as the startup snapshot they are.
+
+    The limit is :func:`trusted_crit_c`'s, so a memory module's garbage ``crit``
+    read at startup cannot latch the flag either (DEC-491).
     """
-    t = s.thresholds
-    if t is None:
-        return False
-    return t.crit_c is not None and s.value_c >= t.crit_c
+    crit = trusted_crit_c(s)
+    return crit is not None and s.value_c >= crit
 
 
 def fan_row_tooltip(
@@ -674,7 +678,7 @@ def build_sensor_rows(
         tooltip += f"\nSource: {escape(s.source, quote=False) if s.source else '—'}"
         rows.append(
             SensorRowVM(
-                label=prefix + (s.label or s.id),
+                label=prefix + sensor_display_name(s.id, s.label),
                 sensor_id=s.id or "—",
                 source_class_text=SOURCE_CLASS_DISPLAY.get(
                     classification.source_class, classification.source_class
@@ -708,7 +712,14 @@ def build_sensor_summary(
     if n == 0 and unavailable_count == 0:
         return "Sensors: —"
     cpu = sum(1 for s in all_sensors if s.kind == "cpu_temp")
-    board = sum(1 for s in all_sensors if s.kind == "mb_temp")
+    # DEC-491: a memory module is `mb_temp` on the wire but is not a board
+    # reading to the user, so it is counted on its own line.
+    memory = sum(
+        1
+        for s in all_sensors
+        if s.kind == "mb_temp" and classify(s).source_class in MEMORY_SOURCE_CLASSES
+    )
+    board = sum(1 for s in all_sensors if s.kind == "mb_temp") - memory
     gpu = sum(1 for s in all_sensors if s.kind == "gpu_temp")
     disk = sum(1 for s in all_sensors if s.kind == "disk_temp")
     # DEC-156's fifth kind, missing since it shipped (`WIRE-c`). On an AIO
@@ -725,6 +736,8 @@ def build_sensor_summary(
         parts.append(f"{cpu} CPU")
     if board:
         parts.append(f"{board} board")
+    if memory:
+        parts.append(f"{memory} memory")
     if gpu:
         parts.append(f"{gpu} GPU")
     if coolant:

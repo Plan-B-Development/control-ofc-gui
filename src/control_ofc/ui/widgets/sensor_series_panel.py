@@ -23,7 +23,13 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.models import FanReading, SensorReading
 from control_ofc.constants import HISTORY_GAP_BREAK_S
-from control_ofc.knowledge.sensor_knowledge import classify_sensor, format_sensor_tooltip
+from control_ofc.knowledge.sensor_knowledge import (
+    MEMORY_SOURCE_CLASSES,
+    SensorClassification,
+    classify_sensor,
+    format_sensor_tooltip,
+    sensor_display_name,
+)
 from control_ofc.services.app_state import AIO_SUFFIX
 from control_ofc.services.series_selection import SeriesSelectionModel
 from control_ofc.ui.components.a11y import name_value_control
@@ -45,12 +51,17 @@ _SENSOR_KIND_GROUPS: dict[str, tuple[str, str]] = {
     "disk_temp": ("disk", "Disk"),
 }
 
+# DEC-491: memory modules are `mb_temp` on the wire; their group comes from the
+# classification, not the kind.
+_MEMORY_GROUP: tuple[str, str] = ("memory", "Memory")
+
 # Order for display
 _GROUP_ORDER = [
     "cpu",
     "gpu",
     "aio",
     "mb",
+    "memory",
     "disk",
     "other",
     "fans_gpu",
@@ -101,6 +112,7 @@ _GROUP_LABELS = {
     "gpu": "GPU",
     "aio": "AIO / Liquid",
     "mb": "Motherboard",
+    "memory": "Memory",
     "disk": "Disk",
     "other": "Other",
     "fans_gpu": "Fans \u2014 D-GPU",
@@ -350,11 +362,11 @@ class SensorSeriesPanel(QFrame):
 
             # Add sensors to groups
             for s in sensors:
-                group_key, group_label = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))
+                group_key, group_label = self._sensor_group(s)
                 group_item = self._ensure_group(group_key, group_label)
 
                 series_key = f"{_SENSOR_KEY_PREFIX}{s.id}"
-                label = s.label or s.id
+                label = sensor_display_name(s.id, s.label)
 
                 item = QTreeWidgetItem(group_item)
                 item.setText(0, label)
@@ -402,7 +414,7 @@ class SensorSeriesPanel(QFrame):
         # Group sensors by group key
         groups: dict[str, list[SensorReading]] = {}
         for s in sensors:
-            group_key = _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))[0]
+            group_key = self._sensor_group(s)[0]
             groups.setdefault(group_key, []).append(s)
 
         # Cosmetic text-only updates \u2014 block signals so the group row's
@@ -418,6 +430,20 @@ class SensorSeriesPanel(QFrame):
                     group_item.setText(0, f"{label} ({count})")
                     group_item.setText(1, f"max {max(fresh):.1f}\u00b0C" if fresh else "max \u2014")
 
+    def _classify(self, s: SensorReading) -> SensorClassification:
+        # `DC-g`: through the one accessor, so this panel carries the board
+        # vendor and the user's overrides exactly as the Overview row does.
+        # Without a state there is neither to supply.
+        if self._state is not None:
+            return self._state.classify_sensor(s)
+        return classify_sensor(chip_name=s.chip_name, label=s.label, temp_type=s.temp_type)
+
+    def _sensor_group(self, s: SensorReading) -> tuple[str, str]:
+        """The (group key, label) a sensor row files under."""
+        if s.kind == "mb_temp" and self._classify(s).source_class in MEMORY_SOURCE_CLASSES:
+            return _MEMORY_GROUP
+        return _SENSOR_KIND_GROUPS.get(s.kind, ("other", "Other"))
+
     def _build_sensor_tooltip(self, s: SensorReading) -> str:
         """Build a rich tooltip using the sensor knowledge base."""
         session_min = None
@@ -428,17 +454,8 @@ class SensorSeriesPanel(QFrame):
                 session_min = stats.min_c
                 session_max = stats.max_c
 
-        # `DC-g`: through the one accessor, so this tooltip carries the board
-        # vendor and the user's overrides exactly as the Overview row does.
-        # Without a state there is neither to supply.
-        if self._state is not None:
-            classification = self._state.classify_sensor(s)
-        else:
-            classification = classify_sensor(
-                chip_name=s.chip_name, label=s.label, temp_type=s.temp_type
-            )
         return format_sensor_tooltip(
-            classification,
+            self._classify(s),
             sensor_id=s.id,
             chip_name=s.chip_name,
             session_min=session_min,

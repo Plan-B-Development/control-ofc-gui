@@ -32,7 +32,9 @@ from control_ofc.knowledge.sensor_knowledge import (
     BOARD_SENSOR_OVERRIDES,
     kernel_doc_url_for_chip,
     lookup_board_override,
+    sensor_display_name,
     temp_type_label,
+    trusted_crit_c,
 )
 from control_ofc.ui.theme import active_theme
 
@@ -116,15 +118,16 @@ def _threshold_rows(t: SensorThresholds) -> list[tuple[str, str]]:
     return rows
 
 
-def _headroom_html(value_c: float, t: SensorThresholds) -> str | None:
+def _headroom_html(value_c: float, crit_c: float | None) -> str | None:
     """Return a one-line headroom-to-crit string when ``crit_c`` is known.
 
+    ``crit_c`` is :func:`trusted_crit_c`'s, never the raw threshold (DEC-491).
     Pure GUI-authored content, no daemon strings — safe to render as rich
     text without escaping.
     """
-    if t.crit_c is None:
+    if crit_c is None:
         return None
-    headroom = t.crit_c - value_c
+    headroom = crit_c - value_c
     theme = active_theme()
     if headroom <= 0:
         colour = theme.status_crit
@@ -171,7 +174,7 @@ def build_sensor_detail_html(
 
     # ── Header line ────────────────────────────────────────────────
     conf = _CONFIDENCE_DISPLAY.get(classification.confidence, classification.confidence)
-    header_label = escape(sensor.label or sensor.id or "Sensor")
+    header_label = escape(sensor_display_name(sensor.id, sensor.label) or "Sensor")
     parts.append(
         f'<div style="color:{t.text_primary};font-size:large;font-weight:bold">'
         f"{header_label}</div>"
@@ -318,10 +321,16 @@ def build_sensor_detail_html(
                 f"<td>{escape(value)}</td></tr>"
             )
         parts.append("</table>")
-        if sensor.thresholds is not None:
-            head = _headroom_html(sensor.value_c, sensor.thresholds)
-            if head is not None:
-                parts.append(f'<div style="margin-top:4px">{head}</div>')
+        crit = trusted_crit_c(sensor)
+        head = _headroom_html(sensor.value_c, crit)
+        if head is not None:
+            parts.append(f'<div style="margin-top:4px">{head}</div>')
+        elif sensor.thresholds is not None and sensor.thresholds.crit_c is not None:
+            parts.append(
+                f'<div style="margin-top:4px;color:{t.text_secondary}">'
+                "The critical limit read at startup is not a plausible module "
+                "limit, so it is not used for the alarm.</div>"
+            )
 
     # ── Driver doc link ────────────────────────────────────────────
     doc_url = kernel_doc_url_for_chip(sensor.chip_name)
@@ -368,7 +377,7 @@ class SensorDetailDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Diagnostics_SensorDetail_Dialog")
-        title = sensor.label or sensor.id or "Sensor"
+        title = sensor_display_name(sensor.id, sensor.label) or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
         self.resize(640, 600)
 
@@ -407,7 +416,7 @@ class SensorDetailDialog(QDialog):
     ) -> None:
         """Replace contents in place — used when the dialog is reopened on a
         different row of the table without rebuilding the widget."""
-        title = sensor.label or sensor.id or "Sensor"
+        title = sensor_display_name(sensor.id, sensor.label) or "Sensor"
         self.setWindowTitle(f"Sensor Detail — {title}")
         self._browser.setHtml(
             build_sensor_detail_html(

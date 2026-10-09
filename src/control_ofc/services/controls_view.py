@@ -17,7 +17,9 @@ from control_ofc.api.errors import is_openfan_maintenance_refusal
 from control_ofc.api.models import Capabilities
 from control_ofc.knowledge.chip_name import canonical_hwmon_id
 from control_ofc.knowledge.sensor_knowledge import (
+    MEMORY_SOURCE_CLASSES,
     classify_sensor_with_overrides,
+    sensor_display_name,
     sensor_is_coolant,
 )
 from control_ofc.services.cooling_device_view import CoolingMembership
@@ -405,10 +407,21 @@ def skipped_control_feedback(
     )
 
 
+#: The word the curve-editor sensor picker shows for a sensor's kind, in place
+#: of the raw wire token (DEC-491). An unlisted kind shows as sent.
+_SENSOR_KIND_WORDS: dict[str, str] = {
+    "cpu_temp": "CPU",
+    "gpu_temp": "GPU",
+    "mb_temp": "board",
+    "coolant_temp": "coolant",
+    "disk_temp": "disk",
+}
+
+
 def sensor_combo_label(s, overrides: dict) -> str:
     """Curve-editor sensor-combo label, starring coolant + CPU sensors (★) — the
     recommended bindings for AIO/radiator curves (DEC-157). Selection stays free;
-    this only highlights."""
+    this only highlights. A memory module reads "memory", not "board" (DEC-491)."""
     val_text = f" — {s.value_c:.1f}°C" if s.value_c is not None else ""
     cls = classify_sensor_with_overrides(
         s.id, chip_name=s.chip_name, label=s.label, overrides=overrides
@@ -417,7 +430,12 @@ def sensor_combo_label(s, overrides: dict) -> str:
         s.kind == "cpu_temp"
     )
     star = "★ " if preferred else ""
-    return f"{star}{s.label} ({s.kind}){val_text}"
+    word = (
+        "memory"
+        if cls.source_class in MEMORY_SOURCE_CLASSES
+        else _SENSOR_KIND_WORDS.get(s.kind, s.kind)
+    )
+    return f"{star}{sensor_display_name(s.id, s.label)} ({word}){val_text}"
 
 
 def role_preserving_label(display_name: str, fallback_label: str, source: str) -> str:
@@ -871,7 +889,14 @@ def build_sensor_choices(sensors, overrides: dict) -> list[dict]:
     for s in sensors:
         coolant = sensor_is_coolant(s, overrides)
         preferred = coolant or s.kind == "cpu_temp"
-        choices.append({"id": s.id, "label": s.label, "preferred": preferred, "coolant": coolant})
+        choices.append(
+            {
+                "id": s.id,
+                "label": sensor_display_name(s.id, s.label),
+                "preferred": preferred,
+                "coolant": coolant,
+            }
+        )
     return choices
 
 

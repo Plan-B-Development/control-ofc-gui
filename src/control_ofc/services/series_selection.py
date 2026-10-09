@@ -12,6 +12,7 @@ from enum import Enum
 from PySide6.QtCore import QObject, Signal
 
 from control_ofc.api.models import SensorReading
+from control_ofc.knowledge.sensor_knowledge import sensor_is_memory
 
 # The curated default chart series (refinement §7.3 / B-fork DEC-181): one CPU
 # temp, one GPU temp, one mobo/case temp — and, since `WIRE-ai`, one coolant
@@ -46,10 +47,17 @@ def default_series_keys(sensors: list[SensorReading]) -> set[str]:
     intersects with the known keys, so an absent or filtered sensor is harmless.
     That is also what scopes the coolant slot to machines that have one — an
     air-cooled machine gets exactly the three series it got before (`WIRE-ai`).
+
+    A memory module is `mb_temp` on the wire but never fills the mobo slot
+    (DEC-491): it would stand in for the board on a machine that lists its DIMMs
+    first, and with only DIMMs the slot stays empty.
     """
     keys: set[str] = set()
     for kind in _DEFAULT_SERIES_KINDS:
-        sensor = next((s for s in sensors if s.kind == kind), None)
+        sensor = next(
+            (s for s in sensors if s.kind == kind and not sensor_is_memory(s)),
+            None,
+        )
         if sensor is not None:
             keys.add(f"sensor:{sensor.id}")
     return keys

@@ -264,6 +264,21 @@ reading `/sys/class/hwmon/*/name` or matching a board note.
 | PC87360, PC87363, PC87364, PC87365, PC87366 | `pc87360` | Yes | linux (built-in) |
 | PC87427 | `pc87427` | Yes | linux (built-in) |
 
+### Memory modules (monitor-only)
+
+Memory temperatures come from a sensor on each module, read over the board's SMBus,
+or from a board chip that reports a memory channel. The daemon only reads them; they
+are not part of the thermal ladder (DEC-491).
+
+| Memory | Kernel driver (hwmon name) | Requirement |
+|---|---|---|
+| DDR5 | `spd5118` | Kernel 6.11 or later. The kernel registers each module from the firmware's memory table, on Intel (`i2c_i801`) and AMD (`i2c_piix4`) SMBus controllers. Current kernels skip it where the firmware locks SPD writes (Intel "SPD Write Disable"). |
+| DDR4 / DDR3 | `jc42` (with `ee1004` for the SPD EEPROM) | Only a module that carries a JEDEC thermal sensor has a reading; most consumer DDR4 modules do not. |
+| Board channel | `nct6683` family (`DIMM n`), `nct6775` family (`PCH_DIMn_TEMP`, `AgentN DimmN`), `dell_smm` (`SODIMM`) | Whatever the board firmware routes to that channel. |
+
+Why a machine may show none, and what to check: [Hardware Troubleshooting →
+No memory temperatures](../manual/hardware-troubleshooting.md#sensors-missing-or-fewer-than-expected).
+
 ## AMD platform → typical chip mapping
 
 This table summarises what hwmon chip(s) you are likely to find on each

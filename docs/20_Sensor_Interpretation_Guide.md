@@ -115,6 +115,7 @@ nct6797, nct6798, nct6799.
 
 | Label pattern | source_class | Confidence | Notes |
 |---|---|---|---|
+| `PCH_DIM0_TEMP`…`PCH_DIM3_TEMP` (nct6776–6792), `Agent0 Dimm0`… (nct6793+) | `memory_dimm` | medium | Memory channels, checked first (DEC-491); see [Memory temperatures](#memory-temperatures-spd5118-jc42-and-board-dimm-channels) |
 | Contains `AMD TSI` or `TSI` | `amd_tsi` | medium_high | Board-side CPU temp via AMD TSI |
 | Contains `PECI` | `cpu_peci` | medium_high | CPU temp via Intel PECI |
 | `SYSTIN` | `board_system` | medium | System temperature input, exact placement is vendor-specific |
@@ -391,6 +392,50 @@ kernel is included in the description.
 All readings classify as `cpu_die` at `high` confidence. The coretemp driver
 reads per-core DTS (Digital Thermal Sensor) values from Intel CPUs.
 
+### Memory temperatures (spd5118, jc42 and board DIMM channels)
+
+Kernel docs: https://docs.kernel.org/hwmon/spd5118.html ·
+https://docs.kernel.org/hwmon/jc42.html ·
+https://docs.kernel.org/hwmon/dell-smm-hwmon.html
+
+Two kinds of source report a memory temperature (DEC-491):
+
+| Source | Chip / label | source_class | Confidence |
+|---|---|---|---|
+| DDR5 module, its SPD hub on the board's SMBus | chip `spd5118` | `memory_dimm` | high |
+| DDR4/DDR3 module with a JEDEC JC-42.4 sensor | chip `jc42` | `memory_dimm` | medium (the driver also binds standalone thermometers) |
+| Board chip, memory channel | nct6683 `DIMM n` / `PECI DIMM n` / `PCH DIMM n`, nct6775-family `PCH_DIMn_TEMP` / `AgentN DimmN`, Dell `dell_smm` `SODIMM` | `memory_dimm` | medium |
+
+The daemon reports the same split as `classification: memory_temp`. Every one of
+these stays `kind: mb_temp` on the wire, so it still counts as board evidence in the
+daemon's CPU plausibility check and never reaches the thermal ladder.
+
+**Naming.** Module sensors have no label: each publishes `temp1`, so two modules would
+look identical. The GUI names them from the SPD address in their id
+(`hwmon:spd5118:21-0051:temp1` → **DIMM 0x51**), on every surface that names a
+sensor (`sensor_display_name`). The bus number is left out because the kernel assigns
+it dynamically. No slot is claimed: the kernel registers modules without knowing
+which slot an address belongs to. Board channels keep their own label. Known limit:
+on a board with more than 8 slots, modules at the same address on two SMBus segments
+share a name; the id in the tooltip tells them apart.
+
+**Grouping.** The Dashboard's sensor list files memory under its own **Memory** group,
+after Motherboard. The default chart never uses a memory module as its motherboard
+line. The Overview summary counts memory separately (`2 memory`), and the curve
+sensor picker labels it `(memory)`.
+
+**Quirks and how they are handled.**
+
+| Quirk | Handling |
+|---|---|
+| DDR5 needs kernel 6.11 or later (the `spd5118` driver and automatic registration). The kernel registers modules from the firmware's memory table: it gives up on mixed memory types, tries at most 8 addresses per bus, and current kernels skip DDR5 under Intel "SPD Write Disable". | Troubleshooting guide |
+| DDR4 needs `ee1004` + `jc42`, and only modules that carry a sensor have one; most consumer DDR4 does not. Some DDR5 hubs have no working sensor either. | Troubleshooting guide: no reading is normal there |
+| `spd5118` with `temp1_enable = 0` keeps returning its last value with no error. | The daemon treats the sensor as unreadable: listed under unavailable sensors, a curve on it is not controlled. It reads the driver's enable state (its cached copy), so a change made over raw SMBus, bypassing the driver, is not seen |
+| Suspend/resume: the driver switches the sensor off on suspend, and the SMBus controller can fail on resume. | Read failures quarantine the sensor (DEC-193) and it recovers by itself |
+| A limit read over SMBus can be garbage without an error, and the daemon reads limits once. | A module `crit` at or below 0 °C, or below its own `max`, is ignored for the alarm, and the detail dialog says so |
+| The hub sits on the module's circuit board; the memory chips run a few °C hotter. Its default 55 °C `max` and 85 °C `crit` are module settings. | Tooltip notes; `max_alarm` is never shown as a warning |
+| The daemon never writes these chips. A write can be refused (Intel "SPD Write Disable") and has been reported to corrupt hub state. | Nothing to do: monitoring is read-only |
+
 ## Where the rich classification surfaces
 
 These surfaces consume this knowledge base:
@@ -625,6 +670,9 @@ override beside it says `high`.
 - asus_ec_sensors: https://docs.kernel.org/hwmon/asus_ec_sensors.html
 - asus_wmi_sensors: https://docs.kernel.org/hwmon/asus_wmi_sensors.html
 - amdgpu: https://docs.kernel.org/gpu/amdgpu/thermal.html
+- spd5118: https://docs.kernel.org/hwmon/spd5118.html
+- jc42: https://docs.kernel.org/hwmon/jc42.html
+- dell-smm-hwmon: https://docs.kernel.org/hwmon/dell-smm-hwmon.html
 - intel-xe-hwmon: https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-xe-hwmon
 - intel-i915-hwmon: https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-driver-intel-i915-hwmon
 - NVMe specification: https://nvmexpress.org/specifications/

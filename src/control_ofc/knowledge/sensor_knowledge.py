@@ -16,6 +16,9 @@ Classification is based on verified Linux kernel documentation:
 - it87: https://docs.kernel.org/hwmon/it87.html
 - asus_ec_sensors: https://docs.kernel.org/hwmon/asus_ec_sensors.html
 - asus_wmi_sensors: https://docs.kernel.org/hwmon/asus_wmi_sensors.html
+- spd5118: https://docs.kernel.org/hwmon/spd5118.html
+- jc42: https://docs.kernel.org/hwmon/jc42.html
+- dell-smm-hwmon: https://docs.kernel.org/hwmon/dell-smm-hwmon.html
 """
 
 from __future__ import annotations
@@ -82,6 +85,104 @@ _KRAKEN_COOLANT_CHIPS = frozenset(
 )
 _LIQUID_COOLER_CHIPS = _KRAKEN_COOLANT_CHIPS | frozenset({"d5next", "highflownext", "leakshield"})
 _COOLANT_LABEL_HINTS = ("coolant", "water", "liquid")
+
+
+# DEC-491: memory-module temperature sensors, mirrored from the daemon's
+# `classify::MEMORY_MODULE_CHIPS`. `spd5118` is the DDR5 SPD hub (kernel 6.11+),
+# `jc42` the JEDEC JC-42.4 sensor on a DDR4/DDR3 module. Both sit on the board's
+# SMBus, one device per module, and both publish a bare `temp1`. `jc42` is graded
+# medium: the same driver also binds standalone JC-42.4 thermometers.
+MEMORY_MODULE_CHIPS = frozenset({"spd5118", "jc42"})
+
+#: Every ``source_class`` that is a memory (DIMM) reading.
+MEMORY_SOURCE_CLASSES = frozenset({"memory_dimm"})
+
+
+def is_memory_label(lower_label: str) -> bool:
+    """Whether a lowercased label names a memory channel a board chip reports.
+
+    nct6683's ``DIMM n`` / ``PECI DIMM n``, nct6793+'s ``Agent0 Dimm0`` and
+    ``dell_smm``'s ``SODIMM`` contain "dimm"; nct6776-6792's ``PCH_DIM0_TEMP``..3
+    do not, and must be caught before anything reads their "pch" as the chipset.
+    Mirrors the daemon's ``classify::is_memory_label``.
+    """
+    return "dimm" in lower_label or lower_label.startswith("pch_dim")
+
+
+def _classify_memory_module(chip_name: str) -> SensorClassification:
+    if chip_name == "spd5118":
+        what, confidence = "DDR5 memory module temperature (SPD hub)", "high"
+    else:
+        what, confidence = "JEDEC JC-42.4 temperature sensor — usually on a memory module", "medium"
+    return SensorClassification(
+        source_class="memory_dimm",
+        display_description=what,
+        confidence=confidence,
+        notes=[
+            "The kernel does not report which slot the module is in; "
+            "the name shows its SPD address",
+            "Measured on the module's circuit board; the memory chips run a few °C hotter",
+            "Its max/crit limits are module settings, not a danger point for the system",
+        ],
+    )
+
+
+def _classify_memory_label(label: str) -> SensorClassification:
+    return SensorClassification(
+        source_class="memory_dimm",
+        display_description=f"DIMM / memory temperature ({label})",
+        confidence="medium",
+        notes=["Reported by the board for a memory slot"],
+    )
+
+
+def sensor_display_name(sensor_id: str, label: str) -> str:
+    """The name a surface shows for a sensor (DEC-491).
+
+    Every sensor keeps ``label or id``, except a memory-module sensor
+    (:data:`MEMORY_MODULE_CHIPS`): those all publish ``temp1``, so two DIMMs
+    would look identical. Their id is the daemon's documented
+    ``hwmon:<chip>:<device_id>:<label>`` with an i2c ``<bus>-<addr>`` device
+    id, and the SPD address tells the modules apart: ``DIMM 0x51``. The bus
+    number is left out on purpose — the kernel assigns it dynamically, and the
+    address is what stays put. No slot is claimed: the kernel does not know it.
+    Known limit: modules at the same address on two SMBus segments (boards with
+    more than 8 slots) share a name; the id in the tooltip still tells them
+    apart (`MEM-a`).
+    Anything that does not parse that way keeps the plain name.
+    """
+    plain = label or sensor_id
+    parts = sensor_id.split(":")
+    if len(parts) != 4 or parts[0] != "hwmon" or parts[1] not in MEMORY_MODULE_CHIPS:
+        return plain
+    _bus, sep, addr = parts[2].partition("-")
+    if not sep:
+        return plain
+    try:
+        value = int(addr, 16)
+    except ValueError:
+        return plain
+    return f"DIMM 0x{value:02x}"
+
+
+def trusted_crit_c(sensor) -> float | None:
+    """The sensor's ``crit`` limit, unless it is a memory-module limit that
+    cannot be real (DEC-491).
+
+    The daemon reads limits once, at discovery. An SPD read over SMBus can
+    return garbage without an error, and a garbage ``crit`` read at startup
+    would flag the module "⚠ ALARM" for the whole session. A memory-module
+    ``crit`` at or below 0 °C, or below its own ``max``, is that garbage and is
+    ignored. Every other sensor's ``crit`` is returned as reported.
+    """
+    t = getattr(sensor, "thresholds", None)
+    if t is None or t.crit_c is None:
+        return None
+    if getattr(sensor, "chip_name", "") in MEMORY_MODULE_CHIPS and (
+        t.crit_c <= 0 or (t.max_c is not None and t.crit_c < t.max_c)
+    ):
+        return None
+    return t.crit_c
 
 
 def is_liquid_cooler_chip(chip_name: str) -> bool:
@@ -170,6 +271,10 @@ def classify_sensor(
     coolant = _classify_coolant(chip_name, label, lower_label)
     if coolant is not None:
         return coolant
+
+    # -- Memory-module sensors (DEC-491) ------------------------------
+    if chip_name in MEMORY_MODULE_CHIPS:
+        return _classify_memory_module(chip_name)
 
     # -- k10temp: CPU internal sensors --------------------------------
     if chip_name == "k10temp":
@@ -267,6 +372,10 @@ def classify_sensor(
             ],
         )
 
+    # -- A memory channel by label on any other chip (dell_smm `SODIMM`) --
+    if is_memory_label(lower_label):
+        return _classify_memory_label(label)
+
     # -- Unknown driver fallback --------------------------------------
     return SensorClassification(
         source_class="unknown",
@@ -330,6 +439,24 @@ def classify_reading(
 
 #: Every ``source_class`` that is a coolant reading (any side of the loop).
 COOLANT_SOURCE_CLASSES = frozenset({"coolant", "coolant_in", "coolant_out"})
+
+
+def sensor_is_memory(sensor) -> bool:
+    """Whether ``sensor`` is a memory (DIMM) reading (DEC-491).
+
+    Classified from the sensor's own chip, label and type. Neither input a bare
+    :func:`classify_sensor` call can omit changes this answer: the board vendor
+    only gates the ASUS ``CPUTIN`` quirk, and the one override offered
+    (coolant) is not a memory class.
+    """
+    if sensor is None:
+        return False
+    cls = classify_sensor(
+        getattr(sensor, "chip_name", ""),
+        getattr(sensor, "label", ""),
+        getattr(sensor, "temp_type", None),
+    )
+    return cls.source_class in MEMORY_SOURCE_CLASSES
 
 
 def sensor_is_coolant(sensor, overrides: dict[str, str] | None = None) -> bool:
@@ -596,6 +723,10 @@ def _classify_nct6775(
             ],
         )
 
+    # DEC-491: `PCH_DIM0_TEMP`..`3` (nct6776-6792) and `Agent0 Dimm0`.. (nct6793+)
+    # are memory channels; they used to fall through to the generic channel.
+    if is_memory_label(lower_label):
+        return _classify_memory_label(label)
     if "amd tsi" in lower_label or "tsi" in lower_label:
         return SensorClassification(
             source_class="amd_tsi",
@@ -679,11 +810,7 @@ def _classify_nct6683(
     # carry `temp_type` 6 and "peci" like the CPU channels. The DIMM test runs
     # first, as the daemon's exclusion does, or they read as the CPU.
     if "dimm" in lower_label:
-        return SensorClassification(
-            source_class="memory_dimm",
-            display_description=f"DIMM / memory temperature ({label})",
-            confidence="medium",
-        )
+        return _classify_memory_label(label)
     if temp_type == 6 or "peci" in lower_label:
         return SensorClassification(
             source_class="cpu_peci",
@@ -1002,6 +1129,9 @@ _CHIP_DOC_URL_PREFIXES: list[tuple[str, str]] = [
     ("asus_ec_sensors", "https://docs.kernel.org/hwmon/asus_ec_sensors.html"),
     ("asus_wmi_sensors", "https://docs.kernel.org/hwmon/asus_wmi_sensors.html"),
     ("amdgpu", "https://docs.kernel.org/gpu/amdgpu/thermal.html"),
+    ("spd5118", "https://docs.kernel.org/hwmon/spd5118.html"),
+    ("jc42", "https://docs.kernel.org/hwmon/jc42.html"),
+    ("dell_smm", "https://docs.kernel.org/hwmon/dell-smm-hwmon.html"),
     # No kernel.org hwmon doc page — link to mainline driver source so the
     # "Driver documentation" button doesn't 404.
     (

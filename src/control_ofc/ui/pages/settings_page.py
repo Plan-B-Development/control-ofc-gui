@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from control_ofc.api.errors import DaemonError, DaemonUnavailable
 from control_ofc.constants import PAGE_CONTROLS, PAGE_DASHBOARD, PAGE_SETTINGS
+from control_ofc.knowledge.sensor_knowledge import sensor_display_name
 from control_ofc.paths import (
     app_settings_path,
     atomic_write,
@@ -2664,7 +2665,7 @@ class SettingsPage(QWidget):
         for s in sensors:
             star = "★ " if recommended and s.id == recommended else ""
             cls = f" — {s.classification}" if s.classification else ""
-            combo.addItem(f"{star}{s.label or s.id}{cls}", s.id)
+            combo.addItem(f"{star}{sensor_display_name(s.id, s.label)}{cls}", s.id)
         idx = combo.findData(current) if current else 0
         combo.setCurrentIndex(idx if idx >= 0 else 0)
 

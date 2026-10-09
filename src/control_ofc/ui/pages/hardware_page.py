@@ -60,6 +60,7 @@ from control_ofc.api.models import (
     ControlPathRecord,
     OperationMode,
 )
+from control_ofc.knowledge.sensor_knowledge import sensor_display_name
 from control_ofc.services.cooling_device_view import build_cooling_device_views
 from control_ofc.services.daemon_features import daemon_supports, unsupported_feature_message
 from control_ofc.services.diagnostics_service import DiagnosticsService
@@ -779,7 +780,10 @@ class HardwarePage(QWidget):
         return bool(caps and getattr(caps.control, "cooling_devices", False))
 
     def _sensor_labels(self) -> dict[str, str]:
-        return {s.id: (s.label or s.id) for s in (self._state.sensors if self._state else [])}
+        return {
+            s.id: sensor_display_name(s.id, s.label)
+            for s in (self._state.sensors if self._state else [])
+        }
 
     def _sensor_values(self) -> dict[str, float]:
         return {

@@ -28,7 +28,11 @@ from control_ofc.api.models import (
     at_least,
 )
 from control_ofc.knowledge.hwmon_label_resolver import resolve_hwmon_header_label
-from control_ofc.knowledge.sensor_knowledge import SensorClassification, classify_reading
+from control_ofc.knowledge.sensor_knowledge import (
+    SensorClassification,
+    classify_reading,
+    sensor_display_name,
+)
 from control_ofc.services.alerts import AlertCondition, AlertLedger
 from control_ofc.services.cooling_watch import advisory_alert, pump_stall_alert, thermal_alert
 from control_ofc.services.daemon_features import daemon_supports
@@ -656,7 +660,7 @@ class AppState(QObject):
         for s in self.sensors:
             freshness = self.reading_freshness(s)
             if freshness != Freshness.FRESH:
-                label = s.label or s.id
+                label = sensor_display_name(s.id, s.label)
                 conditions.append(
                     AlertCondition(
                         key=f"sensor_stale:{s.id}",
