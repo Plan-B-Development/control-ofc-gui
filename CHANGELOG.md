@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-10-09
+
+**Pairs with `control-ofc-daemon` >= v3.0.0**, which the package still requires; control-ofc-daemon 4.3.0 is
+the matching release, and memory-module settings follow a renumbered SMBus only with it. Nothing is removed,
+and profiles, settings and themes load as before.
+
 ### Added
 
 - **Memory temperatures are shown as memory** (DEC-491). DDR5 modules (`spd5118`, kernel 6.11 or later),

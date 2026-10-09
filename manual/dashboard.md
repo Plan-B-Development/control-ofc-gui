@@ -150,7 +150,7 @@ the readings from before it sit where they belong — or have aged out of the wi
 The right-hand **Sensors panel** is always present — drag the splitter handle between
 it and the fan cards to give the chart more width when you need it. It is a grouped,
 searchable tree of every **sensor and fan**, grouped
-into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboard, Disk,
+into CPU, GPU, **AIO / Liquid** (liquid-cooler coolant temperatures), Motherboard, Memory (memory-module temperatures), Disk,
 and Fans (by source: D-GPU, hwmon, OpenFan). Liquid-cooler pump and radiator fans are
 tagged **(AIO)**. Type in the "Search sensors…" box to filter; click a row's checkbox to
 show/hide its line on the chart; toggle a whole group to declutter. A reading the daemon

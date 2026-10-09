@@ -35,7 +35,7 @@ The **Overview** page answers *"is the daemon healthy, what hardware was found, 
 
 ### Sensors
 
-An 8-column diagnostic table of every temperature sensor reported by the daemon (`#`, Label, Sensor ID, Source class, Chip, Value, Age, Confidence — double-click a row, press **Enter** on it, or right-click → **Open detail…** for the full detail dialog). A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · Z GPU · V liquid · W disk · K stale · J low-confidence · U unavailable · M hidden`.
+An 8-column diagnostic table of every temperature sensor reported by the daemon (`#`, Label, Sensor ID, Source class, Chip, Value, Age, Confidence — double-click a row, press **Enter** on it, or right-click → **Open detail…** for the full detail dialog). A **header summary line** above the table answers "is anything wrong?" at a glance — `Sensors: N total · X CPU · Y board · R memory · Z GPU · V liquid · W disk · K stale · J low-confidence · U unavailable · M hidden`.
 
 | Column | Meaning |
 |--------|---------|
