@@ -1,5 +1,11 @@
 # Control-OFC GUI
 
+> [!IMPORTANT]
+> **Control-OFC is now Ventulus.** This repository is archived and read-only; development continues at
+> [Plan-B-Development/ventulus](https://github.com/Plan-B-Development/ventulus) — the GUI is `ventulus`. Install and upgrade from the
+> [Ventulus pacman repository](https://github.com/Plan-B-Development/pacman-repo). v4.3.0 is the last
+> release under the Control-OFC name.
+
 **Latest release:** v4.3.0 — 2026-10-09. Pairs with `control-ofc-daemon` ≥ v3.0.0. Individual features gate on newer daemons and say so in the app when one is missing; [CHANGELOG.md](CHANGELOG.md) records which version introduced each.
 
 Desktop fan control interface for Linux. Communicates with the [`control-ofc-daemon`](https://github.com/Plan-B-Development/control-ofc-daemon) service to monitor temperatures, manage fan speeds, and apply custom fan curves.
